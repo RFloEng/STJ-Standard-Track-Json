@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    customLayerData = {
+        string stj = '{"_metadata":{"specification":"STJ-OVERRIDE","version":"0.1","base":"./coll_de_prova_gravel.usda","variant":"weather","description":"Rain: water film, low cloud, wetter verges."},"patch":{"environment":{"sky":{"clouds":{"coverage":0.95,"kind":"stratus"},"fog":{"visibility":1500.0,"height_falloff":200.0}},"default_weather":{"condition":"rain","air_temperature":9.0,"track_temperature":9.0,"relative_humidity":0.95,"precipitation":4.0,"water_depth":0.0015,"visibility":2000.0}},"surfaces":{"library":{"verge_grass":{"deformable":{"effective":{"sinkage":0.04}}}}},"water":{"accumulation_bands":[{"s_start":1240.0,"s_end":1290.0,"t_min":-3.6,"t_max":0.0,"factor":1.8,"_note":"a dip on the tarmac section where water stands"}]}}}'
+    }
+    subLayers = [
+        @./coll_de_prova_gravel.usda@
+    ]
+)
+

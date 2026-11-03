@@ -1,0 +1,1349 @@
+"""
+Builds the example files from code, so geometry, timing and pacenotes stay consistent.
+
+    python examples/make_examples.py
+
+Writes every example as an OpenUSD stage with its STJ document inside the root layer
+(spec §3): the minimal ring, the GP ring with night and drying layers, the ring with blended
+surfaces (also as one .usdz), and the gravel stage with wet and winter layers. Also the files
+they reference: USD meshes, terrain and ground PNGs, audio and a minimap. Both tracks are
+fictional. Needs the pxr module: pip install usd-core.
+"""
+
+import json
+import math
+import re
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "tools"))
+import stj_core as core  # noqa: E402
+import ribbon_usd  # noqa: E402
+import stj_usd  # noqa: E402
+
+META = {"specification": "STJ", "version": "0.1", "coordinate_system": "OpenDRIVE", "units": "SI"}
+META02 = {**META, "version": "0.2"}
+META03 = {**META, "version": "0.3"}
+LICENCE = {"spdx": "Apache-2.0", "holder": "STJ contributors", "redistributable": True}
+ILLUSTRATIVE = "Illustrative only: the keys inside x_<engine> blocks belong to that engine's converter, not to STJ."
+
+
+def r(v, n=2):
+    return round(v, n)
+
+
+def dumps(doc):
+    text = json.dumps(doc, indent=2, ensure_ascii=False)
+    # put arrays of plain numbers on one line
+    return re.sub(r"\[\s*([-0-9.eE+]+(?:,\s*[-0-9.eE+]+)*)\s*\]",
+                  lambda m: "[" + ", ".join(x.strip() for x in m.group(1).split(",")) + "]", text) + "\n"
+
+
+FPS = 24
+# time ranges of the GP props' animations on the shared stage timeline (time codes at 24 per second)
+WINDMILL_RANGE, GATE_RANGE, FLAG_RANGE = (0, 96), (100, 148), (150, 174)
+
+
+def gp_props(stage, pit_y):
+    """The GP ring's animated props and big screen as USD prims (spec §8.5, §8.8)."""
+    from pxr import Gf, UsdGeom
+    root = "/track/props"
+    UsdGeom.Xform.Define(stage, root)
+
+    def prop(name, pos, size):
+        x = UsdGeom.Xform.Define(stage, f"{root}/{name}")
+        x.AddTranslateOp().Set(Gf.Vec3d(*pos))
+        cube = UsdGeom.Cube.Define(stage, f"{root}/{name}/shape")
+        cube.CreateSizeAttr(1.0)
+        cube.AddScaleOp().Set(Gf.Vec3f(*size))
+        return x
+
+    rotor = prop("Windmill_Rotor", (0.0, 140.0, 14.0), (0.4, 9.0, 0.8))
+    op = rotor.AddRotateXOp()
+    for k in range(5):
+        op.Set(90.0 * k, WINDMILL_RANGE[0] + k * (WINDMILL_RANGE[1] - WINDMILL_RANGE[0]) / 4)
+    gate = prop("Pit_Gate_Arm", (165.0, pit_y + 3.0, 1.1), (0.15, 4.0, 0.15))
+    op = gate.AddRotateXOp()
+    op.Set(0.0, GATE_RANGE[0])
+    op.Set(90.0, GATE_RANGE[1])
+    flag = prop("Marshal_Flag_T1", (232.0, 0.0, 1.5), (0.05, 1.2, 0.8))
+    op = flag.AddRotateZOp()
+    for k, a in enumerate((-17.0, 17.0, -17.0)):
+        op.Set(a, FLAG_RANGE[0] + k * (FLAG_RANGE[1] - FLAG_RANGE[0]) / 2)
+    prop("Big_Screen", (0.0, 92.0, 9.0), (8.0, 0.3, 4.5))
+
+
+def draw_map(path, line, extent, width, height):
+    """North-up greyscale minimap of a reference line (white on black)."""
+    px = [0] * (width * height)
+    x0, y0, x1, y1 = extent
+    s = 0.0
+    while s <= line.length:
+        x, y, _z = line.point(s)
+        i = round((x - x0) / (x1 - x0) * (width - 1))
+        j = round((y1 - y) / (y1 - y0) * (height - 1))
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                if 0 <= i + di < width and 0 <= j + dj < height:
+                    px[(j + dj) * width + i + di] = 255
+        s += 1.0
+    core.write_png(path, width, height, px)
+
+
+# ── minimal circuit ──────────────────────────────────────────────────────────
+
+def test_ring():
+    straight, radius = 300.0, 60.0
+    pts = []
+    for i in range(6):                                   # bottom straight, +X
+        pts.append((-150 + 50 * i, -60))
+    for k in range(12):                                  # east hairpin, CCW
+        a = -math.pi / 2 + k * math.pi / 12
+        pts.append((150 + radius * math.cos(a), radius * math.sin(a)))
+    for i in range(6):                                   # top straight, -X
+        pts.append((150 - 50 * i, 60))
+    for k in range(12):                                  # west hairpin
+        a = math.pi / 2 + k * math.pi / 12
+        pts.append((-150 + radius * math.cos(a), radius * math.sin(a)))
+    pts = [[r(x), r(y), r(1.5 * math.cos(math.pi * x / 300))] for x, y in pts]
+    line = core.ReferenceLine(pts, closed=True)
+    L = line.length
+    sf = 150.0
+    arc1 = (straight, straight + math.pi * radius)               # first hairpin s range (exact circle)
+    arc2 = (2 * straight + math.pi * radius, L)
+    doc = {
+        "$schema": "../schema/stj.schema.json",
+        "_metadata": {**META, "description": "Minimal circuit: centerline, surfaces as bands, timing and a grid. No meshes.",
+                      "author": "STJ examples", "licence": LICENCE,
+                      "provenance": {"type": "original", "detail": "Generated by examples/make_examples.py", "confidence": "high"}},
+        "track_info": {"name": "STJ Test Ring", "type": "circuit", "length": r(L, 1), "fictional": True},
+        "reference": {"centerline": {"closed": True, "width": {"left": 6.0, "right": 6.0}, "points": pts}},
+        "surfaces": {
+            "default": "grass",
+            "library": {
+                "asphalt": {
+                    "class": "asphalt",
+                    "mf_scaling": {"LMUX": 1.0, "LMUY": 1.0},
+                    "roughness": {"iso8608": {"gd_n0": 4e-06, "w": 2.0, "class": "A"}, "mean_profile_depth": 0.0007},
+                    "wet_response": [[0.0, 1.0], [0.0005, 0.9], [0.002, 0.7], [0.005, 0.55]],
+                    "track_limits": "inside"
+                },
+                "kerb": {
+                    "class": "kerb",
+                    "mf_scaling": {"LMUX": 0.9, "LMUY": 0.85, "_est": True},
+                    "wet_response": [[0.0, 1.0], [0.0005, 0.75], [0.002, 0.5]],
+                    "track_limits": "inside"
+                },
+                "grass": {
+                    "class": "grass",
+                    "mf_scaling": {"LMUX": 0.55, "LMUY": 0.5, "LKX": 0.6, "LKY": 0.6, "_est": True},
+                    "rolling_resistance": 0.04,
+                    "wet_response": [[0.0, 1.0], [0.0005, 0.7], [0.002, 0.45]],
+                    "track_limits": "outside"
+                }
+            },
+            "bands": [
+                {"s_start": 0.0, "s_end": r(L), "t_min": 6.0, "t_max": 25.0, "surface": "grass"},
+                {"s_start": 0.0, "s_end": r(L), "t_min": -25.0, "t_max": -6.0, "surface": "grass"},
+                {"s_start": 0.0, "s_end": r(L), "t_min": -6.0, "t_max": 6.0, "surface": "asphalt"},
+                {"s_start": r(arc1[0]), "s_end": r(arc1[1]), "t_min": 6.0, "t_max": 7.5, "surface": "kerb"},
+                {"s_start": r(arc2[0]), "s_end": r(arc2[1]), "t_min": 6.0, "t_max": 7.5, "surface": "kerb"}
+            ]
+        },
+        "timing": {
+            "start_finish": {"s": sf},
+            "sectors": [
+                {"id": "s1", "s_start": sf, "s_end": 420.0},
+                {"id": "s2", "s_start": 420.0, "s_end": 720.0},
+                {"id": "s3", "s_start": 720.0, "s_end": sf}
+            ],
+            "track_limits": {"max_wheels_outside": 3, "use_surface_flags": True}
+        },
+        "race": {
+            "grid": [{"position": i + 1, "pose": {"s": sf - 6.0 - 8.0 * i, "t": 2.0 if i % 2 == 0 else -2.0}} for i in range(4)]
+        },
+        "environment": {
+            "north_heading": 1.2,
+            "default_weather": {"condition": "clear", "air_temperature": 22.0, "track_temperature": 31.0, "water_depth": 0.0}
+        }
+    }
+    return doc
+
+
+def test_ring_gp():
+    """The same ring with everything a circuit race needs (Tier 1 features)."""
+    doc = test_ring()
+    pts = doc["reference"]["centerline"]["points"]
+    line = core.ReferenceLine(pts, closed=True)
+    L = line.length
+    a1 = (300.0, 300.0 + math.pi * 60)                  # east hairpin
+    a2 = (600.0 + math.pi * 60, L)                       # west hairpin
+    sf = 150.0
+    doc["_metadata"] = {**doc["_metadata"], **META03}
+    doc["_metadata"]["description"] = ("Circuit with edges, pit lane, DRS, AI data, start procedure, cameras, "
+                                       "weather schedule, a reverse layout, night and drying variants; v0.2: rubber, "
+                                       "drains and shelter, props with physics, animated objects, start lights and "
+                                       "floodlights on signals, audio and a minimap.")
+    doc["track_info"].update({"layout": "GP", "short_name": "Test Ring", "abbreviation": "TRG", "tags": ["fictional", "test"],
+                              "map": {"uri": "ui/test_ring_map.png", "extent": [-240.0, -130.0, 240.0, 130.0]},
+                              "records": [{"category": "GT3", "time": 41.85, "driver": "STJ examples", "vehicle": "generic GT3",
+                                           "date": "2026-06-20", "source": "fictional, for illustration"}]})
+    lib = doc["surfaces"]["library"]
+    lib["gravel_trap"] = {"class": "gravel", "mf_scaling": {"LMUX": 0.5, "LMUY": 0.45, "LKX": 0.4, "LKY": 0.45, "_est": True},
+                          "rolling_resistance": 0.08,
+                          "deformable": {"effective": {"drag_coefficient": 0.02, "sinkage": 0.08, "loose_layer_depth": 0.25, "_est": True}},
+                          "track_limits": "outside"}
+    doc["surfaces"]["bands"].append({"s_start": r(a1[0]), "s_end": r(a1[1]), "t_min": -25.0, "t_max": -6.0, "surface": "gravel_trap"})
+
+    # racing line: outside on the straights, apex in the middle of each hairpin
+    def line_t(s):
+        for a, b in (a1, a2):
+            if a <= s <= b:
+                return -4.5 + 9.0 * math.sin(math.pi * (s - a) / (b - a))
+        return -4.5
+
+    def line_v(s):
+        for a, b in (a1, a2):
+            if a - 80 <= s <= b:
+                u = min(1.0, max(0.0, (s - (a - 80)) / 80))
+                return r(55.0 - (55.0 - 27.0) * u, 1)
+        return 55.0
+
+    rl_pts, rl_v = [], []
+    for i in range(0, int(L // 10)):
+        s = i * 10.0
+        rl_pts.append([r(c) for c in line.point(s, line_t(s))])
+        rl_v.append(line_v(s))
+    overtake = [[r(c) for c in line.point(i * 10.0, 3.0)] for i in range(int(L // 10))]
+
+    pit_y = -60 + 18
+    pit_path = [[x, pit_y, r(1.5 * math.cos(math.pi * x / 300))] for x in (-200, -150, -100, -50, 0, 50, 100, 150, 200)]
+    doc["timing"]["pit_lane"] = {
+        "entry_s": 940.0, "exit_s": 260.0, "side": "left", "speed_limit": 22.2,
+        "session_speed_limits": {"practice": 22.2, "race": 16.7},
+        "limit_start": {"points": [[-160.0, pit_y - 4, 0.0], [-160.0, pit_y + 4, 0.0]]},
+        "limit_end": {"points": [[160.0, pit_y - 4, 0.0], [160.0, pit_y + 4, 0.0]]},
+        "path": pit_path
+    }
+    doc["timing"]["drs_zones"] = [{"id": "drs1", "detection_s": 700.0, "activation_s": 30.0, "deactivation_s": 270.0, "gap": 1.0}]
+    doc["race"]["pit_boxes"] = [{"id": f"box_{i + 1}", "pose": {"position": [-60.0 + 14.0 * i, pit_y + 3.5, 0.0], "heading": 0.0}}
+                                for i in range(4)]
+    doc["race"]["racing_lines"] = [
+        {"id": "race", "purpose": "race", "closed": True, "points": rl_pts, "speed": rl_v,
+         "_source": "Generated: a mid-power GT car, illustrative"},
+        {"id": "overtake_left", "purpose": "overtake_left", "closed": True, "points": overtake},
+        {"id": "pit", "purpose": "pit", "points": pit_path}
+    ]
+    doc["race"]["ai"] = {
+        "corridor": [[float(s), -5.5, 7.0 if (a1[0] <= s <= a1[1] or a2[0] <= s <= a2[1]) else 5.5] for s in range(0, int(L), 50)],
+        "hints": [
+            {"s_start": r(a1[0] - 60), "s_end": r(a1[0]), "kind": "brake", "value": 27.0},
+            {"s_start": r(a1[0]), "s_end": r(a1[1]), "kind": "no_overtake"},
+            {"s_start": r(a2[0] + 40), "s_end": r(a2[0] + 120), "kind": "danger", "side": "right", "value": 0.4}
+        ]
+    }
+    doc["race"]["start_procedure"] = {"type": "standing", "formation_lap": True, "formation_speed": 22.0, "lights": {"count": 5}}
+    doc["edges"] = [
+        {"id": "kerb_t1_in", "side": "left", "s_start": r(a1[0] + 20), "s_end": r(a1[1] - 20), "kind": "kerb", "style": "rumble",
+         "width": 1.5, "height": 0.03, "surface": "kerb"},
+        {"id": "kerb_t2_in", "side": "left", "s_start": r(a2[0] + 20), "s_end": r(a2[1] - 20), "kind": "kerb", "style": "rumble",
+         "width": 1.5, "height": 0.03, "surface": "kerb"},
+        {"id": "trap_t1", "side": "right", "s_start": r(a1[0]), "s_end": r(a1[1]), "kind": "verge", "style": "gravel_trap",
+         "width": 19.0, "surface": "gravel_trap"},
+        {"id": "tyres_t1", "side": "right", "s_start": r(a1[0] + 10), "s_end": r(a1[1] - 10), "kind": "barrier", "style": "tyre_wall",
+         "t": -25.0, "height": 1.0, "restitution": 0.15},
+        {"id": "armco_main", "side": "right", "s_start": 20.0, "s_end": 280.0, "kind": "barrier", "style": "armco",
+         "t": -12.0, "height": 0.75, "restitution": 0.35},
+        {"id": "wall_pit", "side": "left", "s_start": 20.0, "s_end": 280.0, "kind": "barrier", "style": "wall",
+         "t": 12.0, "height": 1.0, "restitution": 0.25}
+    ]
+    sfp = line.point(sf)
+    doc["cameras"] = {"sets": [{"id": "tv1", "name": "TV 1", "cameras": [
+        {"id": "start", "kind": "static", "position": [r(sfp[0]), r(sfp[1] - 20), 6.0], "look_at": [r(sfp[0]), r(sfp[1]), 0.0],
+         "fov": [0.6, 0.6], "active": {"s_start": 60.0, "s_end": 240.0}},
+        {"id": "hairpin_east", "kind": "tracking", "position": [225.0, 0.0, 8.0], "fov": [0.15, 0.7],
+         "active": {"s_start": 240.0, "s_end": 520.0}},
+        {"id": "hairpin_west", "kind": "tracking", "position": [-225.0, 0.0, 8.0], "fov": [0.15, 0.7],
+         "spheres": [{"position": [-190.0, 0.0, 0.0], "radius": 120.0}]}
+    ]}]}
+    doc["environment"]["timezone"] = "Europe/Madrid"
+    doc["environment"]["default_time"] = {"date": "2026-06-20", "local_time": "15:00"}
+    doc["environment"]["weather_schedule"] = [
+        {"session": "race", "time": 0.0, "weather": {"condition": "clear", "air_temperature": 24.0}},
+        {"session": "race", "time": 1200.0, "weather": {"condition": "cloudy", "air_temperature": 21.0}},
+        {"session": "race", "time": 2400.0, "weather": {"condition": "drizzle", "air_temperature": 19.0, "water_depth": 0.0003}}
+    ]
+    # v0.2 ─ surfaces and water
+    lib["asphalt"]["water"] = {"drain_rate": 6.0, "wet_look": "puddles"}
+    lib["kerb"]["water"] = {"drain_rate": 10.0, "wet_look": "puddles"}
+    lib["grass"]["water"] = {"drain_rate": 15.0, "wet_look": "rough"}
+    lib["gravel_trap"]["water"] = {"drain_rate": 60.0, "wet_look": "rough"}
+    doc["surfaces"]["line_states"] = [{
+        "id": "rubber", "kind": "rubber", "applies_to": ["asphalt"], "line": "race", "spread": 1.0,
+        "grip_gain": {"LMUX": 0.05, "LMUY": 0.04, "_est": True}, "wet_gain": -0.08,
+        "profile": [[0.0, 1.0], [r(a1[0] - 80), 1.0], [r(a1[0] - 20), 1.35], [r(a1[0] + 40), 1.0],
+                    [r(a2[0] - 80), 1.0], [r(a2[0] - 20), 1.35], [r(a2[0] + 40), 1.0]],
+        "marbles": {"offset": 2.5, "LMU": 0.85},
+        "levels": {"practice": 0.2, "qualifying": 0.45, "race": 0.55}}]
+    doc["water"] = {
+        "accumulation_bands": [{"s_start": r(a2[0] + 60), "s_end": r(a2[0] + 110), "t_min": 2.0, "t_max": 6.0, "factor": 1.6}],
+        "drains": [{"id": "drain_west", "kind": "grate", "band": {"s_start": r(a2[0] + 60), "s_end": r(a2[0] + 110),
+                                                                  "t_min": 5.5, "t_max": 6.5}, "capacity": 30.0}],
+        "shelter": [{"id": "pit_roof", "kind": "roof", "factor": 1.0,
+                     "polygon": [[-160.0, pit_y - 6], [160.0, pit_y - 6], [160.0, pit_y + 6], [-160.0, pit_y + 6]]}]
+    }
+    # props, animations, lights, audio
+    doc["geometry"] = {"meshes": [{"id": "props", "uri": "test_ring_gp.usda", "roles": ["visual"],
+                                   "_note": "the props live in the track's own stage, under /track/props"}]}
+    doc["scenery"] = {
+        "prototypes": {
+            "cone": {"class": "prop", "height": 0.7,
+                     "physics": {"mode": "movable", "mass": 4.5, "center_of_mass": [0.0, 0.0, 0.2], "inertia": [0.15, 0.15, 0.09],
+                                 "shape": {"kind": "cylinder", "radius": 0.18, "height": 0.7},
+                                 "friction": 0.7, "restitution": 0.2, "respawn": "session"}},
+            "tyre_stack": {"class": "tyre_wall", "height": 1.0,
+                           "physics": {"mode": "tethered", "mass": 60.0, "center_of_mass": [0.0, 0.0, 0.5],
+                                       "inertia": [6.0, 6.0, 4.0], "shape": {"kind": "cylinder", "radius": 0.33, "height": 1.0},
+                                       "friction": 0.9, "restitution": 0.15,
+                                       "tether": {"stiffness": 40000.0, "damping": 3000.0, "max_travel": 0.6}}}
+        },
+        "instances": [{"prototype": "cone", "transforms": [[r(160.0 + 6 * i), r(pit_y - 4.5), 0.0, 0.0] for i in range(5)]}]
+    }
+    for e in doc["edges"]:
+        if e["id"] == "tyres_t1":
+            e.update({"prototype": "tyre_stack", "spacing": 0.7})
+    doc["animated_objects"] = [
+        {"id": "windmill", "kind": "windmill", "target": {"mesh_ref": "props", "nodes": ["/track/props/Windmill_Rotor"]},
+         "time_range": list(WINDMILL_RANGE), "playback": "loop",
+         "speed_by": {"signal": "wind_speed", "curve": [[0.0, 0.0], [12.0, 2.0]], "smoothing": 3.0}},
+        {"id": "pit_gate", "kind": "barrier_arm", "target": {"mesh_ref": "props", "nodes": ["/track/props/Pit_Gate_Arm"]},
+         "time_range": list(GATE_RANGE), "time_by": {"signal": "nearest_vehicle_distance", "curve": [[8.0, 1.0], [25.0, 0.0]],
+                                               "smoothing": 0.5}, "collides": True},
+        {"id": "flag_t1", "kind": "flag", "target": {"mesh_ref": "props", "nodes": ["/track/props/Marshal_Flag_T1"]},
+         "time_range": list(FLAG_RANGE), "playback": "loop",
+         "when": {"signal": "sector_flag", "op": "in", "value": ["yellow", "double_yellow"]}}
+    ]
+    gx, gy, gz = line.point(sf)
+    flood = [{"id": f"flood_{i}", "kind": "floodlight", "type": "spot", "position": [x, y, 18.0],
+              "direction": [0.0, -0.6 if y > 0 else 0.6, -0.8], "intensity": 250000.0, "color_temperature": 5000.0,
+              "range": 150.0, "outer_cone_angle": 0.7,
+              "when": {"signal": "sun_elevation", "op": "lt", "value": 0.05},
+              "intensity_by": {"signal": "sun_elevation", "curve": [[-0.1, 1.0], [0.05, 0.6]], "smoothing": 2.0}}
+             for i, (x, y) in enumerate([(-150, 95), (0, 95), (150, 95), (-150, -95), (0, -95), (150, -95)])]
+    start_lights = [{"id": f"start_light_{i + 1}", "kind": "start_lights", "type": "point",
+                     "position": [r(gx - 1.0 + 0.5 * i), r(gy), r(gz + 6.0)], "intensity": 3000.0, "color_temperature": 1800.0,
+                     "range": 40.0, "when": {"signal": "start_lights_lit", "op": "ge", "value": i + 1}} for i in range(5)]
+    doc["environment"]["lighting"] = {"lights": flood + start_lights}
+    doc["audio"] = {
+        "emitters": [
+            {"id": "pa_main", "kind": "pa", "position": [0.0, 75.0, 8.0], "sound": {"uri": "audio/pa_loop.wav"},
+             "gain": 0.6, "ref_distance": 10.0, "max_distance": 250.0, "loop": True,
+             "gain_by": {"signal": "session_phase", "map": {"pre_session": 1.0, "running": 0.3, "finished": 1.0}}},
+            {"id": "crowd_main", "kind": "crowd", "path": [[-120.0, 80.0, 4.0], [0.0, 80.0, 4.0], [120.0, 80.0, 4.0]],
+             "sound": {"uri": "audio/crowd_loop.wav"}, "gain": 0.8, "ref_distance": 15.0, "max_distance": 400.0, "loop": True,
+             "when": {"signal": "session", "op": "in", "value": ["qualifying", "race"]}}
+        ],
+        "zones": [{"id": "pit_building", "reverb": "pit_building",
+                   "shape": {"polygon": [[-160.0, pit_y - 6], [160.0, pit_y - 6], [160.0, pit_y + 6], [-160.0, pit_y + 6]],
+                             "z_min": -1.0, "z_max": 8.0}}],
+        "ambience": "open",
+        "_note": "The sound files are generated placeholders (a tone and filtered noise)."
+    }
+
+    # v0.3 ─ race control, evolution, presentation
+    q = r(L / 4)
+    doc["marshals"] = {
+        "sectors": [{"id": f"m{i + 1}", "s_start": r(i * L / 4), "s_end": r((i + 1) * L / 4)} for i in range(4)],
+        "posts": [
+            {"id": "post_t1", "kind": "flag_post", "sector": "m2", "s": 360.0, "side": "right", "position": [232.0, 0.0, 1.5],
+             "signals": ["yellow", "double_yellow", "blue", "white", "slippery"]},
+            {"id": "panel_main", "kind": "light_panel", "sector": "m1", "s": 120.0, "side": "left", "light_panel": True,
+             "signals": ["green", "yellow", "red", "safety_car", "chequered"]}
+        ],
+        "vehicles": [{"id": "safety_car", "kind": "safety_car", "pose": {"position": [-120.0, r(pit_y + 3.5), 0.0], "heading": 0.0}},
+                     {"id": "recovery_t1", "kind": "recovery", "base": "post_t1"}],
+        "restricted_zones": [{"id": "pit_exit_line", "rule": "penalty", "value": 5.0,
+                              "shape": {"band": {"s_start": 260.0, "s_end": 300.0, "t_min": 6.0, "t_max": 8.0}}}],
+        "reset": {"mode": "nearest_on_line", "t": 0.0, "min_spacing": 20.0}
+    }
+    doc["dynamic"] = {
+        "line_states": [{"line_state": "rubber", "gain_per_pass": 0.004, "wash": 0.02, "_est": True}],
+        "water": {"e0": 0.4, "c_wind": 0.15, "_est": True},
+        "track_temperature": {"sun_gain": 18.0, "tau": 1800.0, "_est": True}
+    }
+    doc["environment"]["probes"] = [{"id": "pit_garages", "kind": "reflection", "position": [0.0, r(pit_y + 8), 3.0],
+                                     "extent": [320.0, 12.0, 8.0], "priority": 1}]
+    doc["environment"]["climate"] = {"source": "fictional, for illustration", "monthly": [
+        {"month": m + 1, "t_min": tmin, "t_max": tmax, "rain_days": rd} for m, (tmin, tmax, rd) in enumerate(
+            [(3, 10, 6), (4, 12, 6), (6, 16, 5), (8, 18, 7), (12, 22, 7), (16, 28, 3),
+             (19, 32, 2), (19, 31, 2), (15, 26, 4), (11, 19, 7), (6, 13, 7), (4, 10, 7)])]}
+    doc["screens"] = [{"id": "main_screen", "target": {"mesh_ref": "props", "prim": "/track/props/Big_Screen"}, "content": "timing_tower",
+                       "when": {"signal": "session_phase", "op": "in", "value": ["running", "suspended", "finished"]}}]
+    doc["scenery"]["prototypes"]["spectator"] = {"class": "spectators", "height": 1.75, "collision": "none"}
+    doc["scenery"]["crowds"] = [{"id": "main_grandstand", "prototype": "spectator", "density": 2.5, "behaviour": "cheer",
+                                 "area": {"polygon": [[-120.0, 78.0], [120.0, 78.0], [120.0, 88.0], [-120.0, 88.0]]},
+                                 "when": {"signal": "session", "op": "in", "value": ["qualifying", "race"]}}]
+
+    sf_r = r(L - sf)
+    doc["layouts"] = [{
+        "id": "gp_reverse", "name": "GP reverse", "direction": "reverse",
+        "timing": {
+            "start_finish": {"s": sf_r},
+            "sectors": [{"id": "s1", "s_start": sf_r, "s_end": r(L - 720.0)},
+                        {"id": "s2", "s_start": r(L - 720.0), "s_end": r(L - 420.0)},
+                        {"id": "s3", "s_start": r(L - 420.0), "s_end": sf_r}]
+        },
+        "race": {"grid": [{"position": i + 1, "pose": {"s": r(sf_r - 6.0 - 8.0 * i), "t": 2.0 if i % 2 == 0 else -2.0}} for i in range(4)],
+                 "start_procedure": {"type": "standing", "lights": {"count": 5}}},
+        "default_laps": 10
+    }]
+    doc["variants"] = [
+        {"id": "night", "name": "Night", "kind": "time_of_day", "override": "test_ring_gp_night.usda"},
+        {"id": "drying", "name": "Drying after rain", "kind": "weather", "override": "test_ring_gp_drying.usda"}
+    ]
+    draw_map(HERE / "ui" / "test_ring_map.png", line, doc["track_info"]["map"]["extent"], 241, 131)
+    return doc
+
+
+def night_override():
+    # the floodlights are in the base file and switch on by sun elevation: the night variant only moves the clock
+    return {
+        "_metadata": {"specification": "STJ-OVERRIDE", "version": "0.3", "base": "./test_ring_gp.usda",
+                      "variant": "time_of_day", "description": "Night race: the floodlights come on by themselves (sun_elevation)."},
+        "patch": {"environment": {"default_time": {"local_time": "22:00"},
+                                  "default_weather": {"air_temperature": 18.0, "track_temperature": 20.0}}}
+    }
+
+
+def drying_override():
+    return {
+        "_metadata": {"specification": "STJ-OVERRIDE", "version": "0.3", "base": "./test_ring_gp.usda",
+                      "variant": "weather", "description": "Rain has stopped: a thin film with a drying racing line."},
+        "patch": {
+            "environment": {"default_weather": {"condition": "cloudy", "air_temperature": 17.0, "track_temperature": 19.0,
+                                                "precipitation": 0.0, "water_depth": 0.0008}},
+            "water": {"dry_line": {"line": "race", "spread": 0.9, "factor": 0.25}}
+        }
+    }
+
+
+# ── gravel stage ─────────────────────────────────────────────────────────────
+
+# (straight length) or (radius, angle in degrees, direction)
+SEGMENTS = [
+    150, (55, 70, "right"), 80, (100, 40, "left"), 60, (30, 90, "left"), 200, (140, 30, "right"), 120,
+    (12, 170, "left"), 150, (45, 80, "right"), 100, (70, 60, "left"), 180, (25, 85, "right"), 200,
+    (90, 45, "left"), 250, 150,
+]
+JUMP_S = 574.0          # crest in the 200 m straight after the left 2
+TARMAC = (1116.0, 1500.0)
+
+FORD_S = 960.0          # a shallow ford across the road, on gravel
+
+
+GROUND_PALETTE = ["stage_gravel", "stage_grass", "forest_floor", "rock"]
+SURFACE_PALETTE = ["gravel_loose", "gravel_hardpack", "verge_grass", "rock_outcrop"]
+SURFACE_PALETTE_WORN = ["gravel_loose", "gravel_rutted", "verge_grass", "rock_outcrop"]
+GROUND_SECTION = 600.0       # the ground example covers the first 600 m, like one DR2 section
+
+
+def ground_textures():
+    """Small generated detail textures (RGB colour, alpha = height) and a grey-centred tint map."""
+    def noise(i, j, seed):
+        v = (i * 374761393 + j * 668265263 + seed * 2147483647) & 0xFFFFFFFF
+        v = (v ^ (v >> 13)) * 1274126177 & 0xFFFFFFFF
+        return (v & 0xFFFF) / 65535.0
+
+    looks = {"stage_gravel": ((128, 118, 104), 40, 9), "stage_grass": ((86, 112, 58), 25, 4),
+             "forest_floor": ((84, 70, 52), 30, 13), "rock": ((120, 120, 116), 35, 21)}
+    n = 64
+    for lid, (base, spread, seed) in looks.items():
+        px = []
+        for j in range(n):
+            for i in range(n):
+                h = 0.5 * noise(i // 4, j // 4, seed) + 0.5 * noise(i, j, seed + 1)    # pebbles on grain
+                px += [max(0, min(255, round(c + spread * (h - 0.5)))) for c in base] + [round(255 * h)]
+        core.write_png(HERE / "ground" / f"{lid}.png", n, n, px, 4)
+    tint = []
+    for j in range(32):
+        for i in range(32):
+            d = 0.12 * math.sin(i / 5.0) * math.cos(j / 7.0)
+            tint += [round(255 * (0.5 + d)), round(255 * (0.5 + 0.6 * d)), round(255 * (0.5 - 0.3 * d))]
+    core.write_png(HERE / "ground" / "sec01_tint.png", 32, 32, tint, 3)
+
+
+def stage_ground(line):
+    """A ground corridor in DR2's encoding, as a USD mesh: 3 palette layers per face (uniform primvars) and
+    per-corner weights (faceVarying), so no vertex is split (spec §7.2, §8.7)."""
+    ts = [-30.0, -14.0, -6.0, -3.6, -1.7, 0.0, 1.7, 3.6, 6.0, 14.0, 30.0]
+    ss = [i * 10.0 for i in range(int(GROUND_SECTION // 10) + 1)]
+
+    def ramp(x, a, b):
+        return min(1.0, max(0.0, (x - a) / (b - a))) if b > a else float(x >= a)
+
+    def dense(s, t):
+        a = abs(t)
+        w = [1.0 - ramp(a, 3.0, 4.2),
+             ramp(a, 3.0, 4.2) * (1.0 - ramp(a, 8.0, 12.0)),
+             ramp(a, 8.0, 12.0),
+             0.8 * ramp(t, 10.0, 16.0) * ramp(s, 200.0, 260.0) * (1.0 - ramp(s, 400.0, 460.0))]
+        total = sum(w)
+        return [x / total for x in w]
+
+    def physics(s, t):
+        """SURFACE_PALETTE weights: loose gravel, swept wheel tracks, verge, rock."""
+        a = abs(t)
+        track = max(0.0, 1.0 - abs(a - 1.7) / 1.0) * (1.0 - ramp(a, 3.0, 4.2))
+        w = [(1.0 - track) * (1.0 - ramp(a, 3.0, 4.2)), track, ramp(a, 3.0, 4.2),
+             0.9 * ramp(t, 10.0, 16.0) * ramp(s, 200.0, 260.0) * (1.0 - ramp(s, 400.0, 460.0))]
+        total = sum(w)
+        return [x / total for x in w]
+
+    def top3(ws, n=4):
+        top = sorted(range(n), key=lambda k: -sum(w[k] for w in ws))[:3]
+        out = []
+        for w in ws:
+            sub = [w[k] for k in top]
+            tot = sum(sub) or 1.0
+            out.append((sub[0] / tot, sub[1] / tot))
+        return tuple(top), out
+
+    from pxr import Sdf, Usd, UsdGeom, UsdShade, Vt
+    k = len(ts)
+    points = [(x, y, z - 0.05 - 0.02 * abs(tt)) for s in ss for tt in ts for x, y, z in [line.point(s, tt)]]
+    counts, indices, vis_l, phy_l, vis_w, phy_w = [], [], [], [], [], []
+    for i in range(len(ss) - 1):
+        for j in range(k - 1):
+            corners = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)]
+            vi, vw = top3([dense(ss[a], ts[b]) for a, b in corners])
+            pi, pw = top3([physics(ss[a], ts[b]) for a, b in corners])
+            counts.append(4)
+            indices += [a * k + b for a, b in corners]
+            vis_l.append(vi)
+            phy_l.append(pi)
+            vis_w += vw
+            phy_w += pw
+    path = HERE / "meshes" / "coll_de_prova_ground.usda"
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    root = UsdGeom.Xform.Define(stage, "/ground")
+    stage.SetDefaultPrim(root.GetPrim())
+    mesh = UsdGeom.Mesh.Define(stage, "/ground/sec01")
+    mesh.CreatePointsAttr(Vt.Vec3fArray([tuple(r(c, 3) for c in pt) for pt in points]))
+    mesh.CreateFaceVertexCountsAttr(Vt.IntArray(counts))
+    mesh.CreateFaceVertexIndicesAttr(Vt.IntArray(indices))
+    mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+    pv = UsdGeom.PrimvarsAPI(mesh)
+    tc = Sdf.ValueTypeNames.TexCoord2fArray
+    pv.CreatePrimvar("st", tc, UsdGeom.Tokens.vertex).Set(Vt.Vec2fArray([(r(s / GROUND_SECTION, 5), r((tt + 30.0) / 60.0, 5)) for s in ss for tt in ts]))
+    pv.CreatePrimvar("road_uv", tc, UsdGeom.Tokens.vertex).Set(Vt.Vec2fArray([(tt, s) for s in ss for tt in ts]))
+    for prefix, lays, wts in (("stj_ground", vis_l, vis_w), ("stj_surf", phy_l, phy_w)):
+        for q in range(3):
+            pv.CreatePrimvar(f"{prefix}_layers_{q}", Sdf.ValueTypeNames.IntArray, UsdGeom.Tokens.uniform).Set(
+                Vt.IntArray([int(lay[q]) for lay in lays]))
+        pv.CreatePrimvar(f"{prefix}_weights", tc, UsdGeom.Tokens.faceVarying).Set(Vt.Vec2fArray([(r(a, 4), r(b, 4)) for a, b in wts]))
+    mat = UsdShade.Material.Define(stage, "/ground/materials/Ground_Sec01")
+    sh = UsdShade.Shader.Define(stage, "/ground/materials/Ground_Sec01/surface")
+    sh.CreateIdAttr("UsdPreviewSurface")
+    sh.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set((0.42, 0.38, 0.3))
+    sh.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.95)
+    mat.CreateSurfaceOutput().ConnectToSource(sh.ConnectableAPI(), "surface")
+    UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(mat)
+    stage.GetRootLayer().Save()
+    ground_textures()
+    return {
+        "layers": {
+            "stage_gravel": {"albedo": {"uri": "ground/stage_gravel.png", "height_in_alpha": True}, "tile": 2.0,
+                             "projection": "road", "height_contrast": 1.0, "surface": "gravel_loose"},
+            "stage_grass": {"albedo": {"uri": "ground/stage_grass.png", "height_in_alpha": True}, "tile": 4.0,
+                            "projection": {"texcoord": "road_uv", "scale": 1.0}, "height_contrast": 3.0, "surface": "verge_grass",
+                            "_note": "road_uv holds (t, s) in metres, as DR2's road UVs times 8 (spec 8.7)"},
+            "forest_floor": {"albedo": {"uri": "ground/forest_floor.png", "height_in_alpha": True}, "tile": 8.0,
+                             "projection": "world_xy", "surface": "verge_grass",
+                             "x_beamng": {"_note": ILLUSTRATIVE, "material": "forest_floor_01"}},
+            "rock": {"albedo": {"uri": "ground/rock.png", "height_in_alpha": True}, "tile": 16.0, "projection": "world_xy",
+                     "height_contrast": 1.5}
+        },
+        "materials": [{
+            "mesh_ref": "stage_ground", "material": "Ground_Sec01", "palette": GROUND_PALETTE,
+            "weights": {"encoding": "vertex_top3", "weights": "stj_ground_weights",
+                        "indices": ["stj_ground_layers_0", "stj_ground_layers_1", "stj_ground_layers_2"]},
+            "blend": {"method": "height", "height_influence": 0.5, "depth": 0.2},
+            "macro": [{"kind": "tint", "uri": "ground/sec01_tint.png", "texcoord": "st", "encoding": "grey_centred"}]
+        }]
+    }
+
+
+def stage_terrain(line, extent, n=129):
+    """Heightmap and a dirt-layer weight map under the stage (spec §7.4).
+
+    Within 15 m of the road the terrain sits 0.5 m below the lowest road point nearby, so it never
+    pokes through the collision ribbon; further out it climbs on the left and falls on the right.
+    """
+    samples = []
+    s = 0.0
+    while s <= line.length:
+        samples.append(line.frame(s))
+        s += 4.0
+    cell = 60.0
+    buckets = {}
+    for smp in samples:
+        buckets.setdefault((int(smp[0] // cell), int(smp[1] // cell)), []).append(smp)
+    x0, y0, x1, y1 = extent
+    dx = (x1 - x0) / (n - 1)
+    heights, weights = [], []
+    for j in range(n):
+        y = y1 - j * dx
+        for i in range(n):
+            x = x0 + i * dx
+            ci, cj = int(x // cell), int(y // cell)
+            ring, near = 0, []
+            while not near or ring <= 1:
+                near = [smp for di in range(-ring, ring + 1) for dj in range(-ring, ring + 1)
+                        for smp in buckets.get((ci + di, cj + dj), [])]
+                ring += 1
+                if ring > 30:
+                    break
+            d2 = [((smp[0] - x) ** 2 + (smp[1] - y) ** 2, smp) for smp in near]
+            dmin, nearest = min(d2, key=lambda a: a[0])
+            dmin = math.sqrt(dmin)
+            close = [smp[2] for dd, smp in d2 if dd < 15.0 ** 2]
+            if close:
+                h = min(close) - 0.5
+            else:
+                left = math.cos(nearest[3]) * (y - nearest[1]) - math.sin(nearest[3]) * (x - nearest[0]) > 0
+                h = nearest[2] - 0.5 + (0.25 if left else -0.12) * (dmin - 15.0)
+            heights.append(h)
+            weights.append(255 if dmin < 5 else 0 if dmin > 12 else round(255 * (12 - dmin) / 7))
+    lo, hi = min(heights), max(heights)
+    core.write_png(HERE / "terrain" / "coll_de_prova_height.png", n, n,
+                   [round((h - lo) / (hi - lo) * 65535) for h in heights], 1, 16)
+    core.write_png(HERE / "terrain" / "coll_de_prova_dirt.png", n, n, weights)
+    return {
+        "heightmap": {"uri": "terrain/coll_de_prova_height.png", "format": "png16", "size": [n, n],
+                      "extent": [r(c) for c in extent], "height_min": r(lo, 3), "height_max": r(hi, 3)},
+        "layers": [
+            {"id": "forest_floor", "surface": "verge_grass", "ground_layer": "forest_floor"},
+            {"id": "track_dirt", "surface": "gravel_hardpack", "weight": {"uri": "terrain/coll_de_prova_dirt.png"},
+             "material": {"mesh_ref": "stage_collision", "material": "GravelFine"}, "tile": 3.0}
+        ],
+        "collision": True,
+        "_note": "129 x 129 samples at 9 m: coarse on purpose, to keep the example small."
+    }
+
+
+
+def severity(radius):
+    for limit, sev in ((25, 1), (40, 2), (60, 3), (90, 4), (140, 5), (250, 6)):
+        if radius < limit:
+            return sev
+    return None
+
+
+def coll_de_prova():
+    x = y = 0.0
+    h = 0.3
+    s = 0.0
+    pts = [(x, y, s)]
+    corners = []
+    for seg in SEGMENTS:
+        if isinstance(seg, (int, float)):
+            n = max(1, round(seg / 10))
+            for i in range(n):
+                x += seg / n * math.cos(h)
+                y += seg / n * math.sin(h)
+                s += seg / n
+                pts.append((x, y, s))
+        else:
+            radius, ang, d = seg
+            sign = 1 if d == "left" else -1
+            total = math.radians(ang)
+            n = max(2, math.ceil(radius * total / 5))
+            corners.append({"s": s, "radius": radius, "angle": ang, "direction": d, "length": radius * total})
+            for i in range(n):
+                dh = total / n
+                chord = 2 * radius * math.sin(dh / 2)
+                x += chord * math.cos(h + sign * dh / 2)
+                y += chord * math.sin(h + sign * dh / 2)
+                h += sign * dh
+                s += radius * dh
+                pts.append((x, y, s))
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+
+    def z(sv):
+        return 8.0 * math.sin(sv / 300.0) + 3.0 * math.sin(sv / 97.0) + 1.8 * math.exp(-((sv - JUMP_S) / 12.0) ** 2)
+
+    points = [[r(px - cx), r(py - cy), r(z(ps))] for px, py, ps in pts]
+    bx = [q[0] for q in points]
+    by = [q[1] for q in points]
+    mx, my = (min(bx) + max(bx)) / 2, (min(by) + max(by)) / 2
+    half = max(max(bx) - min(bx), max(by) - min(by)) / 2 + 60.0
+    extent = (round(mx - half), round(my - half), round(mx - half) + 2 * round(half), round(my - half) + 2 * round(half))
+    line = core.ReferenceLine(points)
+    # s of the generated corners on the rounded polyline (chords): rescale by length ratio
+    k = line.length / s
+    start, finish = 30.0, r(2027.0 * k, 1)
+    stop = r(finish + 120.0, 1)
+
+    L = line.length
+
+    def build_notes(reverse):
+        """Pacenotes from the corner list; reverse = the stage driven backwards (s' = L - s, sides swapped)."""
+        swap = {"left": "right", "right": "left"}
+        out = []
+        for c in corners:
+            cs, cl = c["s"] * k, c["length"] * k
+            d = swap[c["direction"]] if reverse else c["direction"]
+            at = r(L - cs - cl if reverse else cs, 1)
+            sev = severity(c["radius"])
+            if c["radius"] < 15:
+                n = {"s": at, "kind": "hairpin", "direction": d, "call": f"hairpin {d}"}
+            elif sev:
+                n = {"s": at, "kind": "turn", "direction": d, "severity": sev, "call": f"{d} {sev}"}
+            else:
+                continue
+            n["length"] = r(cl, 1)
+            if c["length"] > 60 and n["kind"] == "turn":
+                n["modifiers"] = ["long"]
+                n["call"] += " long"
+            out.append(n)
+        jump = L - JUMP_S * k - 6 if reverse else JUMP_S * k - 6
+        onto_tarmac, onto_gravel = (L - TARMAC[1] * k, L - TARMAC[0] * k) if reverse else (TARMAC[0] * k, TARMAC[1] * k)
+        fin = r(L - 150.0, 1) if reverse else finish
+        out.append({"s": r(jump, 1), "kind": "jump", "modifiers": ["caution"], "call": "caution jump", "call_adjust": 0.5})
+        ford = L - FORD_S * k - 15 if reverse else FORD_S * k - 15
+        out.append({"s": r(ford, 1), "kind": "water", "modifiers": ["caution"], "call": "caution water"})
+        out.append({"s": r(onto_tarmac, 1), "kind": "surface_change", "call": "onto tarmac"})
+        out.append({"s": r(onto_gravel, 1), "kind": "surface_change", "modifiers": ["loose"], "call": "onto gravel, loose"})
+        out.append({"s": fin, "kind": "finish", "call": "flying finish"})
+        out.sort(key=lambda n: n["s"])
+        for a, b in zip(out, out[1:]):
+            dist = round((b["s"] - a["s"]) / 10) * 10
+            if dist >= 30:
+                a["distance_to_next"] = dist
+                a["call"] += f", {dist}"
+            else:
+                a.setdefault("modifiers", []).append("into")
+                a["call"] += " into"
+        return out
+
+    notes = build_notes(reverse=False)
+    sx, sy, sz = line.point(0.0)
+    hairpin = next(c for c in corners if c["radius"] < 15)
+    hp_s, hp_len = hairpin["s"] * k, hairpin["length"] * k
+    split1, split2 = r(700.0 * k, 1), r(1400.0 * k, 1)
+    reverse_layout = {
+        "id": "ss1_reverse",
+        "name": "SS1 reverse",
+        "direction": "reverse",
+        "timing": {
+            "start": {"s": start},
+            "split_points": [{"id": "split1", "s": r(L - split2, 1)}, {"id": "split2", "s": r(L - split1, 1)}],
+            "finish": {"s": r(L - 150.0, 1)},
+            "stop": {"s": r(L - start, 1)}
+        },
+        "race": {
+            "spawns": [{"id": "stage_start", "pose": {"s": start - 0.5, "t": 0.0}}],
+            "start_procedure": {"type": "staggered", "start_interval": 60.0},
+            "pacenotes": {"scale": "ascending_1_6", "language": "en", "written_for": "R5 / Rally2, dry",
+                          "notes": build_notes(reverse=True)}
+        }
+    }
+
+    trees = []
+    for i, sv in enumerate(range(80, 1900, 160)):
+        t = 12.0 + (i % 3) * 4 if i % 2 else -(12.0 + (i % 3) * 4)
+        px, py, pz = line.point(sv, t)
+        trees.append([r(px), r(py), r(pz), r((i * 1.3) % (2 * math.pi), 3), r(0.9 + (i % 4) * 0.07, 2)])
+
+    Lr = r(line.length)
+    t_lo, t_hi = r(TARMAC[0] * k), r(TARMAC[1] * k)
+    doc = {
+        "$schema": "../schema/stj.schema.json",
+        "_metadata": {
+            **META03,
+            "description": "Fictional gravel rally stage: deformable surfaces (Tier A and B), per-tyre-class grip, pacenotes, splits, scenery with engine-native blocks.",
+            "author": "STJ examples",
+            "licence": LICENCE,
+            "provenance": {"type": "original", "detail": "Generated by examples/make_examples.py. Surface numbers are estimates.", "confidence": "low"}
+        },
+        "track_info": {"name": "Coll de Prova", "layout": "SS1", "type": "point_to_point", "country": "ES", "fictional": True,
+                       "primary_surface": "gravel",
+                       "short_name": "Coll de Prova", "abbreviation": "CDP", "tags": ["gravel", "forest", "fictional"]},
+        "reference": {"centerline": {"closed": False, "width": {"left": 3.6, "right": 3.6}, "points": points,
+                                     "chainage": [r(v) for v in line.s],
+                                     "_note": "Stored distance per point, as a driveline or a survey keeps it (here equal to the geometry)."}},
+        "geometry": {"meshes": [{"id": "stage_collision", "uri": "meshes/coll_de_prova_collision.usda", "roles": ["collision"]},
+                                {"id": "stage_ground", "uri": "meshes/coll_de_prova_ground.usda", "roles": ["visual", "collision"],
+                                 "_note": "5 cm under the collision ribbon, so the ribbon is touched on the road and the ground beyond it"}],
+                     "terrain": stage_terrain(line, extent)},
+        "surfaces": {
+            "default": "verge_grass",
+            "library": {
+                "gravel_loose": {
+                    "name": "Loose gravel on hardpack",
+                    "class": "gravel",
+                    "mf_scaling": {"LMUX": 0.62, "LMUY": 0.58, "LKX": 0.45, "LKY": 0.55, "_est": True},
+                    "by_tyre_class": {
+                        "gravel": {"mf_scaling": {"LMUX": 0.76, "LMUY": 0.72, "LKX": 0.55, "LKY": 0.6, "_est": True}},
+                        "slick": {"mf_scaling": {"LMUX": 0.45, "LMUY": 0.4, "LKX": 0.35, "LKY": 0.4, "_est": True}}
+                    },
+                    "rolling_resistance": 0.025,
+                    "roughness": {"iso8608": {"gd_n0": 0.000256, "w": 2.0, "class": "C"}},
+                    "wet_response": [[0.0, 1.0], [0.002, 0.88], [0.01, 0.72]],
+                    "deformable": {
+                        "effective": {"drag_coefficient": 0.002, "sinkage": 0.015, "loose_layer_depth": 0.03,
+                                      "base_offset": 0.04, "base_surface": "gravel_hardpack", "_est": True},
+                        "terramechanics": {
+                            "model": "bekker_wong_janosi", "n": 0.7, "k_c": 5270.0, "k_phi": 1515040.0, "cohesion": 1720.0,
+                            "friction_angle": 0.506, "shear_deformation_modulus": 0.025, "bulk_density": 1700.0,
+                            "source": "Sandy loam values from Wong, Theory of Ground Vehicles, used as a placeholder.",
+                            "_note": "No published Bekker values exist for rally gravel; these are not a measurement of this stage."
+                        }
+                    },
+                    "track_limits": "inside",
+                    "water": {"drain_rate": 25.0, "wet_look": "rough"},
+                    "effects": {"dust": {"color": [0.62, 0.55, 0.45], "amount": 0.8}, "spray": 0.6,
+                                "marks": {"color": [0.35, 0.3, 0.25], "persistence": "drive"}},
+                    "x_rbr": {"_note": ILLUSTRATIVE, "ruts": {"enabled": True, "max_depth": 0.06}}
+                },
+                "gravel_hardpack": {
+                    "name": "Swept line (hardpack)",
+                    "class": "gravel",
+                    "mf_scaling": {"LMUX": 0.74, "LMUY": 0.7, "LKX": 0.6, "LKY": 0.65, "_est": True},
+                    "by_tyre_class": {"gravel": {"mf_scaling": {"LMUX": 0.85, "LMUY": 0.8, "_est": True}}},
+                    "rolling_resistance": 0.012,
+                    "roughness": {"iso8608": {"gd_n0": 0.000128, "w": 2.0}, "sinusoid": {"amplitude": 0.01, "wavelength": 6.0}},
+                    "wet_response": [[0.0, 1.0], [0.002, 0.82], [0.01, 0.65]],
+                    "track_limits": "inside"
+                },
+                "asphalt_worn": {
+                    "name": "Worn rural tarmac",
+                    "class": "asphalt",
+                    "mf_scaling": {"LMUX": 0.93, "LMUY": 0.92, "_est": True},
+                    "roughness": {"iso8608": {"gd_n0": 6.4e-05, "w": 2.0, "class": "B"}, "mean_profile_depth": 0.0012},
+                    "wet_response": [[0.0, 1.0], [0.0005, 0.88], [0.002, 0.72], [0.005, 0.6]],
+                    "water": {"drain_rate": 5.0, "wet_look": "puddles"},
+                    "track_limits": "inside"
+                },
+                "verge_grass": {
+                    "class": "grass",
+                    "mf_scaling": {"LMUX": 0.5, "LMUY": 0.45, "LKX": 0.5, "LKY": 0.5, "_est": True},
+                    "rolling_resistance": 0.05,
+                    "deformable": {"effective": {"drag_coefficient": 0.004, "sinkage": 0.02, "_est": True}},
+                    "wet_response": [[0.0, 1.0], [0.0005, 0.7], [0.002, 0.45]],
+                    "water": {"drain_rate": 15.0, "wet_look": "rough"},
+                    "impact": {"friction": 0.6, "restitution": 0.1, "response": "soft"},
+                    "track_limits": "outside"
+                },
+                "gravel_rutted": {
+                    "name": "Worn line: rutted hardpack",
+                    "class": "gravel",
+                    "mf_scaling": {"LMUX": 0.7, "LMUY": 0.64, "LKX": 0.55, "LKY": 0.6, "_est": True},
+                    "by_tyre_class": {"gravel": {"mu": {"peak": 0.86, "sliding": 0.78, "_est": True}}},
+                    "rolling_resistance": 0.018,
+                    "roughness": {"iso8608": {"gd_n0": 0.000512, "w": 2.0, "class": "D"}, "sinusoid": {"amplitude": 0.03, "wavelength": 3.5}},
+                    "track_limits": "inside"
+                },
+                "rock_outcrop": {
+                    "class": "rock",
+                    "mf_scaling": {"LMUX": 0.8, "LMUY": 0.78, "_est": True},
+                    "impact": {"friction": 0.5, "restitution": 0.25, "response": "rigid"},
+                    "track_limits": "outside"
+                }
+            },
+            "reference_mu": {"gravel": {"peak": 1.1, "sliding": 1.0}, "studded": {"peak": 1.0, "sliding": 0.9},
+                             "_est": True, "_note": "mu of each tyre class on STJ-REF (dry clean asphalt); estimates"},
+            "maps": [
+                {"mesh_ref": "stage_ground", "material": "Ground_Sec01", "palette": SURFACE_PALETTE_WORN,
+                 "weights": {"encoding": "vertex_top3", "weights": "stj_surf_weights",
+                             "indices": ["stj_surf_layers_0", "stj_surf_layers_1", "stj_surf_layers_2"]},
+                 "contact": "blend", "when": {"signal": "wear", "op": "ge", "value": 0.75},
+                 "_note": "worn: the swept wheel tracks become rutted"},
+                {"mesh_ref": "stage_ground", "material": "Ground_Sec01", "palette": SURFACE_PALETTE,
+                 "weights": {"encoding": "vertex_top3", "weights": "stj_surf_weights",
+                             "indices": ["stj_surf_layers_0", "stj_surf_layers_1", "stj_surf_layers_2"]},
+                 "contact": "blend"}
+            ],
+            "line_states": [{
+                "id": "swept", "kind": "swept", "applies_to": ["gravel_loose"], "line": "race", "spread": 1.2,
+                "loose_layer_factor": 0.3, "grip_gain": {"LMUX": 0.08, "LMUY": 0.08, "_est": True},
+                "levels": {"stage": 0.6},
+                "_note": "Mid-field running order: the line is partly swept. RBR's 'normal' gravel state."}],
+            "bindings": [
+                {"mesh_ref": "stage_collision", "material": "GravelFine", "surface": "gravel_loose"},
+                {"mesh_ref": "stage_collision", "material": "Tarmac", "surface": "asphalt_worn"}
+            ],
+            "bands": [
+                {"s_start": 0.0, "s_end": Lr, "t_min": 3.6, "t_max": 9.0, "surface": "verge_grass"},
+                {"s_start": 0.0, "s_end": Lr, "t_min": -9.0, "t_max": -3.6, "surface": "verge_grass"},
+                {"s_start": 0.0, "s_end": Lr, "t_min": -3.6, "t_max": 3.6, "surface": "gravel_loose"},
+                {"s_start": 0.0, "s_end": Lr, "t_min": -2.3, "t_max": -1.1, "surface": "gravel_hardpack"},
+                {"s_start": 0.0, "s_end": Lr, "t_min": 1.1, "t_max": 2.3, "surface": "gravel_hardpack"},
+                {"s_start": t_lo, "s_end": t_hi, "t_min": -3.6, "t_max": 3.6, "surface": "asphalt_worn"}
+            ]
+        },
+        "timing": {
+            "start": {"s": start},
+            "split_points": [{"id": "split1", "s": split1}, {"id": "split2", "s": split2}],
+            "finish": {"s": finish},
+            "stop": {"s": stop},
+            "controls": [
+                {"id": "tc1", "kind": "time_control", "position": [r(sx - 6), r(sy - 40), r(sz)], "target_time": 900.0},
+                {"id": "service_in", "kind": "service_in", "position": [r(sx - 60), r(sy - 80), r(sz)]}
+            ],
+            "side_roads": [
+                {"s": 520.0, "side": "right", "heading_offset": -1.2, "blocked_by": "tape", "cut_penalty": 10.0},
+                {"s": 1310.0, "side": "left", "heading_offset": 1.4, "blocked_by": "barrier"}
+            ]
+        },
+        "race": {
+            "spawns": [{"id": "stage_start", "pose": {"s": start - 0.5, "t": 0.0}}],
+            "start_procedure": {"type": "staggered", "start_interval": 60.0},
+            "racing_lines": [{"id": "race", "purpose": "race", "points": [[r(c) for c in line.point(sv)] for sv in range(0, int(L), 10)],
+                              "_note": "Illustrative: the centerline. A real line cuts corners and is vehicle-specific."}],
+            "service_areas": [{"id": "service_park", "kind": "service",
+                               "polygon": [[r(sx - 90), r(sy - 110), r(sz)], [r(sx - 30), r(sy - 110), r(sz)],
+                                           [r(sx - 30), r(sy - 60), r(sz)], [r(sx - 90), r(sy - 60), r(sz)]]}],
+            "pacenotes": {"scale": "ascending_1_6", "language": "en", "written_for": "R5 / Rally2, dry", "notes": notes},
+            "sections": [
+                {"id": "sec1", "s_start": start, "s_end": split1, "reference_time": 52.0, "surface": "gravel_loose",
+                 "ratings": {"curves": 3, "rough": 2, "obstacles": 2, "straights": 3}},
+                {"id": "sec2", "s_start": split1, "s_end": split2, "reference_time": 47.5, "surface": "asphalt_worn",
+                 "ratings": {"curves": 4, "rough": 1, "obstacles": 3, "straights": 2}},
+                {"id": "sec3", "s_start": split2, "s_end": finish, "reference_time": 45.0, "surface": "gravel_loose",
+                 "ratings": {"curves": 3, "rough": 3, "obstacles": 2, "straights": 4}}
+            ]
+        },
+        "edges": [
+            {"id": "hairpin_bales", "side": "right", "s_start": r(hp_s - 10, 1), "s_end": r(hp_s + hp_len + 5, 1),
+             "kind": "barrier", "style": "hay_bale", "t": -4.5, "height": 1.2, "restitution": 0.1,
+             "prototype": "hay_bale", "spacing": 1.6},
+            {"id": "jump_ditch_l", "side": "left", "s_start": r(JUMP_S * k - 40, 1), "s_end": r(JUMP_S * k + 40, 1),
+             "kind": "verge", "style": "grass", "width": 1.5, "height": -0.6, "surface": "verge_grass"},
+            {"id": "rock_face", "side": "left", "s_start": 1720.0, "s_end": 1860.0, "kind": "barrier", "style": "rock",
+             "t": 5.0, "height": 4.0, "restitution": 0.3},
+            {"id": "hairpin_runoff", "side": "right", "s_start": r(hp_s - 30, 1), "s_end": r(hp_s + hp_len + 10, 1),
+             "kind": "invisible", "behaviour": "drag", "drag_coefficient": 3.0, "t": -9.0, "width": 8.0},
+            {"id": "side_road_tape", "side": "right", "s_start": 512.0, "s_end": 528.0, "kind": "barrier", "style": "tape",
+             "t": -4.0, "height": 1.0, "tearable": True}
+        ],
+        "layouts": [reverse_layout],
+        "variants": [
+            {"id": "wet", "name": "Rain", "kind": "weather", "override": "coll_de_prova_gravel_wet.usda"},
+            {"id": "winter", "name": "Winter", "kind": "season", "override": "coll_de_prova_gravel_winter.usda"}
+        ],
+        "ground": stage_ground(line),
+        "marshals": {
+            "sectors": [{"id": "ms1", "s_start": 0.0, "s_end": split1}, {"id": "ms2", "s_start": split1, "s_end": split2},
+                        {"id": "ms3", "s_start": split2, "s_end": Lr}],
+            "posts": [
+                {"id": "radio_1", "kind": "radio_point", "sector": "ms1", "s": 640.0, "side": "left"},
+                {"id": "radio_2", "kind": "radio_point", "sector": "ms2", "s": 1350.0, "side": "right"},
+                {"id": "hairpin_spectators", "kind": "spectator_point", "sector": "ms2", "s": r(hp_s, 1), "side": "right"}
+            ],
+            "vehicles": [{"id": "medical_start", "kind": "medical", "pose": {"s": 5.0, "t": 6.0}},
+                         {"id": "recovery_2", "kind": "recovery", "base": "radio_2"}],
+            "restricted_zones": [{"id": "service_speed", "rule": "speed_limit", "value": 8.3,
+                                  "shape": {"polygon": [[r(sx - 90), r(sy - 110)], [r(sx - 30), r(sy - 110)],
+                                                        [r(sx - 30), r(sy - 60)], [r(sx - 90), r(sy - 60)]]}}],
+            "reset": {"mode": "nearest_on_line", "t": 0.0, "min_spacing": 15.0,
+                      "points": [{"s": r(hp_s + hp_len + 25, 1), "t": 0.0, "_note": "after the hairpin, not in it"}]}
+        },
+        "dynamic": {
+            "line_states": [{"line_state": "swept", "gain_per_pass": 0.02, "wash": 0.05, "_est": True}],
+            "ruts": [{"surfaces": ["gravel_loose"], "line": "race", "depth_per_pass": 0.0015, "max_depth": 0.08,
+                      "track_width": 1.6, "rut_width": 0.3, "_est": True}],
+            "wear": {"cars_to_worn": 60.0, "_est": True},
+            "water": {"e0": 0.3, "c_wind": 0.2, "_est": True}
+        },
+        "water": {
+            "bodies": [{"id": "ford_ss1", "kind": "ford", "drivable": True, "flow_speed": 0.6, "bed_surface": "gravel_hardpack",
+                        "wading_drag": 0.02, "_est": True,
+                        "path": [[r(fx), r(fy), r(fz + 0.15), 6.0, 0.15] for fx, fy, fz in
+                                 (line.point(FORD_S * k, -12.0), line.point(FORD_S * k, 12.0))]},
+                       {"id": "puddle_dip", "kind": "puddle", "when": {"signal": "wetness", "op": "ge", "value": 0.6},
+                        "level": r(line.point(1265.0 * k)[2] + 0.03, 3), "depth": 0.04,
+                        "outline": [[r(c) for c in line.point(1265.0 * k + ds, dt)[:2]] for ds, dt in ((-4, -3), (4, -3), (4, 0.5), (-4, 0.5))],
+                        "fill": {"signal": "wetness", "curve": [[0.6, 0.3], [1.0, 1.0]]}}],
+            "shelter": [{"id": "pines_ss1", "kind": "canopy", "factor": 0.4,
+                         "band": {"s_start": 300.0, "s_end": 520.0, "t_min": -6.0, "t_max": 6.0}}]
+        },
+        "audio": {
+            "emitters": [{"id": "crowd_hairpin", "kind": "crowd", "sound": {"uri": "audio/crowd_loop.wav"},
+                          "path": [[r(c) for c in line.point(hp_s + f * hp_len, -14.0)] for f in (0.0, 0.5, 1.0)],
+                          "gain": 0.7, "ref_distance": 12.0, "max_distance": 300.0, "loop": True,
+                          "gain_by": {"signal": "time_to_arrival", "curve": [[0.0, 1.0], [8.0, 0.3]], "smoothing": 0.3},
+                          "_note": "the crowd cheers as a car approaches"}],
+            "reflections": [[1690.0, 40.0, 40.0], [1720.0, 6.0, 40.0], [1860.0, 6.0, 40.0], [1890.0, 40.0, 40.0]],
+            "zones": [{"id": "pine_forest", "reverb": "forest",
+                       "shape": {"band": {"s_start": 300.0, "s_end": 520.0, "t_min": -40.0, "t_max": 40.0}}}],
+            "ambience": "open"
+        },
+        "environment": {
+            "geo_reference": {
+                "proj": "+proj=tmerc +lat_0=41.95 +lon_0=1.62 +k=1 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs",
+                "latitude": 41.95, "longitude": 1.62, "altitude": 720.0, "vertical_datum": "EGM2008"
+            },
+            "north_heading": 1.5708,
+            "timezone": "Europe/Madrid",
+            "default_time": {"date": "2026-03-14", "local_time": "10:30"},
+            "sky": {"model": "physical", "turbidity": 2.2, "clouds": {"coverage": 0.3, "kind": "cumulus"}},
+            "lighting": {"sun": {"color_temperature": 5600.0}},
+            "season": {"name": "spring", "snow_cover": 0.0, "leaf_fraction": 0.8, "ground": "thawed"},
+            "weather_options": [
+                {"weather": {"condition": "partly_cloudy"}, "weight": 0.6},
+                {"variant": "wet", "weight": 0.25},
+                {"variant": "winter", "weight": 0.15}
+            ],
+            "default_weather": {"condition": "partly_cloudy", "air_temperature": 12.0, "track_temperature": 14.0,
+                                "relative_humidity": 0.55, "wind_speed": 3.0, "wind_from_heading": 4.0, "water_depth": 0.0}
+        },
+        "scenery": {
+            "prototypes": {
+                "scots_pine": {
+                    "class": "tree", "species": "Pinus sylvestris", "height": 16.0, "radius": 3.0,
+                    "collision": "trunk", "collision_radius": 0.25,
+                    "x_beamng": {"_note": ILLUSTRATIVE, "forest_item": "pine_tall"},
+                    "x_ue": {"_note": ILLUSTRATIVE, "foliage_type": "FT_ScotsPine"}
+                },
+                "grass_tuft": {
+                    "class": "grass", "height": 0.35, "collision": "none",
+                    "x_ac": {"_note": ILLUSTRATIVE, "csp_grass_fx": True}
+                },
+                "rock_small": {"class": "rock", "height": 0.4, "radius": 0.3, "collision": "mesh"},
+                "birch_sapling": {"class": "tree", "species": "Betula pendula", "height": 3.0, "radius": 0.8, "collision": "trunk",
+                                  "collision_radius": 0.05,
+                                  "physics": {"mode": "bendable", "mass": 8.0, "stiffness": 900.0,
+                                              "shape": {"kind": "cylinder", "radius": 0.05, "height": 3.0}, "_est": True}},
+                "spectator": {"class": "spectators", "height": 1.75, "collision": "none"},
+                "hay_bale": {"class": "barrier", "height": 1.2, "radius": 0.75,
+                             "physics": {"mode": "movable", "mass": 250.0, "center_of_mass": [0.0, 0.0, 0.6],
+                                         "inertia": [65.2, 65.2, 70.3], "shape": {"kind": "cylinder", "radius": 0.75, "height": 1.2},
+                                         "friction": 0.6, "restitution": 0.1, "respawn": "session", "_est": True}}
+            },
+            "crowds": [{"id": "hairpin_crowd", "prototype": "spectator", "density": 1.2, "behaviour": "flee", "flee_distance": 8.0,
+                        "area": {"band": {"s_start": r(hp_s - 10, 1), "s_end": r(hp_s + hp_len + 10, 1), "t_min": -22.0, "t_max": -12.0}}}],
+            "instances": [{"prototype": "scots_pine", "transforms": trees},
+                          {"prototype": "birch_sapling", "transforms": [[r(c) for c in line.point(hp_s + hp_len * f, -7.0)] + [0.0]
+                                                                         for f in (0.2, 0.5, 0.8)]}],
+            "scatter": [
+                {"id": "verge_grass", "prototypes": [{"prototype": "grass_tuft"}], "density": 8.0,
+                 "area": {"surfaces": ["verge_grass"]}, "scale_range": [0.7, 1.3], "align_to_normal": True,
+                 "cull_distance": 80.0, "seed": 11,
+                 "when": {"signal": "snow_cover", "op": "lt", "value": 0.5},
+                 "x_beamng": {"_note": ILLUSTRATIVE, "groundcover": "verge_grass_gc"}},
+                {"id": "forest_fill", "prototypes": [{"prototype": "scots_pine", "weight": 1.0}, {"prototype": "rock_small", "weight": 0.2}],
+                 "density": 0.02, "min_spacing": 4.0, "seed": 7,
+                 "area": {"bands": [{"s_start": 0.0, "s_end": Lr, "t_min": 14.0, "t_max": 80.0},
+                                    {"s_start": 0.0, "s_end": Lr, "t_min": -80.0, "t_max": -14.0}]}}
+            ]
+        }
+    }
+    return doc
+
+
+def wet_override():
+    return {
+        "_metadata": {"specification": "STJ-OVERRIDE", "version": "0.1", "base": "./coll_de_prova_gravel.usda",
+                      "variant": "weather", "description": "Rain: water film, low cloud, wetter verges."},
+        "patch": {
+            "environment": {
+                "sky": {"clouds": {"coverage": 0.95, "kind": "stratus"}, "fog": {"visibility": 1500.0, "height_falloff": 200.0}},
+                "default_weather": {"condition": "rain", "air_temperature": 9.0, "track_temperature": 9.0,
+                                    "relative_humidity": 0.95, "precipitation": 4.0, "water_depth": 0.0015,
+                                    "visibility": 2000.0}
+            },
+            "surfaces": {"library": {"verge_grass": {"deformable": {"effective": {"sinkage": 0.04}}}}},
+            "water": {"accumulation_bands": [{"s_start": 1240.0, "s_end": 1290.0, "t_min": -3.6, "t_max": 0.0, "factor": 1.8,
+                                              "_note": "a dip on the tarmac section where water stands"}]}
+        }
+    }
+
+
+def winter_override():
+    """Snow: one surface map and a season block, no arrays repeated (spec §6.3, §11)."""
+    return {
+        "_metadata": {"specification": "STJ-OVERRIDE", "version": "0.3", "base": "./coll_de_prova_gravel.usda",
+                      "variant": "season", "description": "Winter: packed snow on the road, soft snow on the verges."},
+        "patch": {
+            "environment": {"season": {"name": "winter", "snow_cover": 0.8, "snow_depth": 0.08, "leaf_fraction": 0.6,
+                                       "ground": "frozen"},
+                            "default_time": {"date": "2026-01-24"},
+                            "default_weather": {"condition": "snow", "air_temperature": -4.0, "track_temperature": -6.0}},
+            "surfaces": {
+                "library": {
+                    "snow_packed": {"class": "snow", "mf_scaling": {"LMUX": 0.32, "LMUY": 0.3, "LKX": 0.5, "LKY": 0.5, "_est": True},
+                                    "by_tyre_class": {"studded": {"mu": {"peak": 0.55, "sliding": 0.48, "_est": True}}},
+                                    "rolling_resistance": 0.02, "track_limits": "inside"},
+                    "snow_soft": {"class": "snow", "mf_scaling": {"LMUX": 0.25, "LMUY": 0.22, "LKX": 0.4, "LKY": 0.4, "_est": True},
+                                  "rolling_resistance": 0.06,
+                                  "deformable": {"effective": {"drag_coefficient": 0.006, "sinkage": 0.06, "_est": True}},
+                                  "track_limits": "outside"}
+                },
+                "substitutions": {"gravel_loose": "snow_packed", "gravel_hardpack": "snow_packed", "gravel_rutted": "snow_packed",
+                                  "asphalt_worn": "snow_packed", "verge_grass": "snow_soft"}
+            }
+        }
+    }
+
+
+def write_wav(path, fn, seconds=1.0, rate=22050):
+    """Placeholder sound: 16-bit mono WAV from a sample function."""
+    import struct
+    import wave
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(struct.pack("<h", int(32767 * max(-1.0, min(1.0, fn(i))))) for i in range(int(seconds * rate))))
+
+
+# ── the ring inside OpenUSD (spec §7.7, §7.8) ────────────────────────────────
+
+def blend_ring():
+    """The ring as STJ inside USD: one .usda holds the mesh, its surface weights, a dry/wet variant set,
+    an animated flag, a physical cone and the STJ document itself; a .usdz packages it."""
+    from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, Vt
+    import stj_usd
+
+    folder = HERE
+    path = folder / "test_ring_blend.usda"
+    doc = test_ring()
+    line = core.ReferenceLine(doc["reference"]["centerline"]["points"], closed=True)
+    L = line.length
+    a1 = (300.0, 300.0 + math.pi * 60)
+    a2 = (600.0 + math.pi * 60, L)
+    palette = ["asphalt", "kerb", "grass", "gravel_trap"]
+    ts = [-25.0, -9.0, -7.5, -6.0, -3.0, 0.0, 3.0, 6.0, 7.5, 9.0, 25.0]
+    n = int(L // 5)
+    ss = [i * L / n for i in range(n)]
+
+    def ramp(x, a, b):
+        return min(1.0, max(0.0, (x - a) / (b - a)))
+
+    def dense(s, t):
+        on_arc = a1[0] <= s <= a1[1] or a2[0] <= s <= a2[1]
+        asphalt = 1.0 - ramp(abs(t), 5.5, 6.5)
+        kerb = ramp(t, 5.5, 6.2) * (1.0 - ramp(t, 7.2, 8.0)) if on_arc else 0.0
+        gravel = ramp(-t, 7.0, 8.5) if a1[0] <= s <= a1[1] else 0.0
+        grass = ramp(abs(t), 5.5, 7.5) * (1.0 - kerb) * (1.0 - gravel)
+        w = [asphalt, kerb, grass, gravel]
+        total = sum(w) or 1.0
+        return [x / total for x in w]
+
+    k = len(ts)
+    points = [line.point(s, t) for s in ss for t in ts]
+    counts, indices, layers, weights = [], [], [], []
+    for i in range(n):
+        i1 = (i + 1) % n
+        for j in range(k - 1):
+            corners = [(i, j), (i1, j), (i1, j + 1), (i, j + 1)]
+            ws = [dense(ss[a], ts[b]) for a, b in corners]
+            top = sorted(range(4), key=lambda q: -sum(w[q] for w in ws))[:3]
+            counts.append(4)
+            indices += [a * k + b for a, b in corners]
+            layers.append(tuple(top))
+            for w in ws:
+                sub = [w[q] for q in top]
+                tot = sum(sub) or 1.0
+                weights.append((r(sub[0] / tot, 4), r(sub[1] / tot, 4)))
+
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    stage.SetStartTimeCode(0)
+    stage.SetEndTimeCode(24)
+    stage.SetTimeCodesPerSecond(24)
+    track = UsdGeom.Xform.Define(stage, "/track")
+    stage.SetDefaultPrim(track.GetPrim())
+
+    mesh = UsdGeom.Mesh.Define(stage, "/track/ribbon")
+    mesh.CreatePointsAttr(Vt.Vec3fArray([tuple(r(c, 3) for c in p) for p in points]))
+    mesh.CreateFaceVertexCountsAttr(Vt.IntArray(counts))
+    mesh.CreateFaceVertexIndicesAttr(Vt.IntArray(indices))
+    mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+    pv = UsdGeom.PrimvarsAPI(mesh)
+    # three uniform int primvars (Blender has no int3 attribute) and faceVarying weights: no vertex is split
+    for q in range(3):
+        pv.CreatePrimvar(f"stj_surf_layers_{q}", Sdf.ValueTypeNames.IntArray, UsdGeom.Tokens.uniform).Set(
+            Vt.IntArray([lay[q] for lay in layers]))
+    pv.CreatePrimvar("stj_surf_weights", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.faceVarying).Set(Vt.Vec2fArray(weights))
+
+    mat = UsdShade.Material.Define(stage, "/track/materials/Ground")
+    shader = UsdShade.Shader.Define(stage, "/track/materials/Ground/surface")
+    shader.CreateIdAttr("UsdPreviewSurface")
+    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set((0.32, 0.32, 0.3))
+    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float)       # set only inside the variants: a local value would win
+    mat.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+    UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(mat)
+
+    # dry / wet: what the stage shows; the STJ variant's JSON patch changes the physics (water depth)
+    vs = track.GetPrim().GetVariantSets().AddVariantSet("stj_condition")
+    for name, value in (("dry", 0.8), ("wet", 0.15)):
+        vs.AddVariant(name)
+        vs.SetVariantSelection(name)
+        with vs.GetVariantEditContext():
+            shader.GetInput("roughness").Set(value)
+    vs.SetVariantSelection("dry")
+
+    flag = UsdGeom.Xform.Define(stage, "/track/flag")
+    flag.AddTranslateOp().Set((232.0, 0.0, 1.5))
+    rot = flag.AddRotateZOp()
+    for tc, angle in ((0, -20.0), (12, 20.0), (24, -20.0)):
+        rot.Set(angle, tc)
+    cone_x = UsdGeom.Xform.Define(stage, "/track/cone")
+    cone = UsdGeom.Cone.Define(stage, "/track/cone/shape")
+    cone.CreateRadiusAttr(0.18)
+    cone.CreateHeightAttr(0.7)
+    cone.CreateAxisAttr(UsdGeom.Tokens.z)
+    UsdPhysics.RigidBodyAPI.Apply(cone_x.GetPrim())
+    UsdPhysics.MassAPI.Apply(cone_x.GetPrim()).CreateMassAttr(4.5)
+    UsdPhysics.CollisionAPI.Apply(cone.GetPrim())
+    stage.GetRootLayer().Save()
+
+    doc["_metadata"] = {**doc["_metadata"], **META03,
+                        "description": "The minimal ring as STJ inside OpenUSD: the document lives in this layer's customLayerData; "
+                                       "the collision mesh blends surfaces with per-face layers and per-corner weights.",
+                        "authoring_source": {"uri": "test_ring_blend.blend", "tool": "Blender", "tool_version": "5.2",
+                                             "_note": "Not shipped: the example is generated in code."}}
+    surf = doc["surfaces"]
+    surf.pop("bands")
+    surf["library"]["gravel_trap"] = {"class": "gravel", "mf_scaling": {"LMUX": 0.5, "LMUY": 0.45, "LKX": 0.4, "LKY": 0.45, "_est": True},
+                                      "rolling_resistance": 0.08, "track_limits": "outside",
+                                      "deformable": {"effective": {"drag_coefficient": 0.02, "sinkage": 0.08, "loose_layer_depth": 0.25,
+                                                                   "_est": True}}}
+    surf["maps"] = [{"mesh_ref": "track", "material": "Ground", "palette": palette, "contact": "blend",
+                     "weights": {"encoding": "vertex_top3", "weights": "stj_surf_weights",
+                                 "indices": ["stj_surf_layers_0", "stj_surf_layers_1", "stj_surf_layers_2"]}}]
+    doc["geometry"] = {"meshes": [{"id": "track", "uri": "test_ring_blend.usda", "roles": ["collision", "visual"]}]}
+    doc["scenery"] = {
+        "prototypes": {"cone": {"class": "prop", "height": 0.7, "mesh": {"mesh_ref": "track", "prim": "/track/cone"},
+                                "physics": {"mode": "movable", "mass": 4.5, "shape": {"kind": "cylinder", "radius": 0.18, "height": 0.7},
+                                            "friction": 0.7}}},
+        "instances": [{"prototype": "cone", "transforms": [[r(c) for c in line.point(100.0 + 3 * q, -8.0)] + [0.0] for q in range(3)]}]
+    }
+    doc["animated_objects"] = [{"id": "flag_t1", "kind": "flag", "target": {"mesh_ref": "track", "nodes": ["/track/flag"]},
+                                "time_range": [0, 24], "playback": "loop",
+                                "when": {"signal": "flag", "op": "in", "value": ["yellow", "double_yellow"]}}]
+    doc["variants"] = [{"id": "wet", "name": "Rain", "kind": "weather", "override": "test_ring_blend_wet.usda",
+                        "usd_variants": {"stj_condition": "wet"}}]
+    core.embed_document(doc, path)
+    # the wet variant is a USD layer too (a .usdz holds no JSON): it sublayers the track, selects the
+    # USD 'wet' look itself, and carries the STJ override in its metadata
+    wet = folder / "test_ring_blend_wet.usda"
+    wet_layer = Sdf.Layer.CreateNew(str(wet))
+    wet_layer.subLayerPaths.append("./test_ring_blend.usda")
+    wet_stage = Usd.Stage.Open(wet_layer)
+    wet_stage.OverridePrim("/track").GetVariantSets().GetVariantSet("stj_condition").SetVariantSelection("wet")
+    wet_layer.Save()
+    core.embed_document({
+        "_metadata": {"specification": "STJ-OVERRIDE", "version": "0.3", "base": "./test_ring_blend.usda", "variant": "weather",
+                      "description": "Rain: the patch sets the water film; this layer also selects the USD 'wet' look."},
+        "patch": {"environment": {"default_weather": {"condition": "rain", "air_temperature": 14.0, "water_depth": 0.0012,
+                                                      "precipitation": 3.0}}}
+    }, wet)
+    files = stj_usd.document_files(doc, set()) | stj_usd.usd_files(path) | {wet.name}
+    stj_usd.write_usdz(path, folder / "test_ring_blend.usdz", files)
+
+
+def add_preview(stage, doc):
+    """Derived curves of the reference line and racing lines, so a plain USD viewer shows the track.
+
+    They are copies: the STJ document stays normative (spec §7.2). Marked stj:derived.
+    """
+    from pxr import Sdf, UsdGeom, Vt
+    prev = UsdGeom.Scope.Define(stage, "/track/stj_preview")
+    prev.GetPrim().CreateAttribute("stj:derived", Sdf.ValueTypeNames.Bool).Set(True)
+    curves = []
+    cl = (doc.get("reference") or {}).get("centerline")
+    line = core.reference_line(doc)
+    if line:
+        n = max(2, int(line.length // 2))
+        curves.append(("reference", [line.point(line.length * i / n) for i in range(n + 1)], (1.0, 1.0, 1.0)))
+    for rl in (doc.get("race") or {}).get("racing_lines", []):
+        pts = [tuple(p) for p in rl["points"]] + ([tuple(rl["points"][0])] if rl.get("closed") else [])
+        curves.append((f"line_{rl['id']}", pts, (0.98, 0.42, 0.11)))
+    for name, pts, color in curves:
+        c = UsdGeom.BasisCurves.Define(stage, f"/track/stj_preview/{name}")
+        c.CreateTypeAttr(UsdGeom.Tokens.linear)
+        c.CreatePointsAttr(Vt.Vec3fArray([(x, y, z + 0.2) for x, y, z in pts]))
+        c.CreateCurveVertexCountsAttr(Vt.IntArray([len(pts)]))
+        c.CreateWidthsAttr(Vt.FloatArray([0.4]))
+        c.CreateDisplayColorAttr(Vt.Vec3fArray([color]))
+    return cl
+
+
+def write_track(doc, name, extra=None):
+    """An STJ track: a USD stage (Z up, metres) with the document in customLayerData['stj'] (spec §3)."""
+    from pxr import Usd, UsdGeom
+    path = HERE / name
+    if path.exists():
+        path.unlink()
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    stage.SetTimeCodesPerSecond(FPS)
+    track = UsdGeom.Xform.Define(stage, "/track")
+    stage.SetDefaultPrim(track.GetPrim())
+    for m in (doc.get("geometry") or {}).get("meshes", []):
+        if m["uri"] != name:                      # meshes in other files are referenced, so USD viewers show them
+            stage.DefinePrim(f"/track/geometry/{m['id']}").GetReferences().AddReference(m["uri"])
+    add_preview(stage, doc)
+    if extra:
+        extra(stage)
+    stage.GetRootLayer().Save()
+    core.embed_document(doc, path)
+    return path
+
+
+def write_override(override, name, base, usd_variants=None):
+    """A variant as a USD layer: sublayers the track, selects USD variants, carries the STJ-OVERRIDE (spec §3.3)."""
+    from pxr import Sdf, Usd
+    path = HERE / name
+    if path.exists():
+        path.unlink()
+    layer = Sdf.Layer.CreateNew(str(path))
+    layer.subLayerPaths.append("./" + base)
+    if usd_variants:
+        stage = Usd.Stage.Open(layer)
+        prim = stage.OverridePrim("/track")
+        for vset, sel in usd_variants.items():
+            prim.GetVariantSets().AddVariantSet(vset).SetVariantSelection(sel)
+    layer.Save()
+    core.embed_document(override, path)
+
+
+def main():
+    if not core.have_pxr():
+        raise SystemExit("make_examples needs the pxr module: pip install usd-core")
+    for sub in ("terrain", "ui", "audio", "meshes", "ground"):
+        (HERE / sub).mkdir(exist_ok=True)
+    # the JSON and glTF forms of earlier versions are gone: a track is a USD stage (spec §3)
+    for old in [*HERE.glob("*.stj.json"), *HERE.glob("*.stj-override.json"), *(HERE / "meshes").glob("*.gltf"),
+                *(HERE / "usd").glob("*")]:
+        old.unlink()
+    if (HERE / "usd").is_dir():
+        (HERE / "usd").rmdir()
+    write_track(test_ring(), "test_ring_minimal.usda")
+    gp = test_ring_gp()
+    pit_y = -60 + 18
+    write_track(gp, "test_ring_gp.usda", extra=lambda st: gp_props(st, pit_y))
+    write_override(night_override(), "test_ring_gp_night.usda", "test_ring_gp.usda")
+    write_override(drying_override(), "test_ring_gp_drying.usda", "test_ring_gp.usda")
+    stage = coll_de_prova()
+    ribbon_usd.write_ribbon(HERE / "meshes" / "coll_de_prova_collision.usda", stage, "stage_collision", 5.0)
+    write_track(stage, "coll_de_prova_gravel.usda")
+    write_override(wet_override(), "coll_de_prova_gravel_wet.usda", "coll_de_prova_gravel.usda")
+    write_override(winter_override(), "coll_de_prova_gravel_winter.usda", "coll_de_prova_gravel.usda")
+    write_wav(HERE / "audio" / "pa_loop.wav", lambda i: 0.2 * math.sin(2 * math.pi * 440 * i / 22050))
+    noise = [0.0]
+    write_wav(HERE / "audio" / "crowd_loop.wav", lambda i: noise.append(0.97 * noise[-1] + 0.03 * ((i * 7919 % 2003) / 1001.5 - 1)) or noise[-1])
+    blend_ring()
+    print("examples written")
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,1077 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STJ Viewer</title>
+<meta name="description" content="Viewer for STJ (Standard Track JSON) tracks: reference line, surfaces, meshes, terrain, timing, race data, pace notes and scenery.">
+<style>
+:root {
+  --bg: #f4f4f2; --panel: #ffffff; --ink: #1b1b1d; --muted: #6b6b70; --line: #e2e2de;
+  --accent: #fa6b1d; --accent-ink: #ffffff; --scene: #e9eae6; --chip: #f0f0ec; --danger: #c0392b;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131416; --panel: #1b1c1f; --ink: #ececec; --muted: #9a9aa2; --line: #2c2d31;
+    --scene: #17181b; --chip: #25262a; --danger: #e5675a; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131416; --panel: #1b1c1f; --ink: #ececec; --muted: #9a9aa2; --line: #2c2d31;
+  --scene: #17181b; --chip: #25262a; --danger: #e5675a; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px;
+  border-bottom: 1px solid var(--line); background: var(--panel); }
+header .logo { display: flex; align-items: baseline; gap: 8px; font-weight: 700; letter-spacing: .02em; }
+header .logo b { color: var(--accent); }
+header .title { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+button, .btn, select { font: inherit; color: var(--ink); background: var(--chip); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+button:hover, .btn:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+main { display: flex; height: calc(100% - 52px); }
+aside { width: 320px; flex: none; overflow-y: auto; background: var(--panel); border-right: 1px solid var(--line); }
+section { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+section h2 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; }
+dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+.layers { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+.layers label, .row { display: flex; align-items: center; gap: 6px; }
+.row { justify-content: space-between; margin: 4px 0; }
+.row input[type=range] { flex: 1; }
+.legend { display: grid; gap: 4px; }
+.legend div { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center; }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,.15); }
+.small { font-size: 12px; color: var(--muted); }
+.notes { max-height: 260px; overflow-y: auto; display: grid; gap: 2px; }
+.notes button { text-align: left; background: transparent; border: none; padding: 3px 4px; border-radius: 6px; }
+.notes button:hover { background: var(--chip); }
+#stage { position: relative; flex: 1; min-width: 0; background: var(--scene); }
+#stage canvas { display: block; }
+#inspect { position: absolute; left: 12px; bottom: 12px; max-width: min(420px, calc(100% - 24px)); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); font-size: 13px; display: none; }
+#inspect b { color: var(--accent); }
+#status { position: absolute; right: 12px; top: 12px; max-width: min(440px, calc(100% - 24px)); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; box-shadow: var(--shadow); display: none; font-size: 13px; }
+#status.error { border-color: var(--danger); color: var(--danger); }
+#welcome { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; }
+#welcome .card { max-width: 520px; width: 100%; background: var(--panel); border: 2px dashed var(--line); border-radius: 16px;
+  padding: 28px; text-align: center; box-shadow: var(--shadow); }
+#welcome h1 { margin: 0 0 6px; font-size: 22px; }
+#welcome .ex { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
+#drop { position: fixed; inset: 0; background: rgba(250,107,29,.12); border: 3px dashed var(--accent); display: none;
+  place-items: center; font-size: 20px; font-weight: 600; z-index: 10; }
+.lbl { font: 600 11px/1.2 system-ui, sans-serif; padding: 2px 6px; border-radius: 6px; background: rgba(20,20,22,.78); color: #fff;
+  white-space: nowrap; pointer-events: none; }
+.lbl.note { background: rgba(250,107,29,.92); }
+.lbl.gate { background: rgba(30,120,60,.9); }
+.lbl.cam { background: rgba(60,60,160,.85); }
+#menu { display: none; }
+@media (max-width: 760px) {
+  main { flex-direction: column; }
+  aside { width: 100%; height: 42%; border-right: none; border-top: 1px solid var(--line); order: 2; }
+  #stage { height: 58%; }
+  header .title { display: none; }
+}
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <div class="logo"><b>STJ</b> Viewer</div>
+  <div class="title" id="title">Standard Track JSON</div>
+  <label class="btn" title="Open track files">Open files<input id="pickFiles" type="file" multiple hidden
+    accept=".json,.usda,.usd,.usdz,.gltf,.glb,.png,.raw"></label>
+  <label class="btn" title="Open a track folder">Folder<input id="pickDir" type="file" webkitdirectory hidden></label>
+  <button id="fit" title="Fit the view">Fit</button>
+  <button id="theme" title="Light / dark">◐</button>
+</header>
+<main>
+  <aside id="panel">
+    <section id="secTrack"><h2>Track</h2><div class="small">Open a track to start.</div></section>
+    <section id="secLayout" hidden><h2>Layout and variant</h2>
+      <div class="row"><span>Layout</span><select id="layout"></select></div>
+      <div class="row"><span>Variant</span><select id="variant"></select></div>
+    </section>
+    <section id="secState" hidden><h2>Conditions</h2>
+      <div class="row"><span>wear</span><input id="wear" type="range" min="0" max="1" step="0.05" value="0.5"><span id="wearV">0.50</span></div>
+      <div class="row"><span>wetness</span><input id="wet" type="range" min="0" max="1" step="0.05" value="0"><span id="wetV">0.00</span></div>
+      <div class="small">Signals (spec §11.1) that choose surface maps and conditional water.</div>
+    </section>
+    <section id="secLayers" hidden><h2>Layers</h2><div class="layers" id="layers"></div>
+      <div class="row" style="margin-top:8px"><span>Meshes</span><select id="meshMode">
+        <option value="surface">coloured by surface</option><option value="material">own materials</option></select></div>
+    </section>
+    <section id="secSurfaces" hidden><h2>Surfaces</h2><div class="legend" id="legend"></div></section>
+    <section id="secNotes" hidden><h2>Pace notes</h2><div class="notes" id="notes"></div></section>
+    <section><h2>About</h2><div class="small">Hover the track for s, t and the surface. Drop a folder or files anywhere.
+      Reads <code>.stj.json</code>, overrides, glTF, terrain PNG/raw, and STJ inside <code>.usda</code> / <code>.usdz</code> (text layers).
+      Spec: <a href="../spec/STJ_Spec.md">STJ_Spec.md</a>.</div></section>
+  </aside>
+  <div id="stage">
+    <div id="welcome"><div class="card">
+      <h1>Drop a track here</h1>
+      <div class="small">A folder, or the track file with its meshes and images.<br>Or open one of the examples (serve the repository over HTTP, e.g. <code>python -m http.server</code>).</div>
+      <div class="ex">
+        <button class="primary" data-ex="../examples/test_ring_gp.stj.json">GP ring</button>
+        <button data-ex="../examples/coll_de_prova_gravel.stj.json">Gravel stage</button>
+        <button data-ex="../examples/usd/test_ring_usd.usdz">USD ring (.usdz)</button>
+        <button data-ex="../examples/test_ring_minimal.stj.json">Minimal ring</button>
+      </div>
+    </div></div>
+    <div id="inspect"></div>
+    <div id="status"></div>
+  </div>
+</main>
+<div id="drop">Drop to open</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+// ── small helpers ───────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const fmt = (v, n = 1) => (typeof v === 'number' ? v.toFixed(n) : v);
+const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function status(msg, error = false, ms = 0) {
+  const el = $('status');
+  el.textContent = msg; el.className = error ? 'error' : ''; el.style.display = msg ? 'block' : 'none';
+  if (ms) setTimeout(() => { if (el.textContent === msg) el.style.display = 'none'; }, ms);
+}
+
+// ── files: dropped/picked files, or URLs when the page is served ─────────────
+const files = new Map();      // key (relative path or absolute URL) -> Blob
+let urlMode = false;
+function norm(p) {
+  const out = [];
+  for (const seg of p.replace(/\\/g, '/').split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') out.pop(); else out.push(seg);
+  }
+  return out.join('/');
+}
+const dirOf = (p) => (urlMode ? p.slice(0, p.lastIndexOf('/') + 1) : p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+function resolveRel(from, rel) {
+  if (urlMode) return new URL(rel, from).href;
+  const d = dirOf(from);
+  return norm(d ? d + '/' + rel : rel);
+}
+async function readBlob(path) {
+  if (files.has(path)) return files.get(path);
+  if (!urlMode) {
+    const base = path.split('/').pop();
+    for (const [k, v] of files) if (k.split('/').pop() === base) return v;
+    throw new Error(`file not found: ${path}`);
+  }
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`${path.split('/').pop()}: HTTP ${r.status}`);
+  return r.blob();
+}
+const readText = async (p) => (await readBlob(p)).text();
+const readBuffer = async (p) => (await readBlob(p)).arrayBuffer();
+const lower = (p) => p.toLowerCase().split('?')[0];
+
+// ── zip (.usdz) ──────────────────────────────────────────────────────────────
+async function inflate(bytes, raw) {
+  const ds = new DecompressionStream(raw ? 'deflate-raw' : 'deflate');
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer());
+}
+async function unzip(buf) {
+  const dv = new DataView(buf);
+  let eocd = -1;
+  for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('not a zip / usdz file');
+  const n = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+    const loc = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(new Uint8Array(buf, p + 46, nlen));
+    const start = loc + 30 + dv.getUint16(loc + 26, true) + dv.getUint16(loc + 28, true);
+    let data = new Uint8Array(buf, start, csize);
+    if (method === 8) data = await inflate(data, true);
+    out.push({ name, data });
+    p += 46 + nlen + xlen + clen;
+  }
+  return out;
+}
+
+// ── PNG (8/16 bit, grey/RGB/RGBA) and raw float32 ────────────────────────────
+async function decodePNG(buf) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  let pos = 8, head = null; const idat = [];
+  while (pos < u8.length) {
+    const len = dv.getUint32(pos), type = String.fromCharCode(...u8.subarray(pos + 4, pos + 8));
+    if (type === 'IHDR') head = { w: dv.getUint32(pos + 8), h: dv.getUint32(pos + 12), depth: u8[pos + 16], ctype: u8[pos + 17] };
+    if (type === 'IDAT') idat.push(u8.subarray(pos + 8, pos + 8 + len));
+    pos += 12 + len;
+  }
+  const ch = { 0: 1, 2: 3, 4: 2, 6: 4 }[head.ctype];
+  if (!ch || (head.depth !== 8 && head.depth !== 16)) throw new Error('unsupported PNG');
+  const raw = await inflate(new Uint8Array(await new Blob(idat).arrayBuffer()), false);
+  const bpp = ch * head.depth / 8, stride = head.w * bpp;
+  const out = new Uint8Array(stride * head.h);
+  for (let j = 0; j < head.h; j++) {
+    const f = raw[j * (stride + 1)], src = raw.subarray(j * (stride + 1) + 1, (j + 1) * (stride + 1));
+    const dst = out.subarray(j * stride, (j + 1) * stride), prev = j ? out.subarray((j - 1) * stride, j * stride) : null;
+    for (let k = 0; k < stride; k++) {
+      const a = k >= bpp ? dst[k - bpp] : 0, b = prev ? prev[k] : 0, c = prev && k >= bpp ? prev[k - bpp] : 0;
+      let v = src[k];
+      if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) { const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c); v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+      dst[k] = v & 255;
+    }
+  }
+  let data;
+  if (head.depth === 16) { data = new Uint16Array(out.length / 2); for (let i = 0; i < data.length; i++) data[i] = (out[2 * i] << 8) | out[2 * i + 1]; }
+  else data = out;
+  return { w: head.w, h: head.h, ch, max: head.depth === 16 ? 65535 : 255, data };
+}
+
+// ── USDA: the STJ document and meshes (text layers only) ─────────────────────
+function usdaStringAt(text, i) {
+  const q = text[i]; let out = ''; i++;
+  while (i < text.length && text[i] !== q) {
+    if (text[i] === '\\') { const n = text[i + 1]; out += n === 'n' ? '\n' : n === 't' ? '\t' : n; i += 2; }
+    else out += text[i++];
+  }
+  return out;
+}
+function usdaDocument(text) {
+  if (!text.startsWith('#usda')) throw new Error('only text USD (.usda, or .usdz with .usda inside) can be read in the browser');
+  const m = /string\s+stj\s*=\s*(["'])/.exec(text.slice(0, text.indexOf('\ndef ') > 0 ? text.indexOf('\ndef ') : text.length));
+  if (!m) throw new Error('no STJ document in customLayerData["stj"]');
+  return JSON.parse(usdaStringAt(text, m.index + m[0].length - 1));
+}
+function bracketBody(text, i) {            // text[i] === '[' -> content up to the matching ']'
+  let depth = 0, j = i;
+  for (; j < text.length; j++) { if (text[j] === '[') depth++; else if (text[j] === ']' && --depth === 0) break; }
+  return [text.slice(i + 1, j), j];
+}
+const numbers = (s) => (s.match(/-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g) || []).map(Number);
+function usdaMeshes(text) {
+  const meshes = [];
+  const re = /def Mesh "([^"]+)"/g; let m;
+  while ((m = re.exec(text))) {
+    let i = text.indexOf('{', m.index), depth = 0, j = i;
+    for (; j < text.length; j++) { if (text[j] === '{') depth++; else if (text[j] === '}' && --depth === 0) break; }
+    const body = text.slice(i, j);
+    const arr = (name) => { const k = body.search(new RegExp(`\\s${name.replace(/[:[\]]/g, '\\$&')}\\s*=\\s*\\[`)); if (k < 0) return null; return numbers(bracketBody(body, body.indexOf('[', k))[0]); };
+    const primvars = {};
+    const pre = /\s([\w]+(?:\[\])?)\s+primvars:([\w:]+)\s*=\s*\[/g; let pm;
+    while ((pm = pre.exec(body))) {
+      const [content, end] = bracketBody(body, body.indexOf('[', pm.index + pm[0].length - 1));
+      const tail = body.slice(end, end + 160);
+      const interp = (/^\s*\(\s*interpolation\s*=\s*"(\w+)"/.exec(tail) || [])[1] || 'constant';
+      primvars[pm[2]] = { type: pm[1], interp, values: numbers(content) };
+    }
+    const mat = (/rel material:binding\s*=\s*<([^>]+)>/.exec(body) || [])[1];
+    meshes.push({ name: m[1], points: arr('point3f[] points') || arr('points'), counts: arr('faceVertexCounts'),
+      indices: arr('faceVertexIndices'), primvars, material: mat ? mat.split('/').pop() : null });
+  }
+  return meshes;
+}
+
+// ── STJ core ports: merge patch, reference line, layouts, conditions ────────
+function mergePatch(target, patch) {
+  if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return structuredClone(patch);
+  const out = target && typeof target === 'object' && !Array.isArray(target) ? structuredClone(target) : {};
+  for (const [k, v] of Object.entries(patch)) { if (v === null) delete out[k]; else out[k] = mergePatch(out[k], v); }
+  return out;
+}
+class RefLine {
+  constructor(points, closed = false, chainage = null, tangents = null) {
+    this.points = points.map((p) => [p[0], p[1], p[2] || 0]);
+    this.tangents = tangents ? tangents.map((t) => [...t]) : null;
+    if (closed) { this.points.push([...this.points[0]]); if (this.tangents) this.tangents.push([...this.tangents[0]]); }
+    this.closed = closed;
+    this.geo = [0];
+    for (let i = 0; i < this.points.length - 1; i++) this.geo.push(this.geo[i] + this.segLen(i));
+    if (chainage && chainage.length === points.length) {
+      this.s = [...chainage];
+      if (closed) this.s.push(this.s[this.s.length - 1] + this.geo[this.geo.length - 1] - this.geo[this.geo.length - 2]);
+    } else this.s = [...this.geo];
+    this.length = this.s[this.s.length - 1];
+    this.dense = [];
+    for (let i = 0; i < this.points.length - 1; i++) {
+      const n = this.tangents ? 32 : 1;
+      for (let k = 0; k < n; k++) { const u = k / n, p = this.pos(i, u); this.dense.push([p[0], p[1], this.s[i] + u * (this.s[i + 1] - this.s[i])]); }
+    }
+    const last = this.points[this.points.length - 1];
+    this.dense.push([last[0], last[1], this.length]);
+  }
+  pos(i, u) {
+    const a = this.points[i], b = this.points[i + 1];
+    if (!this.tangents) return [0, 1, 2].map((k) => a[k] + u * (b[k] - a[k]));
+    const ta = this.tangents[i], tb = this.tangents[i + 1], u2 = u * u, u3 = u2 * u;
+    const h = [2 * u3 - 3 * u2 + 1, u3 - 2 * u2 + u, -2 * u3 + 3 * u2, u3 - u2];
+    return [0, 1, 2].map((k) => h[0] * a[k] + h[1] * ta[k] + h[2] * b[k] + h[3] * tb[k]);
+  }
+  dir(i, u) {
+    const a = this.points[i], b = this.points[i + 1];
+    if (!this.tangents) return [b[0] - a[0], b[1] - a[1]];
+    const ta = this.tangents[i], tb = this.tangents[i + 1], u2 = u * u;
+    const h = [6 * u2 - 6 * u, 3 * u2 - 4 * u + 1, -6 * u2 + 6 * u, 3 * u2 - 2 * u];
+    return [0, 1].map((k) => h[0] * a[k] + h[1] * ta[k] + h[2] * b[k] + h[3] * tb[k]);
+  }
+  segLen(i) {
+    if (!this.tangents) { const a = this.points[i], b = this.points[i + 1]; return Math.hypot(b[0] - a[0], b[1] - a[1]); }
+    let t = 0, prev = this.pos(i, 0);
+    for (let k = 1; k <= 32; k++) { const p = this.pos(i, k / 32); t += Math.hypot(p[0] - prev[0], p[1] - prev[1]); prev = p; }
+    return t;
+  }
+  seg(s) {
+    if (this.closed) s = ((s % this.length) + this.length) % this.length;
+    s = Math.min(Math.max(s, 0), this.length);
+    let lo = 0, hi = this.s.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (this.s[mid] <= s) lo = mid; else hi = mid; }
+    return [lo, s];
+  }
+  frame(s) {
+    const [i, ss] = this.seg(s), ds = this.s[i + 1] - this.s[i], u = ds < 1e-12 ? 0 : (ss - this.s[i]) / ds;
+    const p = this.pos(i, u), d = this.dir(i, u);
+    return [p[0], p[1], p[2], Math.atan2(d[1], d[0])];
+  }
+  point(s, t = 0) { const [x, y, z, h] = this.frame(s); return [x - t * Math.sin(h), y + t * Math.cos(h), z]; }
+  project(x, y) {
+    let best = null; const d = this.dense;
+    for (let i = 0; i < d.length - 1; i++) {
+      const a = d[i], b = d[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], ds = dx * dx + dy * dy;
+      const u = ds < 1e-18 ? 0 : Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / ds));
+      const d2 = (x - a[0] - u * dx) ** 2 + (y - a[1] - u * dy) ** 2;
+      if (!best || d2 < best[0]) { const seg = Math.sqrt(ds); best = [d2, a[2] + u * (b[2] - a[2]), seg < 1e-9 ? 0 : (dx * (y - a[1]) - dy * (x - a[0])) / seg]; }
+    }
+    return [this.closed && this.length ? ((best[1] % this.length) + this.length) % this.length : best[1], best[2]];
+  }
+}
+function refLine(doc) {
+  const cl = doc.reference?.centerline;
+  if (!cl?.points || cl.points.length < 2) return null;
+  const n = cl.points.length;
+  const ch = Array.isArray(cl.chainage) && cl.chainage.length === n ? cl.chainage : null;
+  const tan = Array.isArray(cl.tangents) && cl.tangents.length === n ? cl.tangents : null;
+  return new RefLine(cl.points, !!cl.closed, ch, tan);
+}
+function halfWidths(doc, s) {
+  const cl = doc.reference?.centerline || {};
+  const prof = cl.width_profile;
+  if (prof?.length) {
+    if (s <= prof[0][0]) return [prof[0][1], prof[0][2]];
+    for (let i = 0; i < prof.length - 1; i++) {
+      const a = prof[i], b = prof[i + 1];
+      if (a[0] <= s && s <= b[0]) { const u = b[0] === a[0] ? 0 : (s - a[0]) / (b[0] - a[0]); return [a[1] + u * (b[1] - a[1]), a[2] + u * (b[2] - a[2])]; }
+    }
+    const l = prof[prof.length - 1]; return [l[1], l[2]];
+  }
+  return cl.width ? [cl.width.left, cl.width.right] : [5, 5];
+}
+function reverseReference(ref) {
+  const out = structuredClone(ref || {}); const cl = out.centerline;
+  if (cl) {
+    const pts = cl.points, closed = !!cl.closed;
+    const length = refLine({ reference: { centerline: cl } }).length;
+    cl.points = closed ? [pts[0], ...pts.slice(1).reverse()] : [...pts].reverse();
+    if (cl.tangents) { const t = cl.tangents.map((v) => v.map((c) => -c)); cl.tangents = closed ? [t[0], ...t.slice(1).reverse()] : t.reverse(); }
+    if (cl.chainage && cl.chainage.length === pts.length) {
+      const c = cl.chainage; cl.chainage = closed ? [0, ...c.slice(1).reverse().map((v) => length - v)] : [...c].reverse().map((v) => length - v);
+    }
+    if (cl.width) cl.width = { left: cl.width.right, right: cl.width.left };
+    if (cl.width_profile) cl.width_profile = [...cl.width_profile].reverse().map(([s, l, r]) => [length - s, r, l]);
+  }
+  return out;
+}
+function layoutDocument(doc, lay) {
+  const out = structuredClone(doc); delete out.layouts; delete out.variants;
+  const own = 'reference' in lay || lay.direction === 'reverse';
+  if (lay.reference) out.reference = structuredClone(lay.reference);
+  else if (lay.direction === 'reverse') out.reference = reverseReference(doc.reference);
+  for (const k of ['timing', 'race']) { if (k in lay) out[k] = structuredClone(lay[k]); else if (own) delete out[k]; }
+  out.edges = [...(own ? [] : structuredClone(doc.edges || [])), ...structuredClone(lay.edges || [])];
+  if (lay.include_meshes || lay.exclude_meshes) {
+    const keep = new Set(lay.include_meshes || (out.geometry?.meshes || []).map((m) => m.id));
+    (lay.exclude_meshes || []).forEach((m) => keep.delete(m));
+    if (out.geometry?.meshes) out.geometry.meshes = out.geometry.meshes.filter((m) => keep.has(m.id));
+  }
+  return out;
+}
+const DEFAULT_SIGNALS = { sun_elevation: 0.6, session: 'race', session_phase: 'running', flag: 'none', sector_flag: 'none',
+  start_lights_lit: 0, snow_cover: 0, leaf_fraction: 1, precipitation: 0, water_depth: 0, wind_speed: 0, time_to_arrival: 1e9,
+  nearest_vehicle_distance: 1e9, session_time: 0, local_time: 43200, day_of_year: 180 };
+function evalCond(c, st) {
+  if (!c) return true;
+  if (c.all) return c.all.every((x) => evalCond(x, st));
+  if (c.any) return c.any.some((x) => evalCond(x, st));
+  if (c.not) return !evalCond(c.not, st);
+  if (!(c.signal in st)) return false;
+  const v = st[c.signal], r = c.value;
+  return { eq: v === r, ne: v !== r, lt: v < r, le: v <= r, gt: v > r, ge: v >= r, in: Array.isArray(r) && r.includes(v) }[c.op];
+}
+
+// ── colours ──────────────────────────────────────────────────────────────────
+const CLASS_COLORS = { asphalt: '#56575c', concrete: '#9b9b96', kerb: '#d0453a', painted_line: '#f1f1f1', cobblestone: '#7d6f62',
+  artificial_grass: '#3fae5a', grass: '#5d9b3d', dirt: '#9b7651', gravel: '#c19b63', sand: '#e0cd92', mud: '#6b5238',
+  snow: '#eef3f6', ice: '#bfe6f5', rock: '#867e74', water: '#3d7fd6', metal: '#a7b0b8', wood: '#a0703c', wall: '#6d6d6d', other: '#b0b0b0' };
+const PALETTE = ['#2f7dd1', '#e0a21b', '#8e44ad', '#16a085', '#d35400', '#c0392b', '#27ae60', '#7f8c8d'];
+function hash(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return Math.abs(h); }
+let surfColors = {};
+function computeSurfaceColors(doc) {
+  surfColors = {}; const byClass = {};
+  for (const [id, s] of Object.entries(doc.surfaces?.library || {})) {
+    if (id.startsWith('_') || id.startsWith('x_')) continue;
+    const base = new THREE.Color(CLASS_COLORS[s.class] || CLASS_COLORS.other);
+    const n = (byClass[s.class] = (byClass[s.class] || 0) + 1) - 1;
+    const hsl = {}; base.getHSL(hsl);
+    surfColors[id] = new THREE.Color().setHSL(hsl.h, hsl.s, Math.min(0.92, Math.max(0.12, hsl.l + (n % 2 ? -1 : 1) * 0.07 * Math.ceil(n / 2))));
+  }
+}
+const surfColor = (id) => surfColors[id] || new THREE.Color(CLASS_COLORS.other);
+
+// ── three.js scene ───────────────────────────────────────────────────────────
+const stageEl = $('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+stageEl.prepend(renderer.domElement);
+const labels = new CSS2DRenderer();
+labels.domElement.style.position = 'absolute'; labels.domElement.style.top = '0'; labels.domElement.style.pointerEvents = 'none';
+stageEl.prepend(labels.domElement);
+const scene = new THREE.Scene();
+THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 200000);
+camera.up.set(0, 0, 1);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445544, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(0.4, -0.6, 1); scene.add(sun);
+function themeColors() { const cs = getComputedStyle(document.documentElement); scene.background = new THREE.Color(cs.getPropertyValue('--scene').trim()); }
+themeColors();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', themeColors);
+$('theme').onclick = () => {
+  const root = document.documentElement, dark = getComputedStyle(root).getPropertyValue('--bg').trim() === '#131416';
+  root.dataset.theme = dark ? 'light' : 'dark';
+  try { localStorage.setItem('stj-theme', root.dataset.theme); } catch (e) { /* storage unavailable */ }
+  themeColors();
+};
+try { const t = localStorage.getItem('stj-theme'); if (t) { document.documentElement.dataset.theme = t; themeColors(); } } catch (e) { /* ignore */ }
+function resize() {
+  const w = stageEl.clientWidth, h = stageEl.clientHeight;
+  renderer.setSize(w, h); labels.setSize(w, h); camera.aspect = w / Math.max(h, 1); camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stageEl);
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); labels.render(scene, camera); });
+
+const LAYERS = [['surfaces', 'Surface bands'], ['meshes', 'Meshes'], ['terrain', 'Terrain'], ['reference', 'Reference line'],
+  ['timing', 'Timing'], ['race', 'Grid, pits, lines'], ['notes', 'Pace notes'], ['edges', 'Edges'], ['water', 'Water'],
+  ['areas', 'Zones and crowds'], ['scenery', 'Scenery'], ['cameras', 'Cameras'], ['labels', 'Labels']];
+const groups = {}; const layerOn = Object.fromEntries(LAYERS.map(([k]) => [k, k !== 'cameras']));
+const world = new THREE.Group(); scene.add(world);
+function group(name) {
+  if (groups[name]) { world.remove(groups[name]); disposeTree(groups[name]); }
+  const g = new THREE.Group(); g.name = name; g.visible = layerOn[name]; groups[name] = g; world.add(g); return g;
+}
+function disposeTree(o) {
+  o.traverse((c) => { c.geometry?.dispose?.(); if (c.material) [].concat(c.material).forEach((m) => m.dispose?.()); if (c.isCSS2DObject) c.element.remove(); });
+}
+function label(text, pos, cls = '') {
+  const el = document.createElement('div'); el.className = 'lbl ' + cls; el.textContent = text;
+  const o = new CSS2DObject(el); o.position.set(...pos); o.userData.isLabel = true; return o;
+}
+function line(points, color, opts = {}) {
+  const g = new THREE.BufferGeometry().setFromPoints(points.map((p) => new THREE.Vector3(...p)));
+  const m = opts.dashed ? new THREE.LineDashedMaterial({ color, dashSize: 3, gapSize: 2 }) : new THREE.LineBasicMaterial({ color, transparent: !!opts.opacity, opacity: opts.opacity ?? 1 });
+  const l = new THREE.Line(g, m); if (opts.dashed) l.computeLineDistances(); return l;
+}
+function vertexColorLine(points, colors) {
+  const g = new THREE.BufferGeometry().setFromPoints(points.map((p) => new THREE.Vector3(...p)));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors.flatMap((c) => [c.r, c.g, c.b]), 3));
+  return new THREE.Line(g, new THREE.LineBasicMaterial({ vertexColors: true }));
+}
+function poly(points2, z, color, opacity = 0.35) {
+  const shape = new THREE.Shape(points2.map((p) => new THREE.Vector2(p[0], p[1])));
+  const m = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
+  m.position.z = z; return m;
+}
+function inBand(b, s, L, closed) { const lo = b.s_start, hi = b.s_end; return lo <= hi ? s >= lo && s <= hi : closed && (s >= lo || s <= hi); }
+function sRange(a, b, L, closed, step) {
+  let end = b; if (closed && b < a) end = b + L;
+  const n = Math.max(1, Math.ceil((end - a) / step)), out = [];
+  for (let i = 0; i <= n; i++) out.push(a + (end - a) * i / n);
+  return out;
+}
+
+// ── state ────────────────────────────────────────────────────────────────────
+const state = { base: null, docPath: null, doc: null, line: null, signals: { ...DEFAULT_SIGNALS, wear: 0.5, wetness: 0 } };
+
+// ── loading ──────────────────────────────────────────────────────────────────
+async function expandRefs(node, from) {
+  if (Array.isArray(node)) return Promise.all(node.map((v) => expandRefs(v, from)));
+  if (node && typeof node === 'object') {
+    if (typeof node.$ref === 'string' && !node.$ref.startsWith('../schema') && !node.$ref.startsWith('#')) {
+      const p = resolveRel(from, node.$ref); return expandRefs(JSON.parse(await readText(p)), p);
+    }
+    const out = {}; for (const [k, v] of Object.entries(node)) out[k] = k === '$schema' ? v : await expandRefs(v, from); return out;
+  }
+  return node;
+}
+async function loadDocument(path, depth = 0) {
+  if (depth > 8) throw new Error('override chain too deep');
+  let doc;
+  if (lower(path).endsWith('.usdz')) {
+    const members = await unzip(await readBuffer(path));
+    for (const m of members) files.set(resolveRel(path, m.name), new Blob([m.data]));
+    path = resolveRel(path, members[0].name);
+  }
+  if (/\.usd[ac]?$/.test(lower(path))) {
+    const buf = await readBuffer(path);
+    const head = new TextDecoder().decode(new Uint8Array(buf, 0, Math.min(8, buf.byteLength)));
+    if (!head.startsWith('#usda')) throw new Error(`${path.split('/').pop()} is binary USD (usdc); the viewer reads text layers only`);
+    doc = usdaDocument(new TextDecoder().decode(buf));
+  } else doc = JSON.parse(await readText(path));
+  doc = await expandRefs(doc, path);
+  if (doc._metadata?.specification === 'STJ-OVERRIDE') {
+    const base = await loadDocument(resolveRel(path, doc._metadata.base), depth + 1);
+    return { doc: mergePatch(base.doc, doc.patch || {}), docPath: base.docPath, chain: [...base.chain, path] };
+  }
+  return { doc, docPath: path, chain: [path] };
+}
+async function openTrack(path) {
+  status('Loading…');
+  try {
+    const r = await loadDocument(path);
+    state.base = r.doc; state.docPath = r.docPath; state.chain = r.chain;
+    $('welcome').style.display = 'none';
+    buildPanel();
+    await rebuild(true);
+    status(r.chain.length > 1 ? `Override applied: ${r.chain.map((p) => p.split('/').pop()).join(' ← ')}` : '', false, 4000);
+  } catch (e) { console.error(e); status(String(e.message || e), true); }
+}
+
+// ── panel ────────────────────────────────────────────────────────────────────
+function buildPanel() {
+  const d = state.base, info = d.track_info || {}, md = d._metadata || {};
+  $('title').textContent = [info.name, info.layout].filter(Boolean).join(' · ') || state.docPath.split('/').pop();
+  const line = refLine(d);
+  const rows = [['Type', info.type], ['Length', line ? `${fmt(line.length, 0)} m${line.closed ? ' (lap)' : ''}` : null],
+    ['Surface', info.primary_surface], ['Country', info.country], ['STJ', `${md.version || '?'}${md.authoring_source ? ` · from ${md.authoring_source.tool || md.authoring_source.uri}` : ''}`],
+    ['Licence', md.licence ? `${md.licence.spdx || ''}${md.licence.redistributable === false ? ' · not redistributable' : ''}` : null],
+    ['File', state.docPath.split('/').pop()]].filter((r) => r[1]);
+  $('secTrack').innerHTML = `<h2>Track</h2><dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>` +
+    (md.description ? `<p class="small">${escapeHtml(md.description)}</p>` : '');
+  const lays = d.layouts || [], vars = d.variants || [];
+  $('layout').innerHTML = `<option value="">${escapeHtml(info.layout || 'base')}</option>` + lays.map((l, i) => `<option value="${i}">${escapeHtml(l.name || l.id)}</option>`).join('');
+  $('variant').innerHTML = `<option value="">none</option>` + vars.map((v, i) => `<option value="${i}">${escapeHtml(v.name || v.id)} (${v.kind})</option>`).join('');
+  $('secLayout').hidden = !lays.length && !vars.length;
+  $('secState').hidden = false; $('secLayers').hidden = false;
+  $('layers').innerHTML = LAYERS.map(([k, n]) => `<label><input type="checkbox" data-layer="${k}" ${layerOn[k] ? 'checked' : ''}> ${n}</label>`).join('');
+  $('layers').querySelectorAll('input').forEach((el) => el.onchange = () => {
+    layerOn[el.dataset.layer] = el.checked;
+    if (el.dataset.layer === 'labels') applyLabelVisibility(); else if (groups[el.dataset.layer]) groups[el.dataset.layer].visible = el.checked;
+  });
+}
+function buildLegend(doc) {
+  const lib = doc.surfaces?.library || {};
+  const ids = Object.keys(lib).filter((k) => !k.startsWith('_') && !k.startsWith('x_'));
+  $('secSurfaces').hidden = !ids.length;
+  $('legend').innerHTML = ids.map((id) => {
+    const s = lib[id], mf = s.mf_scaling || {};
+    const mu = mf.LMUX != null ? `λμ ${fmt(mf.LMUX, 2)}/${fmt(mf.LMUY ?? mf.LMUX, 2)}` : '';
+    return `<div><span class="sw" style="background:#${surfColor(id).getHexString()}"></span><span>${escapeHtml(id)} <span class="small">${escapeHtml(s.class)}</span></span><span class="small">${mu}</span></div>`;
+  }).join('');
+  const notes = doc.race?.pacenotes?.notes || [];
+  $('secNotes').hidden = !notes.length;
+  $('notes').innerHTML = notes.map((n, i) => `<button data-s="${n.s}">${fmt(n.s, 0)} m · ${escapeHtml(n.call || `${n.kind} ${n.direction || ''} ${n.severity || ''}`)}</button>`).join('');
+  $('notes').querySelectorAll('button').forEach((b) => b.onclick = () => focusS(+b.dataset.s));
+}
+function applyLabelVisibility() { world.traverse((o) => { if (o.userData.isLabel) o.element.style.display = layerOn.labels ? '' : 'none'; }); }
+
+// ── build ────────────────────────────────────────────────────────────────────
+async function rebuild(fit = false) {
+  let doc = state.base;
+  const li = $('layout').value, vi = $('variant').value;
+  if (vi !== '') {
+    const v = state.base.variants[+vi];
+    if (v.override) {
+      try { doc = (await loadDocument(resolveRel(state.docPath, v.override))).doc; }
+      catch (e) { status(`variant: ${e.message}`, true); }
+    }
+    if (v.usd_variants) status(`USD variant sets: ${Object.entries(v.usd_variants).map(([k, x]) => `${k}=${x}`).join(', ')} (the look is the USD tool's)`, false, 5000);
+  }
+  if (li !== '') doc = layoutDocument(doc, state.base.layouts[+li]);
+  state.doc = doc; state.line = refLine(doc);
+  computeSurfaceColors(doc); buildLegend(doc);
+  buildSurfaces(); buildReference(); buildTiming(); buildRace(); buildEdges(); buildWater(); buildAreas(); buildScenery(); buildCameras();
+  await Promise.all([buildMeshes(), buildTerrain()]);
+  applyLabelVisibility();
+  if (fit) fitView();
+}
+
+function buildSurfaces() {
+  const g = group('surfaces'), { doc, line } = state;
+  const bands = doc.surfaces?.bands || [];
+  if (!line || !bands.length) return;
+  const pos = [], col = [], faces = [];
+  bands.forEach((b, k) => {
+    const c = surfColor(b.surface), z = 0.02 + 0.004 * k;
+    const ss = sRange(b.s_start, b.s_end, line.length, line.closed, 2);
+    for (let i = 0; i < ss.length - 1; i++) {
+      const p = [line.point(ss[i], b.t_min), line.point(ss[i + 1], b.t_min), line.point(ss[i + 1], b.t_max), line.point(ss[i], b.t_max)];
+      for (const idx of [0, 1, 2, 0, 2, 3]) { pos.push(p[idx][0], p[idx][1], p[idx][2] + z); col.push(c.r, c.g, c.b); }
+      faces.push(b.surface, b.surface);
+    }
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+  m.userData.pick = { kind: 'bands', faces }; g.add(m);
+}
+const SECTOR_COLORS = ['#e74c3c', '#f1c40f', '#3498db', '#9b59b6', '#1abc9c', '#e67e22'];
+function buildReference() {
+  const g = group('reference'), { doc, line } = state;
+  if (!line) return;
+  const pts = []; const n = Math.max(2, Math.ceil(line.length / 2));
+  for (let i = 0; i <= n; i++) { const p = line.point(line.length * i / n); pts.push([p[0], p[1], p[2] + 0.12]); }
+  g.add(line_(pts, 0xffffff));
+  for (let s = 0; s < line.length; s += 100) {
+    const p = line.point(s, 0); g.add(label(`${s}`, [p[0], p[1], p[2] + 0.5]));
+  }
+  const sectors = doc.timing?.sectors || [];
+  sectors.forEach((sec, i) => {
+    const ss = sRange(sec.s_start, sec.s_end, line.length, line.closed, 2);
+    g.add(line_(ss.map((s) => { const p = line.point(s, 0); return [p[0], p[1], p[2] + 0.2]; }), SECTOR_COLORS[i % SECTOR_COLORS.length]));
+  });
+}
+const line_ = line;
+function gate(g, s, color, text, cls = 'gate') {
+  const { doc, line } = state; const [l, r] = halfWidths(doc, s);
+  const a = line.point(s, l + 1), b = line.point(s, -r - 1);
+  g.add(line_([[a[0], a[1], a[2] + 0.3], [b[0], b[1], b[2] + 0.3]], color));
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 3, 8), new THREE.MeshLambertMaterial({ color }));
+  post.rotation.x = Math.PI / 2; post.position.set(a[0], a[1], a[2] + 1.5); g.add(post);
+  if (text) g.add(label(text, [a[0], a[1], a[2] + 3.4], cls));
+}
+function buildTiming() {
+  const g = group('timing'), { doc, line } = state, t = doc.timing || {};
+  if (!line) return;
+  const s = (x) => (x && 's' in x ? x.s : null);
+  if (s(t.start_finish) != null) gate(g, t.start_finish.s, 0xffffff, 'start / finish');
+  if (s(t.start) != null) gate(g, t.start.s, 0x2ecc71, 'start');
+  if (s(t.finish) != null) gate(g, t.finish.s, 0xffffff, 'finish');
+  if (s(t.stop) != null) gate(g, t.stop.s, 0xe74c3c, 'stop');
+  (t.split_points || []).forEach((sp) => { if (sp.s != null) gate(g, sp.s, 0xf1c40f, sp.id); });
+  (t.sectors || []).forEach((sec, i) => { if (i) gate(g, sec.s_start, SECTOR_COLORS[i % SECTOR_COLORS.length], null); });
+  const pl = t.pit_lane;
+  if (pl?.path) g.add(line_(pl.path.map((p) => [p[0], p[1], p[2] + 0.2]), 0x9b59b6));
+  for (const k of ['limit_start', 'limit_end']) if (pl?.[k]?.points) g.add(line_(pl[k].points.map((p) => [p[0], p[1], p[2] + 0.3]), 0x9b59b6));
+  (t.drs_zones || []).forEach((z) => {
+    const ss = sRange(z.activation_s, z.deactivation_s, line.length, line.closed, 2);
+    g.add(line_(ss.map((x) => { const p = line.point(x, 0); return [p[0], p[1], p[2] + 0.35]; }), 0x2ecc71));
+    const p = line.point(z.detection_s, 0); g.add(label(`DRS ${z.id}`, [p[0], p[1], p[2] + 1.5], 'gate'));
+  });
+  (t.controls || []).forEach((c) => { const p = c.position || (c.s != null ? line.point(c.s, 0) : null); if (p) g.add(label(`${c.kind}: ${c.id}`, [p[0], p[1], p[2] + 2])); });
+  (t.side_roads || []).forEach((r) => { const [l, rr] = halfWidths(doc, r.s); const p = line.point(r.s, r.side === 'left' ? l + 3 : -rr - 3); g.add(label(`side road${r.cut_penalty ? ` +${r.cut_penalty}s` : ''}`, [p[0], p[1], p[2] + 1])); });
+}
+function poseWorld(pose) {
+  const { line } = state;
+  if (pose.position) return [pose.position, pose.heading || 0];
+  if (pose.s != null && line) { const f = line.frame(pose.s), p = line.point(pose.s, pose.t || 0); return [p, f[3] + (pose.heading_offset || 0)]; }
+  return null;
+}
+function carBox(g, pose, color, text) {
+  const pw = poseWorld(pose); if (!pw) return;
+  const [p, h] = pw;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(4.4, 1.9, 1.3), new THREE.MeshLambertMaterial({ color }));
+  m.position.set(p[0] - 2.0 * Math.cos(h), p[1] - 2.0 * Math.sin(h), p[2] + 0.65); m.rotation.z = h; g.add(m);
+  if (text) g.add(label(text, [p[0], p[1], p[2] + 2.2]));
+}
+function buildRace() {
+  const g = group('race'), n = group('notes'), { doc, line } = state, r = doc.race || {};
+  (r.grid || []).forEach((gs) => carBox(g, gs.pose, 0x2f7dd1, `P${gs.position}`));
+  (r.pit_boxes || []).forEach((b) => carBox(g, b.pose, 0x8e44ad, null));
+  (r.spawns || []).forEach((s) => carBox(g, s.pose, 0x16a085, s.id));
+  (r.racing_lines || []).forEach((rl) => {
+    const pts = rl.points.map((p) => [p[0], p[1], p[2] + 0.25]);
+    if (rl.closed) pts.push(pts[0]);
+    if (rl.speed?.length === rl.points.length) {
+      const sp = rl.speed, lo = Math.min(...sp), hi = Math.max(...sp);
+      const cols = sp.map((v) => new THREE.Color().setHSL(0.33 * (v - lo) / Math.max(hi - lo, 1e-6), 0.85, 0.5));
+      if (rl.closed) cols.push(cols[0]);
+      g.add(vertexColorLine(pts, cols));
+    } else g.add(line_(pts, rl.purpose === 'race' ? 0xfa6b1d : rl.purpose?.startsWith('pit') ? 0x9b59b6 : 0xf39c12, { opacity: rl.purpose === 'race' ? 1 : 0.7 }));
+  });
+  if (line) (r.pacenotes?.notes || []).forEach((nt) => {
+    const [l, rr] = halfWidths(doc, nt.s);
+    const t = nt.direction === 'left' ? l + 4 : nt.direction === 'right' ? -rr - 4 : 0;
+    const p = line.point(nt.s, t);
+    n.add(label(nt.call || `${nt.kind}${nt.direction ? ' ' + nt.direction : ''}${nt.severity ? ' ' + nt.severity : ''}`, [p[0], p[1], p[2] + 1.2], 'note'));
+  });
+}
+const EDGE_COLORS = { kerb: 0xd0453a, verge: 0x5d9b3d, barrier: 0xbdc3c7, invisible: 0xe84393 };
+function buildEdges() {
+  const g = group('edges'), { doc, line } = state;
+  if (!line) return;
+  (doc.edges || []).forEach((e) => {
+    const ss = sRange(e.s_start, e.s_end, line.length, line.closed, 2);
+    const pts = ss.map((s) => { const [l, r] = halfWidths(doc, s); const t = e.t ?? (e.side === 'left' ? l : -r); const p = line.point(s, t); return [p[0], p[1], p[2] + Math.max(0.15, (e.height || 0.3) / 2)]; });
+    g.add(line_(pts, EDGE_COLORS[e.kind] || 0xffffff, { dashed: e.kind === 'invisible' || e.tearable }));
+    if (e.style && layerOn.labels) { const mid = pts[pts.length >> 1]; g.add(label(e.style || e.kind, [mid[0], mid[1], mid[2] + 1.2])); }
+  });
+}
+function buildWater() {
+  const g = group('water'), { doc, line } = state, w = doc.water || {};
+  (w.bodies || []).forEach((b) => {
+    if (b.when && !evalCond(b.when, state.signals)) return;
+    if (b.outline) g.add(poly(b.outline, b.level ?? 0, 0x3d7fd6, 0.55));
+    if (b.path) {
+      const pts = b.path; const pos = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], c = pts[i + 1], dx = c[0] - a[0], dy = c[1] - a[1], L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L;
+        const q = [[a[0] + nx * a[3] / 2, a[1] + ny * a[3] / 2, a[2]], [c[0] + nx * c[3] / 2, c[1] + ny * c[3] / 2, c[2]], [c[0] - nx * c[3] / 2, c[1] - ny * c[3] / 2, c[2]], [a[0] - nx * a[3] / 2, a[1] - ny * a[3] / 2, a[2]]];
+        for (const idx of [0, 1, 2, 0, 2, 3]) pos.push(...q[idx]);
+      }
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x3d7fd6, transparent: true, opacity: 0.6, side: THREE.DoubleSide })));
+    }
+    const at = b.outline ? [b.outline[0][0], b.outline[0][1], (b.level ?? 0) + 1] : b.path ? [b.path[0][0], b.path[0][1], b.path[0][2] + 1] : null;
+    if (at) g.add(label(`${b.kind}: ${b.id}`, at));
+  });
+  if (line) (w.shelter || []).forEach((sh) => { if (sh.band) g.add(bandOutline(sh.band, 0x1abc9c)); if (sh.polygon) g.add(poly(sh.polygon, 0.3, 0x1abc9c, 0.2)); });
+  if (line) (w.drains || []).forEach((d) => { if (d.band) g.add(bandOutline(d.band, 0x34495e)); });
+}
+function bandOutline(b, color) {
+  const { line } = state; const ss = sRange(b.s_start, b.s_end, line.length, line.closed, 2);
+  const left = ss.map((s) => line.point(s, b.t_max)), right = ss.map((s) => line.point(s, b.t_min)).reverse();
+  const pts = [...left, ...right, left[0]].map((p) => [p[0], p[1], p[2] + 0.25]);
+  return line_(pts, color);
+}
+function buildAreas() {
+  const g = group('areas'), { doc, line } = state, m = doc.marshals || {};
+  const shape = (sh, color, opacity) => { if (sh.band && line) g.add(bandOutline(sh.band, color)); if (sh.polygon) g.add(poly(sh.polygon, 0.4, color, opacity)); };
+  (m.restricted_zones || []).forEach((z) => shape(z.shape, 0xe74c3c, 0.25));
+  (m.posts || []).forEach((p) => {
+    const at = p.position || (p.s != null && line ? line.point(p.s, p.side === 'left' ? halfWidths(doc, p.s)[0] + 6 : -halfWidths(doc, p.s)[1] - 6) : null);
+    if (at) g.add(label(`${p.kind.replace('_', ' ')}${p.sector ? ' · ' + p.sector : ''}`, [at[0], at[1], at[2] + 2]));
+  });
+  (m.vehicles || []).forEach((v) => { if (v.pose) carBox(g, v.pose, 0xf39c12, v.kind.replace('_', ' ')); });
+  (doc.scenery?.crowds || []).forEach((c) => shape(c.area, 0x8e44ad, 0.3));
+  (doc.race?.service_areas || []).forEach((a) => g.add(poly(a.polygon.map((p) => [p[0], p[1]]), (a.polygon[0][2] || 0) + 0.3, 0xe67e22, 0.3)));
+}
+const PROTO_COLORS = { tree: 0x2e7d32, bush: 0x4caf50, rock: 0x8d8173, prop: 0xff7f27, tyre_wall: 0x222222, barrier: 0xd4a017, spectators: 0x8e44ad };
+function buildScenery() {
+  const g = group('scenery'), sc = state.doc.scenery || {}, protos = sc.prototypes || {};
+  (sc.instances || []).forEach((ins) => {
+    const pr = protos[ins.prototype] || {}, list = ins.transforms || []; if (!list.length) return;
+    const h = pr.height || 1, rad = pr.radius || Math.max(0.2, h * 0.2);
+    const geo = pr.class === 'tree' ? new THREE.ConeGeometry(rad, h, 8) : new THREE.CylinderGeometry(rad, rad, h, 10);
+    geo.rotateX(Math.PI / 2); geo.translate(0, 0, h / 2);
+    const im = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: PROTO_COLORS[pr.class] || 0xcccccc }), list.length);
+    const mtx = new THREE.Matrix4();
+    list.forEach((t, i) => { const s = t[4] ?? 1; mtx.compose(new THREE.Vector3(t[0], t[1], t[2]), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), t[3]), new THREE.Vector3(s, s, s)); im.setMatrixAt(i, mtx); });
+    g.add(im);
+  });
+}
+function buildCameras() {
+  const g = group('cameras'), { doc } = state;
+  (doc.cameras?.sets || []).forEach((set) => (set.cameras || []).forEach((c) => {
+    const m = new THREE.Mesh(new THREE.OctahedronGeometry(1.2), new THREE.MeshLambertMaterial({ color: 0x3c3ca0 }));
+    m.position.set(...c.position); g.add(m); g.add(label(`${set.id}: ${c.id}`, [c.position[0], c.position[1], c.position[2] + 2], 'cam'));
+    if (c.look_at) g.add(line_([c.position, c.look_at], 0x3c3ca0, { opacity: 0.6 }));
+  }));
+}
+
+// ── meshes: glTF and USD, coloured by surface ────────────────────────────────
+function activeMaps(meshRef, material) {
+  const maps = (state.doc.surfaces?.maps || []).filter((m) => m.mesh_ref === meshRef && m.material === material);
+  return maps.find((m) => evalCond(m.when, state.signals)) || null;
+}
+function surfaceOfMaterial(meshRef, material) {
+  if (!material) return null;
+  for (const pre of ['STJ::surface::', 'STJ__surface__']) if (material.startsWith(pre)) return material.slice(pre.length);
+  const b = (state.doc.surfaces?.bindings || []).find((x) => x.mesh_ref === meshRef && x.material === material && evalCond(x.when, state.signals));
+  return b ? b.surface : null;
+}
+function blendColors(palette, ids, w) {
+  const c = new THREE.Color(0, 0, 0);
+  ids.forEach((id, k) => { const col = surfColor(palette[id] ?? ''); c.r += col.r * w[k]; c.g += col.g * w[k]; c.b += col.b * w[k]; });
+  return c;
+}
+const gltfLoader = new GLTFLoader();
+async function buildMeshes() {
+  const g = group('meshes'), mode = $('meshMode').value;
+  for (const mesh of state.doc.geometry?.meshes || []) {
+    const path = resolveRel(state.docPath, mesh.uri);
+    try {
+      if (/\.usd[acz]?$/.test(lower(mesh.uri))) g.add(await usdMesh(mesh, path, mode));
+      else g.add(await gltfMesh(mesh, path, mode));
+    } catch (e) { console.warn(e); status(`${mesh.uri}: ${e.message}`, true, 6000); }
+  }
+}
+async function gltfMesh(mesh, path, mode) {
+  const gltf = await gltfLoader.parseAsync(await readBuffer(path), resolveRel(path, './').replace(/[^/]*$/, ''));
+  const root = gltf.scene; root.rotation.x = Math.PI / 2;            // glTF Y up -> STJ Z up
+  const collision = mesh.roles.includes('collision');
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const matName = o.material?.name, map = activeMaps(mesh.id, matName), geo = o.geometry;
+    if (mode === 'surface' && map && map.weights.encoding === 'vertex_top3') {
+      const ia = geo.getAttribute((map.weights.indices || '_STJ_SURF_LAYERS').toLowerCase()), wa = geo.getAttribute((map.weights.weights || '_STJ_SURF_WEIGHTS').toLowerCase());
+      if (ia && wa) {
+        const cols = new Float32Array(ia.count * 3);
+        for (let v = 0; v < ia.count; v++) {
+          const a = wa.getX(v), b = wa.getY(v);
+          const c = blendColors(map.palette, [ia.getX(v), ia.getY(v), ia.getZ(v)], [a, b, Math.max(0, 1 - a - b)]);
+          cols.set([c.r, c.g, c.b], v * 3);
+        }
+        geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+        o.material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+        o.userData.pick = { kind: 'gltfmap', map, ia, wa, mesh: mesh.id };
+        return;
+      }
+    }
+    const sid = collision ? surfaceOfMaterial(mesh.id, matName) || state.doc.surfaces?.default : null;
+    if (mode === 'surface' && sid) o.material = new THREE.MeshLambertMaterial({ color: surfColor(sid), side: THREE.DoubleSide });
+    o.userData.pick = { kind: 'surface', surface: sid, material: matName, mesh: mesh.id };
+  });
+  return root;
+}
+async function usdMesh(mesh, path, mode) {
+  const text = await readText(path);
+  const out = new THREE.Group();
+  for (const um of usdaMeshes(text)) {
+    if (!um.points || !um.counts || !um.indices) continue;
+    const map = activeMaps(mesh.id, um.material);
+    const P = um.points, pos = [], col = [], faceInfo = [];
+    let layers = null, weights = null;
+    if (map && map.weights.encoding === 'vertex_top3') {
+      const idx = map.weights.indices || '_STJ_SURF_LAYERS', wn = map.weights.weights || '_STJ_SURF_WEIGHTS';
+      const usdName = (n) => (n.startsWith('_') ? n.replace(/^_+/, '').toLowerCase() : n);
+      if (Array.isArray(idx)) { const parts = idx.map((n) => um.primvars[usdName(n)]?.values); if (parts.every(Boolean)) layers = parts[0].map((_, f) => [parts[0][f], parts[1][f], parts[2][f]]); }
+      else { const v = um.primvars[usdName(idx)]?.values; if (v) layers = Array.from({ length: v.length / 3 }, (_, f) => [v[3 * f], v[3 * f + 1], v[3 * f + 2]]); }
+      weights = um.primvars[usdName(wn)];
+    }
+    const sid = surfaceOfMaterial(mesh.id, um.material) || state.doc.surfaces?.default;
+    let corner = 0;
+    um.counts.forEach((n, f) => {
+      const vs = um.indices.slice(corner, corner + n);
+      const cw = [];
+      for (let k = 0; k < n; k++) {
+        if (layers && weights) {
+          const wi = weights.interp === 'faceVarying' ? corner + k : vs[k];
+          cw.push([weights.values[2 * wi], weights.values[2 * wi + 1]]);
+        }
+      }
+      for (let k = 1; k < n - 1; k++) {
+        for (const q of [0, k, k + 1]) {
+          const v = vs[q]; pos.push(P[3 * v], P[3 * v + 1], P[3 * v + 2]);
+          let c;
+          if (mode === 'surface' && layers && weights) { const [a, b] = cw[q]; c = blendColors(map.palette, layers[f], [a, b, Math.max(0, 1 - a - b)]); }
+          else c = mode === 'surface' ? surfColor(sid) : new THREE.Color(0x888888);
+          col.push(c.r, c.g, c.b);
+        }
+        faceInfo.push({ layers: layers?.[f], w: cw.length ? [cw[0], cw[k], cw[k + 1]] : null });
+      }
+      corner += n;
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    m.userData.pick = { kind: 'usd', map, faceInfo, surface: sid, mesh: mesh.id, material: um.material };
+    out.add(m);
+  }
+  return out;
+}
+
+// ── terrain ──────────────────────────────────────────────────────────────────
+async function buildTerrain() {
+  const g = group('terrain'), ters = [];
+  const geo0 = state.doc.geometry || {};
+  if (geo0.terrain) ters.push(geo0.terrain);
+  (geo0.terrains || []).forEach((t) => ters.push(t));
+  for (const ter of ters) {
+    try { g.add(await terrainMesh(ter)); } catch (e) { console.warn(e); status(`terrain: ${e.message}`, true, 6000); }
+  }
+}
+async function terrainMesh(ter) {
+  const hm = ter.heightmap, [nx, ny] = hm.size, [x0, y0, x1, y1] = hm.extent;
+  const path = resolveRel(state.docPath, hm.uri);
+  let H;
+  if (hm.format === 'png16') {
+    const img = await decodePNG(await readBuffer(path));
+    H = new Float32Array(nx * ny);
+    for (let i = 0; i < nx * ny; i++) H[i] = hm.height_min + img.data[i * img.ch] / 65535 * (hm.height_max - hm.height_min);
+  } else H = new Float32Array(await readBuffer(path));
+  const layers = ter.layers || [];
+  const weights = [];
+  for (const l of layers.slice(1)) {
+    if (!l.weight) { weights.push(null); continue; }
+    try { const img = await decodePNG(await readBuffer(resolveRel(state.docPath, l.weight.uri))); weights.push({ img, c: l.weight.channel && l.weight.channel !== 'gray' ? 'rgba'.indexOf(l.weight.channel) : 0 }); }
+    catch (e) { weights.push(null); }
+  }
+  const step = Math.max(1, Math.ceil(Math.max(nx, ny) / 513));
+  const cols = Math.floor((nx - 1) / step) + 1, rows = Math.floor((ny - 1) / step) + 1;
+  const pos = new Float32Array(cols * rows * 3), col = new Float32Array(cols * rows * 3);
+  const dx = (x1 - x0) / (nx - 1), dy = (y1 - y0) / (ny - 1);
+  const surfOf = (l) => surfColor(l.surface);
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    const gi = i * step, gj = j * step, k = j * cols + i;
+    pos.set([x0 + gi * dx, y1 - gj * dy, H[gj * nx + gi] - 0.05], k * 3);
+    let c = layers.length ? surfOf(layers[0]).clone() : new THREE.Color(0x7a8a5a);
+    weights.forEach((w, li) => {
+      if (!w) return;
+      const u = Math.round(gi / (nx - 1) * (w.img.w - 1)), v = Math.round(gj / (ny - 1) * (w.img.h - 1));
+      const a = w.img.data[(v * w.img.w + u) * w.img.ch + w.c] / w.img.max;
+      c.lerp(surfOf(layers[li + 1]), a);
+    });
+    c.multiplyScalar(0.92); col.set([c.r, c.g, c.b], k * 3);
+  }
+  const idx = [];
+  for (let j = 0; j < rows - 1; j++) for (let i = 0; i < cols - 1; i++) { const a = j * cols + i, b = a + 1, c = a + cols, d = c + 1; idx.push(a, c, b, b, c, d); }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(idx); geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+  m.userData.pick = { kind: 'terrain' };
+  return m;
+}
+
+// ── view, hover inspection ───────────────────────────────────────────────────
+function fitView() {
+  const box = new THREE.Box3();
+  if (state.line) state.line.points.forEach((p) => box.expandByPoint(new THREE.Vector3(...p)));
+  else box.setFromObject(world);
+  if (box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3()), r = Math.max(size.x, size.y, 50);
+  controls.target.copy(c);
+  camera.position.set(c.x - r * 0.15, c.y - r * 0.85, c.z + r * 0.75);
+  camera.near = Math.max(0.1, r / 5000); camera.far = r * 20; camera.updateProjectionMatrix();
+}
+function focusS(s) {
+  if (!state.line) return;
+  const [x, y, z, h] = state.line.frame(s);
+  controls.target.set(x, y, z);
+  camera.position.set(x - 60 * Math.cos(h), y - 60 * Math.sin(h), z + 35);
+}
+$('fit').onclick = fitView;
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+let hoverPending = false;
+renderer.domElement.addEventListener('pointermove', (ev) => {
+  if (hoverPending || !state.doc) return; hoverPending = true;
+  requestAnimationFrame(() => { hoverPending = false; inspect(ev); });
+});
+renderer.domElement.addEventListener('pointerleave', () => { $('inspect').style.display = 'none'; });
+function surfaceText(id) {
+  const s = state.doc.surfaces?.library?.[id]; if (!s) return escapeHtml(id || '–');
+  const mf = s.mf_scaling || {}, d = s.deformable?.effective;
+  return `<b>${escapeHtml(id)}</b> <span class="small">${s.class}</span>` +
+    (mf.LMUX != null ? ` · λμx ${fmt(mf.LMUX, 2)} λμy ${fmt(mf.LMUY ?? mf.LMUX, 2)}` : '') +
+    (s.rolling_resistance ? ` · rr ${s.rolling_resistance}` : '') + (d ? ` · loose ${fmt((d.loose_layer_depth || 0) * 1000, 0)} mm` : '');
+}
+function inspect(ev) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const pickables = []; world.traverse((o) => { if (o.isMesh && o.userData.pick && o.visible && isShown(o)) pickables.push(o); });
+  const hit = ray.intersectObjects(pickables, false)[0];
+  const el = $('inspect');
+  if (!hit) { el.style.display = 'none'; return; }
+  const p = hit.point, pk = hit.object.userData.pick;
+  let html = '';
+  if (state.line) { const [s, t] = state.line.project(p.x, p.y); html += `s <b>${fmt(s)}</b> m · t <b>${fmt(t)}</b> m · z ${fmt(p.z)} m<br>`; }
+  if (pk.kind === 'bands') html += surfaceText(pk.faces[hit.faceIndex]);
+  else if (pk.kind === 'surface') html += pk.surface ? surfaceText(pk.surface) : `material ${escapeHtml(pk.material || '')}`;
+  else if (pk.kind === 'usd' || pk.kind === 'gltfmap') {
+    let ids, w;
+    if (pk.kind === 'usd') {
+      const fi = pk.faceInfo[hit.faceIndex];
+      if (fi?.layers && fi.w) {
+        const bc = barycentric(hit); ids = fi.layers;
+        const a = fi.w[0][0] * bc.x + fi.w[1][0] * bc.y + fi.w[2][0] * bc.z, b = fi.w[0][1] * bc.x + fi.w[1][1] * bc.y + fi.w[2][1] * bc.z;
+        w = [a, b, Math.max(0, 1 - a - b)];
+      }
+    } else {
+      const f = hit.face, bc = barycentric(hit); ids = [pk.ia.getX(f.a), pk.ia.getY(f.a), pk.ia.getZ(f.a)];
+      const a = pk.wa.getX(f.a) * bc.x + pk.wa.getX(f.b) * bc.y + pk.wa.getX(f.c) * bc.z, b = pk.wa.getY(f.a) * bc.x + pk.wa.getY(f.b) * bc.y + pk.wa.getY(f.c) * bc.z;
+      w = [a, b, Math.max(0, 1 - a - b)];
+    }
+    if (ids && pk.map) {
+      const parts = ids.map((id, k) => [pk.map.palette[id], w[k]]).filter((x) => x[1] > 0.01).sort((a, b) => b[1] - a[1]);
+      html += `${pk.map.contact === 'dominant' ? 'dominant' : 'blend'}: ` + parts.map(([id, x]) => `${escapeHtml(id)} ${fmt(x * 100, 0)}%`).join(', ') + '<br>' + surfaceText(parts[0][0]);
+    } else html += pk.surface ? surfaceText(pk.surface) : '';
+  } else if (pk.kind === 'terrain') html += 'terrain';
+  el.innerHTML = html; el.style.display = 'block';
+}
+function isShown(o) { for (let x = o; x; x = x.parent) if (!x.visible) return false; return true; }
+function barycentric(hit) {
+  const pos = hit.object.geometry.getAttribute('position'), f = hit.face, m = hit.object.matrixWorld;
+  const a = new THREE.Vector3().fromBufferAttribute(pos, f.a).applyMatrix4(m), b = new THREE.Vector3().fromBufferAttribute(pos, f.b).applyMatrix4(m), c = new THREE.Vector3().fromBufferAttribute(pos, f.c).applyMatrix4(m);
+  return THREE.Triangle.getBarycoord(hit.point, a, b, c, new THREE.Vector3());
+}
+
+// ── controls ─────────────────────────────────────────────────────────────────
+$('layout').onchange = () => rebuild();
+$('variant').onchange = () => rebuild();
+$('meshMode').onchange = () => buildMeshes();
+for (const [id, key] of [['wear', 'wear'], ['wet', 'wetness']]) {
+  $(id).oninput = () => {
+    state.signals[key] = +$(id).value; $(id + 'V').textContent = (+$(id).value).toFixed(2);
+    if (!state.doc) return;
+    buildWater(); buildMeshes().then(applyLabelVisibility);
+  };
+}
+async function addFiles(list) {
+  urlMode = false; files.clear();
+  for (const { path, file } of list) files.set(norm(path), file);
+  const keys = [...files.keys()];
+  const tracks = keys.filter((k) => /\.stj\.json$/i.test(k));
+  const usd = keys.filter((k) => /\.usd[az]$/i.test(k));
+  const pick = tracks[0] || usd.find((k) => k.toLowerCase().endsWith('.usdz')) || usd[0] || keys.find((k) => /\.stj-override\.json$/i.test(k));
+  if (!pick) { status('No .stj.json, .usda or .usdz among the files', true); return; }
+  if (tracks.length > 1) status(`${tracks.length} tracks found; opened ${pick.split('/').pop()}`, false, 5000);
+  await openTrack(pick);
+}
+$('pickFiles').onchange = (e) => addFiles([...e.target.files].map((f) => ({ path: f.name, file: f })));
+$('pickDir').onchange = (e) => addFiles([...e.target.files].map((f) => ({ path: f.webkitRelativePath || f.name, file: f })));
+async function readEntry(entry, prefix, out) {
+  if (entry.isFile) { out.push({ path: prefix + entry.name, file: await new Promise((res, rej) => entry.file(res, rej)) }); return; }
+  const reader = entry.createReader();
+  let batch;
+  do { batch = await new Promise((res, rej) => reader.readEntries(res, rej)); for (const e of batch) await readEntry(e, prefix + entry.name + '/', out); } while (batch.length);
+}
+let dragDepth = 0;
+addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; $('drop').style.display = 'grid'; });
+addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('drop').style.display = 'none'; } });
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', async (e) => {
+  e.preventDefault(); dragDepth = 0; $('drop').style.display = 'none';
+  const out = [];
+  for (const item of e.dataTransfer.items) { const en = item.webkitGetAsEntry?.(); if (en) await readEntry(en, '', out); }
+  if (!out.length) for (const f of e.dataTransfer.files) out.push({ path: f.name, file: f });
+  addFiles(out);
+});
+document.querySelectorAll('[data-ex]').forEach((b) => b.onclick = () => openUrl(b.dataset.ex));
+function openUrl(rel) {
+  if (location.protocol === 'file:') { status('Opening examples needs the page served over HTTP: run python -m http.server in the repository and open /viewer/', true); return; }
+  urlMode = true; files.clear(); openTrack(new URL(rel, location.href).href);
+}
+const param = new URLSearchParams(location.search).get('track');
+if (param) openUrl(param);
+</script>
+</body>
+</html>

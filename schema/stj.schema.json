@@ -1,0 +1,3204 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:stj:schema:v0.3",
+  "title": "Standard Track JSON (STJ)",
+  "description": "Schema for STJ v0.1 to v0.3: an engine-neutral description of a race track or rally stage. A track is an OpenUSD stage; this schema validates the STJ document stored in its root layer's customLayerData['stj'] (spec §3). Every section except _metadata is optional. Cross-reference rules are checked by tools/validate.py.",
+  "type": "object",
+  "required": ["_metadata"],
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x_": {
+      "description": "Engine-specific extension (x_ac, x_rbr, x_beamng, ...). Parsers MUST ignore unrecognized x_ keys."
+    },
+    "^_": { "description": "Annotation (_note, _source, _est). Ignored by parsers." }
+  },
+  "properties": {
+    "$schema": { "type": "string" },
+    "_metadata": { "$ref": "#/definitions/metadata" },
+    "track_info": { "$ref": "#/definitions/track_info" },
+    "reference": { "$ref": "#/definitions/reference" },
+    "geometry": { "$ref": "#/definitions/geometry" },
+    "surfaces": { "$ref": "#/definitions/surfaces" },
+    "timing": { "$ref": "#/definitions/timing" },
+    "race": { "$ref": "#/definitions/race" },
+    "environment": { "$ref": "#/definitions/environment" },
+    "scenery": { "$ref": "#/definitions/scenery" },
+    "ground": { "$ref": "#/definitions/ground" },
+    "water": { "$ref": "#/definitions/water" },
+    "audio": { "$ref": "#/definitions/audio" },
+    "screens": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/screen" },
+      "description": "Scoreboards and big screens (spec §8.8)."
+    },
+    "edges": {
+      "type": "array",
+      "description": "Kerbs, verges and barriers described by what they are, along the base reference line, so each engine can rebuild them with its own assets (spec §7.3).",
+      "items": { "$ref": "#/definitions/edge" }
+    },
+    "cameras": { "$ref": "#/definitions/cameras" },
+    "layouts": {
+      "type": "array",
+      "description": "Alternative layouts on the same models. The top-level document is the default layout (track_info.layout); each entry here replaces reference, timing and race wholesale and may add edges (spec §3.5).",
+      "items": { "$ref": "#/definitions/layout" }
+    },
+    "variants": {
+      "type": "array",
+      "description": "Index of override files that patch this file: time of day, weather, season (spec §3.6).",
+      "items": { "$ref": "#/definitions/variant" }
+    },
+    "dynamic": { "$ref": "#/definitions/dynamic" },
+    "animated_objects": {
+      "type": "array",
+      "description": "Objects moved by USD time samples, driven by time or signals (spec §8.5).",
+      "items": { "$ref": "#/definitions/animated_object" }
+    },
+    "marshals": { "$ref": "#/definitions/marshals" }
+  },
+  "definitions": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$",
+      "description": "Identifier: lowercase letters, digits and underscores."
+    },
+    "vec3": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "[x, y, z] in the STJ world frame (m): right-handed, Z up, x/y map-projected (OpenDRIVE inertial frame)."
+    },
+    "polyline": { "type": "array", "items": {"$ref": "#/definitions/vec3"}, "minItems": 2 },
+    "curve": {
+      "type": "array",
+      "items": { "type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2 },
+      "minItems": 1,
+      "description": "Piecewise-linear curve [[x, y], ...], x increasing (SVJ convention)."
+    },
+    "relative_uri": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z][A-Za-z0-9+.-]*:)(?![/\\\\])",
+      "description": "Path relative to the STJ file. Absolute paths and URLs are not permitted (SVJ §22.2)."
+    },
+    "s": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Distance along the reference line (m), measured in the x/y plane like OpenDRIVE s, increasing in the race direction."
+    },
+    "heading": { "type": "number", "description": "Heading (rad), counter-clockwise from +X (OpenDRIVE hdg)." },
+    "metadata": {
+      "type": "object",
+      "required": ["specification", "version", "coordinate_system", "units"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "specification": { "const": "STJ" },
+        "version": { "type": "string", "enum": ["0.1", "0.2", "0.3"] },
+        "coordinate_system": {
+          "const": "OpenDRIVE",
+          "description": "Right-handed, Z up, x/y map-projected, heading counter-clockwise from +X: the OpenDRIVE inertial frame, and a USD stage with upAxis Z in metres."
+        },
+        "units": { "const": "SI" },
+        "description": { "type": "string" },
+        "created": { "type": "string", "format": "date-time" },
+        "author": { "type": "string" },
+        "source_format": {
+          "type": ["string", "null"],
+          "description": "Original format if converted (e.g. 'Blender', 'Assetto Corsa', 'RBR/BTB', 'OpenDRIVE'). Null for native STJ."
+        },
+        "licence": { "$ref": "#/definitions/licence" },
+        "provenance": { "$ref": "#/definitions/provenance" },
+        "authoring_source": {
+          "type": "object",
+          "required": ["uri"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "uri": { "$ref": "#/definitions/relative_uri" },
+            "tool": { "type": "string" },
+            "tool_version": { "type": "string" }
+          },
+          "description": "The file this package was made from (a .blend, a Maya scene, a BTB project): open it to edit the track (spec §5.2)."
+        }
+      }
+    },
+    "licence": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "spdx": {
+          "type": "string",
+          "description": "SPDX licence identifier of this file's content (e.g. 'CC-BY-4.0', 'Apache-2.0'), or 'LicenseRef-...' / 'NOASSERTION'."
+        },
+        "holder": { "type": "string", "description": "Rights holder of the described track data." },
+        "url": { "type": "string" },
+        "redistributable": {
+          "type": "boolean",
+          "description": "False when the file was converted from content the user owns a copy of but may not share (e.g. a commercial game's track). Tools SHOULD refuse to publish or upload such files."
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["original", "scanned", "converted", "mixed", "unknown"],
+          "description": "original = authored for STJ (or a DCC tool) from scratch. scanned = from a survey (LiDAR, photogrammetry, GNSS). converted = translated from another format; see converted_from. mixed = combination. unknown = not recorded."
+        },
+        "detail": { "type": "string" },
+        "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+        "scan": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "method": { "type": "string", "enum": ["lidar", "photogrammetry", "gnss", "total_station", "other"] },
+            "date": { "type": "string", "format": "date" },
+            "accuracy": { "type": "number", "minimum": 0, "description": "Stated vertical accuracy of the surface (m)." },
+            "operator": { "type": "string" }
+          }
+        },
+        "converted_from": {
+          "type": "array",
+          "description": "Conversion chain, oldest first.",
+          "items": {
+            "type": "object",
+            "required": ["format"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "format": { "type": "string" },
+              "tool": { "type": "string" },
+              "tool_version": { "type": "string" },
+              "source": {
+                "type": "string",
+                "description": "What was converted (track name, game, file name). Never a download location for content the user may not share."
+              },
+              "date": { "type": "string", "format": "date" },
+              "lost": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "What the conversion could not carry over."
+              }
+            }
+          }
+        }
+      }
+    },
+    "track_info": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "name": { "type": "string" },
+        "layout": {
+          "type": "string",
+          "description": "Layout or stage name (e.g. 'GP', 'National', 'SS3 Coll de Prova')."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["circuit", "point_to_point", "hillclimb", "oval", "rallycross", "drag", "test_area", "other"],
+          "description": "circuit, oval and rallycross are closed (lapped); point_to_point and hillclimb run from a start to a finish."
+        },
+        "country": { "type": "string", "pattern": "^[A-Z]{2}$", "description": "ISO 3166-1 alpha-2." },
+        "location": { "type": "string" },
+        "length": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Stated length (m). Informational; the validator compares it with the reference line."
+        },
+        "fictional": { "type": "boolean", "description": "True for invented tracks (test tracks, examples)." },
+        "short_name": { "type": "string" },
+        "abbreviation": { "type": "string", "maxLength": 4, "description": "For timing screens." },
+        "description": { "type": "string" },
+        "tags": { "type": "array", "items": {"type": "string"}, "uniqueItems": true },
+        "media": {
+          "type": "object",
+          "description": "Images; outline is an SVG of the track shape.",
+          "additionalProperties": false,
+          "properties": {
+            "preview": { "$ref": "#/definitions/relative_uri" },
+            "thumbnail": { "$ref": "#/definitions/relative_uri" },
+            "logo": { "$ref": "#/definitions/relative_uri" },
+            "outline": { "$ref": "#/definitions/relative_uri" }
+          },
+          "patternProperties": { "^_": {} }
+        },
+        "map": {
+          "type": "object",
+          "description": "North-up minimap image covering extent. Absent: engines draw the map from the reference line.",
+          "required": ["uri", "extent"],
+          "additionalProperties": false,
+          "properties": { "uri": {"$ref": "#/definitions/relative_uri"}, "extent": {"$ref": "#/definitions/extent"} },
+          "patternProperties": { "^_": {} }
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["category", "time"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "category": { "type": "string" },
+              "time": { "type": "number", "description": "s.", "exclusiveMinimum": 0 },
+              "driver": { "type": "string" },
+              "vehicle": { "type": "string" },
+              "date": { "type": "string" },
+              "event": { "type": "string" },
+              "source": { "type": "string" }
+            }
+          }
+        },
+        "primary_surface": {
+          "type": "string",
+          "enum": ["tarmac", "gravel", "snow", "ice", "dirt", "mixed", "other"],
+          "description": "Picks tyres and setups before anything is loaded."
+        }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "description": "The reference line that defines s (and t). Either an OpenDRIVE file, a centerline polyline, or both (then OpenDRIVE is authoritative and the centerline is a convenience copy).",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "opendrive": { "$ref": "#/definitions/opendrive_ref" },
+        "centerline": { "$ref": "#/definitions/centerline" },
+        "length": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Length of the reference line (m). Needed when the OpenDRIVE file is not shipped with the STJ file; otherwise derived."
+        }
+      }
+    },
+    "opendrive_ref": {
+      "type": "object",
+      "required": ["uri"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "uri": { "$ref": "#/definitions/relative_uri" },
+        "version": { "type": "string", "description": "ASAM OpenDRIVE version of the file, e.g. '1.8'." },
+        "route": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Road ids, in race order, whose reference lines are chained to form STJ s. A single road needs no route.",
+          "items": {
+            "type": "object",
+            "required": ["road"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "road": { "type": "string" },
+              "direction": { "type": "string", "enum": ["forward", "backward"], "default": "forward" }
+            }
+          }
+        }
+      }
+    },
+    "centerline": {
+      "type": "object",
+      "required": ["points"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "points": {
+          "$ref": "#/definitions/polyline",
+          "description": "Polyline [[x, y, z], ...] in race order. s is the cumulative x/y-plane length from the first point."
+        },
+        "closed": {
+          "type": "boolean",
+          "default": false,
+          "description": "True for a lapped track: the last point connects back to the first and s wraps at the total length. Do not repeat the first point."
+        },
+        "width": {
+          "type": "object",
+          "description": "Constant drivable half-widths (m).",
+          "required": ["left", "right"],
+          "additionalProperties": false,
+          "properties": { "left": {"type": "number", "minimum": 0}, "right": {"type": "number", "minimum": 0} },
+          "patternProperties": { "^_": {} }
+        },
+        "width_profile": {
+          "type": "array",
+          "description": "Varying half-widths [[s, left, right], ...] (m), s increasing; linear between entries. Overrides width.",
+          "items": { "type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3 },
+          "minItems": 1
+        },
+        "chainage": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "description": "Stored distance per point (m), increasing: where present it defines s (survey chainage, a game's stored driveline distance). The geometric length is only checked against it (spec §7.1)."
+        },
+        "tangents": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/vec3" },
+          "minItems": 2,
+          "description": "Cubic Hermite tangents dP/du per point (m), u = 0..1 over each segment; the curve passes through the points. Absent: straight segments."
+        }
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "meshes": { "type": "array", "items": {"$ref": "#/definitions/mesh"} },
+        "crg": {
+          "type": "array",
+          "description": "ASAM OpenCRG road-surface grids, placed on the reference line like OpenDRIVE <surface><CRG>.",
+          "items": { "$ref": "#/definitions/crg" }
+        },
+        "terrain": { "$ref": "#/definitions/terrain" },
+        "terrains": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/terrain" },
+          "description": "Several heightfields (one per chunk or tile); each needs an id."
+        },
+        "chunks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "s_start", "s_end", "origin"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "s_start": { "$ref": "#/definitions/s" },
+              "s_end": { "$ref": "#/definitions/s" },
+              "origin": {
+                "$ref": "#/definitions/vec3",
+                "description": "Local origin: the chunk's meshes are authored relative to it."
+              },
+              "meshes": { "type": "array", "items": {"$ref": "#/definitions/id"} },
+              "terrain": { "$ref": "#/definitions/id" },
+              "payload": {
+                "$ref": "#/definitions/relative_uri",
+                "description": "A USD file loaded as a payload for this chunk; its default prim sits at origin."
+              }
+            }
+          },
+          "description": "Stretches of a long stage with local origins (spec §7.6). Chunks may overlap for streaming."
+        },
+        "tiles": {
+          "type": "object",
+          "description": "A square grid for open areas; each tile's meshes are relative to its minimum corner (spec §7.6).",
+          "required": ["size", "origin", "items"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "size": { "type": "number", "description": "Tile edge (m).", "exclusiveMinimum": 0 },
+            "origin": { "$ref": "#/definitions/vec3", "description": "World position of tile [0, 0]'s minimum corner." },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["index"],
+                "additionalProperties": false,
+                "patternProperties": { "^x_": {}, "^_": {} },
+                "properties": {
+                  "index": { "type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2 },
+                  "meshes": { "type": "array", "items": {"$ref": "#/definitions/id"} },
+                  "terrain": { "$ref": "#/definitions/id" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "mesh": {
+      "type": "object",
+      "required": ["id", "uri", "roles"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "uri": {
+          "allOf": [{"$ref": "#/definitions/relative_uri"}, {"pattern": "\\.(usd|usda|usdc|usdz)$"}],
+          "description": "OpenUSD file (.usd, .usda, .usdc, .usdz): the only geometry format (spec §7.2)."
+        },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["visual", "collision", "lod"] },
+          "description": "visual = rendered; collision = the ground and walls vehicles touch (surfaces bind to its UsdShade materials); lod = a level-of-detail variant of another mesh."
+        },
+        "lod": {
+          "type": "object",
+          "required": ["of", "level"],
+          "additionalProperties": false,
+          "properties": {
+            "of": { "$ref": "#/definitions/id", "description": "id of the full-detail mesh this one replaces." },
+            "level": { "type": "integer", "minimum": 1 },
+            "switch_distance": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Camera distance (m) beyond which this level is used."
+            }
+          },
+          "patternProperties": { "^_": {} }
+        },
+        "chunk": {
+          "$ref": "#/definitions/id",
+          "description": "Chunk or tile whose local origin this mesh uses (spec §7.6)."
+        }
+      }
+    },
+    "crg": {
+      "type": "object",
+      "required": ["id", "uri"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "uri": { "$ref": "#/definitions/relative_uri" },
+        "s_start": { "$ref": "#/definitions/s" },
+        "s_end": { "$ref": "#/definitions/s" },
+        "mode": {
+          "type": "string",
+          "enum": ["attached", "attached0", "genuine", "global"],
+          "default": "attached",
+          "description": "As OpenDRIVE <CRG mode>."
+        },
+        "purpose": { "type": "string", "enum": ["elevation", "friction"], "default": "elevation" },
+        "t_offset": { "type": "number", "default": 0 },
+        "z_offset": { "type": "number", "default": 0 },
+        "z_scale": { "type": "number", "default": 1 }
+      }
+    },
+    "surfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "default": { "$ref": "#/definitions/id", "description": "Surface used where no binding or band applies." },
+        "library": {
+          "type": "object",
+          "propertyNames": { "pattern": "^([a-z0-9_]+|x_.*|_.*)$" },
+          "patternProperties": { "^[a-z0-9_]+$": {"$ref": "#/definitions/surface"} },
+          "additionalProperties": true,
+          "description": "Surfaces by id. All values are relative to STJ-REF (dry, clean, unworn dense asphalt; every factor 1)."
+        },
+        "bindings": {
+          "type": "array",
+          "description": "Collision-mesh materials or nodes -> surface. Highest precedence. A material named STJ::surface::<id> binds without an entry.",
+          "items": { "$ref": "#/definitions/surface_binding" }
+        },
+        "opendrive_materials": {
+          "type": "object",
+          "description": "OpenDRIVE lane <material surface='...'> names -> surface id.",
+          "additionalProperties": { "$ref": "#/definitions/id" }
+        },
+        "bands": {
+          "type": "array",
+          "description": "Surface strips along the reference line, for files without collision meshes. Later entries win where bands overlap.",
+          "items": { "$ref": "#/definitions/surface_band" }
+        },
+        "substitutions": {
+          "type": "object",
+          "description": "Surface swaps applied after binding resolution at every precedence level (spec §6.3): {\"from\": \"to\"}. One step: a target must not itself be substituted. Used by season and weather variants.",
+          "additionalProperties": false,
+          "patternProperties": { "^[a-z0-9_]+$": {"$ref": "#/definitions/id"}, "^_": {} }
+        },
+        "line_states": { "type": "array", "items": {"$ref": "#/definitions/line_state"} },
+        "maps": { "type": "array", "items": {"$ref": "#/definitions/surface_map"} },
+        "reference_mu": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "slick": { "$ref": "#/definitions/mu" },
+            "road": { "$ref": "#/definitions/mu" },
+            "intermediate": { "$ref": "#/definitions/mu" },
+            "wet": { "$ref": "#/definitions/mu" },
+            "gravel": { "$ref": "#/definitions/mu" },
+            "snow": { "$ref": "#/definitions/mu" },
+            "studded": { "$ref": "#/definitions/mu" },
+            "mud": { "$ref": "#/definitions/mu" },
+            "offroad": { "$ref": "#/definitions/mu" }
+          },
+          "description": "mu of each tyre class on STJ-REF. With it, by_tyre_class entries may give absolute mu: LMUX = LMUY = mu.peak / reference_mu.peak (spec §6.5)."
+        }
+      }
+    },
+    "surface_binding": {
+      "type": "object",
+      "required": ["mesh_ref", "surface"],
+      "anyOf": [{"required": ["material"]}, {"required": ["prim"]}],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "mesh_ref": { "$ref": "#/definitions/id" },
+        "material": { "type": "string", "description": "UsdShade material name; its GeomSubsets give the faces." },
+        "surface": { "$ref": "#/definitions/id" },
+        "when": {
+          "$ref": "#/definitions/condition",
+          "description": "State in which this binding applies; first match wins."
+        },
+        "prim": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "USD prim path (a Mesh or a GeomSubset) in the mesh file."
+        }
+      }
+    },
+    "surface_band": {
+      "type": "object",
+      "required": ["s_start", "s_end", "t_min", "t_max", "surface"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "s_start": { "$ref": "#/definitions/s" },
+        "s_end": {
+          "$ref": "#/definitions/s",
+          "description": "May be smaller than s_start on a closed track: the band crosses s = 0."
+        },
+        "t_min": { "type": "number", "description": "Lateral offset (m), positive left." },
+        "t_max": { "type": "number" },
+        "surface": { "$ref": "#/definitions/id" }
+      }
+    },
+    "mf_scaling": {
+      "type": "object",
+      "description": "Magic Formula scaling factors, names as SVJ pacejka.scaling (.tir). Multiplied into the tyre's own factors and divided by the tyre's reference-surface factors (spec §6.4). Absent = 1. LMUX and LMUY (λμx, λμy) also apply to non-MF tyre models; the others only to MF tyres.",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "LMUX": { "type": "number", "minimum": 0, "description": "Longitudinal peak friction scaling (λμx)." },
+        "LMUY": { "type": "number", "minimum": 0, "description": "Lateral peak friction scaling (λμy)." },
+        "LKX": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Longitudinal slip stiffness scaling. < 1 moves the force peak to larger slip (loose ground)."
+        },
+        "LKY": { "type": "number", "minimum": 0, "description": "Cornering stiffness scaling." },
+        "LCX": { "type": "number", "minimum": 0, "description": "Longitudinal shape factor scaling." },
+        "LCY": { "type": "number", "minimum": 0, "description": "Lateral shape factor scaling." },
+        "LEX": { "type": "number", "minimum": 0, "description": "Longitudinal curvature scaling." },
+        "LEY": { "type": "number", "minimum": 0, "description": "Lateral curvature scaling." },
+        "LXAL": { "type": "number", "minimum": 0, "description": "Combined slip: influence of slip angle on Fx." },
+        "LYKA": { "type": "number", "minimum": 0, "description": "Combined slip: influence of slip ratio on Fy." },
+        "LTR": { "type": "number", "minimum": 0, "description": "Pneumatic trail scaling." }
+      }
+    },
+    "tyre_class": {
+      "type": "string",
+      "enum": ["slick", "road", "intermediate", "wet", "gravel", "snow", "studded", "mud", "offroad"]
+    },
+    "surface": {
+      "type": "object",
+      "required": ["class"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "class": {
+          "type": "string",
+          "enum": [
+            "asphalt",
+            "concrete",
+            "kerb",
+            "painted_line",
+            "cobblestone",
+            "artificial_grass",
+            "grass",
+            "dirt",
+            "gravel",
+            "sand",
+            "mud",
+            "snow",
+            "ice",
+            "rock",
+            "water",
+            "metal",
+            "wood",
+            "wall",
+            "other"
+          ],
+          "description": "What the surface is. The most portable field: engines with built-in surface types map from it."
+        },
+        "mf_scaling": { "$ref": "#/definitions/mf_scaling" },
+        "by_tyre_class": {
+          "type": "object",
+          "description": "Values that replace the generic ones for tyres of a given class (spec §6.5). Grip does not separate into tyre x surface; this table is where a surface says so.",
+          "propertyNames": { "pattern": "^(slick|road|intermediate|wet|gravel|snow|studded|mud|offroad|x_.*|_.*)$" },
+          "additionalProperties": { "$ref": "#/definitions/surface_tyre_override" }
+        },
+        "rolling_resistance": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Added rolling resistance coefficient: F = f * Fz against the direction of travel, on top of the tyre's own. STJ-REF = 0."
+        },
+        "roughness": { "$ref": "#/definitions/roughness" },
+        "wet_response": {
+          "$ref": "#/definitions/curve",
+          "description": "Factor on LMUX and LMUY versus water-film depth: [[depth (m), factor], ...]. The depth itself is weather state (environment.default_weather.water_depth)."
+        },
+        "deformable": { "$ref": "#/definitions/deformable" },
+        "track_limits": {
+          "type": "string",
+          "enum": ["inside", "outside"],
+          "description": "Whether a wheel on this surface counts as inside the track limits (AC IS_VALID_TRACK)."
+        },
+        "pit_lane": { "type": "boolean", "description": "Surface belongs to the pit lane (AC IS_PITLANE)." },
+        "out_of_bounds": {
+          "type": "boolean",
+          "description": "Touching it ends the run or resets the vehicle (deep water, cliffs)."
+        },
+        "water": {
+          "type": "object",
+          "description": "How this surface takes and sheds water (spec §6.9).",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "storage_depth": {
+              "type": "number",
+              "description": "Water (m) the macrotexture holds before a film forms. Default: half of roughness.mean_profile_depth.",
+              "minimum": 0
+            },
+            "drain_rate": {
+              "type": "number",
+              "description": "Run-off and soak-away rate (mm/h) with no rain; same unit as precipitation.",
+              "minimum": 0
+            },
+            "wet_look": {
+              "type": "string",
+              "enum": ["puddles", "soaks", "rough", "none"],
+              "description": "How it looks wet: collects puddles, darkens, rough (grass, gravel), unchanged. Visual only."
+            }
+          }
+        },
+        "impact": {
+          "type": "object",
+          "description": "How the surface behaves when the car body hits it (rocks, snow walls, bushes).",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "friction": { "type": "number", "minimum": 0 },
+            "restitution": { "type": "number", "minimum": 0, "maximum": 1 },
+            "response": { "type": "string", "enum": ["rigid", "soft", "bendable"] }
+          }
+        },
+        "effects": {
+          "type": "object",
+          "description": "What a driver sees and hears from this surface; semantic, engines map to their own particles.",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "dust": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": { "^_": {} },
+              "properties": {
+                "color": {
+                  "type": "array",
+                  "items": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "minItems": 3,
+                  "maxItems": 3
+                },
+                "amount": { "type": "number", "minimum": 0, "maximum": 1 }
+              }
+            },
+            "spray": {
+              "type": "number",
+              "description": "0..1 how much water or loose material is thrown.",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "marks": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": { "^_": {} },
+              "properties": {
+                "color": {
+                  "type": "array",
+                  "items": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "minItems": 3,
+                  "maxItems": 3
+                },
+                "persistence": { "type": "string", "enum": ["none", "drive", "event"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "surface_tyre_override": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "mf_scaling": { "$ref": "#/definitions/mf_scaling" },
+        "rolling_resistance": { "type": "number", "minimum": 0 },
+        "wet_response": { "$ref": "#/definitions/curve" },
+        "deformable": { "$ref": "#/definitions/deformable" },
+        "mu": {
+          "$ref": "#/definitions/mu",
+          "description": "Absolute mu for this tyre class; needs surfaces.reference_mu for the class. Replaces LMUX and LMUY."
+        }
+      }
+    },
+    "roughness": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "iso8608": {
+          "type": "object",
+          "required": ["gd_n0"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "description": "ISO 8608 road profile: displacement PSD Gd(n) = gd_n0 * (n / 0.1)^(-w), n in cycles/m.",
+          "properties": {
+            "gd_n0": { "type": "number", "exclusiveMinimum": 0, "description": "Gd at n0 = 0.1 cycles/m (m^3)." },
+            "w": { "type": "number", "default": 2.0, "description": "Waviness exponent." },
+            "class": {
+              "type": "string",
+              "enum": ["A", "B", "C", "D", "E", "F", "G", "H"],
+              "description": "ISO 8608 class, informational."
+            }
+          }
+        },
+        "crg_ref": {
+          "$ref": "#/definitions/id",
+          "description": "geometry.crg entry with the measured profile of this surface."
+        },
+        "mean_profile_depth": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Macrotexture MPD, ISO 13473-1 (m). Affects wet grip and drainage, not bumps."
+        },
+        "sinusoid": {
+          "type": "object",
+          "description": "Deterministic undulation: z = amplitude * (sin(2 pi x / wavelength) + sin(2 pi y / wavelength)) / 2.",
+          "required": ["amplitude", "wavelength"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "amplitude": { "type": "number", "description": "m.", "minimum": 0 },
+            "wavelength": { "type": "number", "description": "m.", "exclusiveMinimum": 0 }
+          }
+        }
+      }
+    },
+    "deformable": {
+      "type": "object",
+      "description": "Loose surfaces (gravel, sand, snow, mud). Tier A (effective) is what game engines can consume; Tier B (terramechanics) is physically portable but rarely implemented. Neither makes loose-surface feel portable between engines: see spec §6.6.",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "effective": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "drag_coefficient": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Speed-dependent resistance F = c * v * Fz against the direction of travel (s/m)."
+            },
+            "sinkage": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Static sinkage at the tyre's reference load (m)."
+            },
+            "loose_layer_depth": { "type": "number", "minimum": 0, "description": "Depth of loose material over a firm base (m)." },
+            "base_surface": { "$ref": "#/definitions/id", "description": "Surface the tyre reaches through the loose layer." },
+            "base_offset": {
+              "type": "number",
+              "description": "Depth (m) of hard ground below the surface mesh; a wheel cannot sink deeper.",
+              "minimum": 0
+            }
+          }
+        },
+        "terramechanics": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "description": "Bekker-Wong pressure-sinkage p = (k_c / b + k_phi) * z^n and Janosi-Hanamoto shear tau = (c + sigma * tan(phi)) * (1 - exp(-j / K)).",
+          "properties": {
+            "model": { "const": "bekker_wong_janosi" },
+            "n": { "type": "number", "exclusiveMinimum": 0, "description": "Sinkage exponent (-)." },
+            "k_c": { "type": "number", "description": "Cohesive modulus (N/m^(n+1))." },
+            "k_phi": { "type": "number", "description": "Frictional modulus (N/m^(n+2))." },
+            "cohesion": { "type": "number", "minimum": 0, "description": "c (Pa)." },
+            "friction_angle": { "type": "number", "minimum": 0, "maximum": 1.5708, "description": "phi (rad)." },
+            "shear_deformation_modulus": { "type": "number", "exclusiveMinimum": 0, "description": "K (m)." },
+            "bulk_density": { "type": "number", "exclusiveMinimum": 0, "description": "kg/m^3." },
+            "source": { "type": "string", "description": "Where the values come from (measurement, published table)." }
+          }
+        }
+      }
+    },
+    "timing_line": {
+      "type": "object",
+      "description": "A line across the track. Placed by s (and optionally t_min/t_max; default full width), or by two explicit end points.",
+      "anyOf": [{"required": ["s"]}, {"required": ["points"]}],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "s": { "$ref": "#/definitions/s" },
+        "t_min": { "type": "number" },
+        "t_max": { "type": "number" },
+        "points": { "type": "array", "items": {"$ref": "#/definitions/vec3"}, "minItems": 2, "maxItems": 2 }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "start_finish": { "$ref": "#/definitions/timing_line", "description": "Lapped tracks: start and finish line." },
+        "start": { "$ref": "#/definitions/timing_line", "description": "Point-to-point: start line." },
+        "finish": { "$ref": "#/definitions/timing_line", "description": "Point-to-point: finish line (flying finish)." },
+        "stop": { "$ref": "#/definitions/timing_line", "description": "Point-to-point: stop control after the finish." },
+        "sectors": {
+          "type": "array",
+          "description": "Contiguous sectors in race order, from the start (or start/finish) to the finish.",
+          "items": {
+            "type": "object",
+            "required": ["id", "s_start", "s_end"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "name": { "type": "string" },
+              "s_start": { "$ref": "#/definitions/s" },
+              "s_end": { "$ref": "#/definitions/s" }
+            }
+          }
+        },
+        "split_points": {
+          "type": "array",
+          "description": "Intermediate timing points in race order (rally splits).",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "anyOf": [{"required": ["s"]}, {"required": ["points"]}],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "name": { "type": "string" },
+              "s": { "$ref": "#/definitions/s" },
+              "t_min": { "type": "number" },
+              "t_max": { "type": "number" },
+              "points": { "type": "array", "items": {"$ref": "#/definitions/vec3"}, "minItems": 2, "maxItems": 2 }
+            }
+          }
+        },
+        "pit_lane": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "entry_s": { "$ref": "#/definitions/s", "description": "Where the pit lane leaves the reference line." },
+            "exit_s": { "$ref": "#/definitions/s", "description": "Where it rejoins." },
+            "speed_limit": { "type": "number", "exclusiveMinimum": 0, "description": "m/s." },
+            "session_speed_limits": {
+              "type": "object",
+              "description": "Per-session limits (m/s) where they differ from speed_limit.",
+              "additionalProperties": false,
+              "properties": {
+                "practice": { "type": "number", "exclusiveMinimum": 0 },
+                "qualifying": { "type": "number", "exclusiveMinimum": 0 },
+                "race": { "type": "number", "exclusiveMinimum": 0 }
+              },
+              "patternProperties": { "^_": {} }
+            },
+            "limit_start": { "$ref": "#/definitions/timing_line" },
+            "limit_end": { "$ref": "#/definitions/timing_line" },
+            "path": { "$ref": "#/definitions/polyline", "description": "Pit lane centreline from entry to exit." },
+            "side": { "type": "string", "enum": ["left", "right"] }
+          }
+        },
+        "drs_zones": {
+          "type": "array",
+          "description": "Overtaking-aid zones: detection point, then activation and deactivation, in race order (may wrap through s = 0).",
+          "items": {
+            "type": "object",
+            "required": ["id", "detection_s", "activation_s", "deactivation_s"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "detection_s": { "$ref": "#/definitions/s" },
+              "activation_s": { "$ref": "#/definitions/s" },
+              "deactivation_s": { "$ref": "#/definitions/s" },
+              "gap": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Maximum gap to the car ahead at detection (s)."
+              }
+            }
+          }
+        },
+        "controls": {
+          "type": "array",
+          "description": "Rally controls besides start, finish and stop: time controls, regroups, service and refuel. Placed by s when on the route, by position when not.",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind"],
+            "anyOf": [{"required": ["s"]}, {"required": ["position"]}],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "time_control",
+                  "start_control",
+                  "stop_control",
+                  "regroup_in",
+                  "regroup_out",
+                  "service_in",
+                  "service_out",
+                  "refuel",
+                  "parc_ferme",
+                  "other"
+                ]
+              },
+              "s": { "$ref": "#/definitions/s" },
+              "position": { "$ref": "#/definitions/vec3" },
+              "target_time": { "type": "number", "minimum": 0, "description": "Allowed time from the previous control (s)." }
+            }
+          }
+        },
+        "side_roads": {
+          "type": "array",
+          "description": "Junctions off the route that competitors must not take or cut.",
+          "items": {
+            "type": "object",
+            "required": ["s", "side"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "s": { "$ref": "#/definitions/s" },
+              "side": { "type": "string", "enum": ["left", "right"] },
+              "heading_offset": {
+                "type": "number",
+                "description": "Direction of the side road relative to the reference line tangent (rad)."
+              },
+              "blocked_by": {
+                "type": "string",
+                "enum": ["none", "tape", "barrier", "hay_bales", "spectators", "marshal", "vehicle"]
+              },
+              "cut_penalty": { "type": "number", "minimum": 0, "description": "Time penalty for using it (s)." }
+            }
+          }
+        },
+        "track_limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "max_wheels_outside": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4,
+              "description": "Wheels allowed outside before a violation (3 = all four wheels off is a violation)."
+            },
+            "use_surface_flags": { "type": "boolean", "default": true, "description": "Use surfaces' track_limits flags." },
+            "boundaries": {
+              "type": "array",
+              "description": "Explicit limit lines as lateral offsets from the reference line.",
+              "items": {
+                "type": "object",
+                "required": ["side", "s_start", "s_end", "t"],
+                "additionalProperties": false,
+                "patternProperties": { "^x_": {}, "^_": {} },
+                "properties": {
+                  "side": { "type": "string", "enum": ["left", "right"] },
+                  "s_start": { "$ref": "#/definitions/s" },
+                  "s_end": { "$ref": "#/definitions/s" },
+                  "t": { "type": "number", "description": "Lateral offset of the limit (m), positive left." }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "pose": {
+      "description": "Where a vehicle's SVJ origin (front-axle midpoint at ground level) is placed, and its heading. Either world coordinates or track coordinates. The vehicle is then dropped onto the surface (pitch and roll from the ground).",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["position", "heading"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": { "position": {"$ref": "#/definitions/vec3"}, "heading": {"$ref": "#/definitions/heading"} }
+        },
+        {
+          "type": "object",
+          "required": ["s", "t"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "s": { "$ref": "#/definitions/s" },
+            "t": { "type": "number", "description": "Lateral offset (m), positive left." },
+            "heading_offset": {
+              "type": "number",
+              "default": 0,
+              "description": "Heading relative to the reference line tangent (rad)."
+            }
+          }
+        }
+      ]
+    },
+    "race": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "grid": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["position", "pose"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": { "position": {"type": "integer", "minimum": 1}, "pose": {"$ref": "#/definitions/pose"} }
+          }
+        },
+        "pit_boxes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "pose"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "pose": { "$ref": "#/definitions/pose" },
+              "garage_pose": { "$ref": "#/definitions/pose" }
+            }
+          }
+        },
+        "spawns": {
+          "type": "array",
+          "description": "Other named start poses (rally stage start, hotlap start, free roam).",
+          "items": {
+            "type": "object",
+            "required": ["id", "pose"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": { "id": {"$ref": "#/definitions/id"}, "pose": {"$ref": "#/definitions/pose"} }
+          }
+        },
+        "racing_lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "points"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "purpose": {
+                "type": "string",
+                "enum": [
+                  "race",
+                  "qualifying",
+                  "wet",
+                  "pit",
+                  "pit_entry",
+                  "pit_exit",
+                  "alternate",
+                  "overtake_left",
+                  "overtake_right",
+                  "block",
+                  "formation",
+                  "safety_car",
+                  "safety",
+                  "other"
+                ],
+                "default": "race",
+                "description": "race / qualifying / wet: ideal lines. pit, pit_entry, pit_exit: pit lane paths. alternate, overtake_left/right, block: AI side paths (rF2 AIW left/right/block). formation, safety_car: paced laps."
+              },
+              "width": {
+                "type": "array",
+                "items": { "type": "number", "minimum": 0 },
+                "description": "Usable half-width around the line per point (m), same length as points."
+              },
+              "closed": { "type": "boolean", "default": false },
+              "points": { "$ref": "#/definitions/polyline" },
+              "speed": {
+                "type": "array",
+                "items": { "type": "number", "minimum": 0 },
+                "description": "Target speed per point (m/s), same length as points. Vehicle-specific: say which vehicle in _source."
+              }
+            }
+          }
+        },
+        "pacenotes": { "$ref": "#/definitions/pacenotes" },
+        "ai": { "$ref": "#/definitions/ai" },
+        "start_procedure": { "$ref": "#/definitions/start_procedure" },
+        "service_areas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "polygon"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "kind": {
+                "type": "string",
+                "enum": ["service", "remote_service", "refuel", "regroup", "parc_ferme", "paddock"]
+              },
+              "polygon": {
+                "type": "array",
+                "items": { "$ref": "#/definitions/vec3" },
+                "minItems": 3,
+                "description": "Outline, not closed (last point connects to first)."
+              }
+            }
+          }
+        },
+        "sections": {
+          "type": "array",
+          "description": "Stage character: reference times and difficulty per section (spec §10).",
+          "items": {
+            "type": "object",
+            "required": ["id", "s_start", "s_end"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "s_start": { "$ref": "#/definitions/s" },
+              "s_end": { "$ref": "#/definitions/s" },
+              "reference_time": { "type": "number", "description": "s.", "exclusiveMinimum": 0 },
+              "surface": { "$ref": "#/definitions/id" },
+              "ratings": {
+                "type": "object",
+                "description": "1 (little) .. 5 (a lot).",
+                "additionalProperties": false,
+                "patternProperties": { "^_": {} },
+                "properties": {
+                  "curves": { "type": "integer", "minimum": 1, "maximum": 5 },
+                  "rough": { "type": "integer", "minimum": 1, "maximum": 5 },
+                  "obstacles": { "type": "integer", "minimum": 1, "maximum": 5 },
+                  "straights": { "type": "integer", "minimum": 1, "maximum": 5 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ai": {
+      "type": "object",
+      "description": "AI data beyond the racing lines (which live in race.racing_lines with their purpose).",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "corridor": {
+          "type": "array",
+          "description": "Where the AI may drive: [[s, t_min, t_max], ...], s increasing, t positive left. Narrower than the road where the AI must stay off kerbs or run-off (rF2 AIW corridor).",
+          "items": { "type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3 }
+        },
+        "hints": {
+          "type": "array",
+          "description": "Behaviour hints along the line (AC/CSP AI hints, rF2 AIW zones).",
+          "items": {
+            "type": "object",
+            "required": ["s_start", "s_end", "kind"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "s_start": { "$ref": "#/definitions/s" },
+              "s_end": { "$ref": "#/definitions/s" },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "danger",
+                  "caution",
+                  "no_overtake",
+                  "overtake",
+                  "brake",
+                  "speed_limit",
+                  "stay_left",
+                  "stay_right"
+                ]
+              },
+              "side": { "type": "string", "enum": ["left", "right", "both"], "default": "both" },
+              "value": {
+                "type": "number",
+                "description": "brake / speed_limit: target speed (m/s); danger / caution: 0..1 severity."
+              }
+            }
+          }
+        }
+      }
+    },
+    "start_procedure": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["standing", "rolling", "staggered", "time_trial"],
+          "description": "staggered = rally-style starts at an interval."
+        },
+        "formation_lap": { "type": "boolean" },
+        "formation_speed": { "type": "number", "exclusiveMinimum": 0, "description": "m/s." },
+        "rolling_start_speed": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Speed at which a rolling start is released (m/s)."
+        },
+        "start_interval": { "type": "number", "exclusiveMinimum": 0, "description": "staggered: seconds between starters." },
+        "lights": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "count": { "type": "integer", "minimum": 1, "description": "Number of red light steps." },
+            "mesh_ref": { "$ref": "#/definitions/id" },
+            "prims": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^/", "description": "USD prim path in the mesh file." },
+              "description": "Prims of the lights, one per step, in lighting order."
+            }
+          }
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["side", "s_start", "s_end", "kind"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "side": { "type": "string", "enum": ["left", "right"] },
+        "s_start": { "$ref": "#/definitions/s" },
+        "s_end": {
+          "$ref": "#/definitions/s",
+          "description": "May be smaller than s_start on a closed line (crosses s = 0)."
+        },
+        "kind": { "type": "string", "enum": ["kerb", "verge", "barrier", "invisible"] },
+        "style": {
+          "type": "string",
+          "enum": [
+            "flat",
+            "raised",
+            "rumble",
+            "sausage",
+            "negative",
+            "grass",
+            "gravel_trap",
+            "paved_runoff",
+            "wall",
+            "armco",
+            "tyre_wall",
+            "tecpro",
+            "fence",
+            "debris_fence",
+            "tape",
+            "hay_bale",
+            "concrete_block",
+            "rock",
+            "earth_bank",
+            "snow_bank",
+            "other"
+          ],
+          "description": "kerb: flat, raised, rumble, sausage, negative. verge: grass, gravel_trap, paved_runoff. barrier: wall, armco, tyre_wall, tecpro, fence, debris_fence, tape, hay_bale, concrete_block, rock, earth_bank, snow_bank."
+        },
+        "t": {
+          "type": "number",
+          "description": "Lateral offset of the edge's inner side (m, positive left). Default: the road edge on that side."
+        },
+        "width": { "type": "number", "minimum": 0, "description": "m." },
+        "height": { "type": "number", "description": "m above the road; negative for a drop (negative kerb, ditch)." },
+        "surface": { "$ref": "#/definitions/id" },
+        "restitution": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Barriers: coefficient of restitution of an impact."
+        },
+        "mesh": {
+          "type": "object",
+          "required": ["mesh_ref"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "mesh_ref": { "$ref": "#/definitions/id" },
+            "prim": { "type": "string", "pattern": "^/", "description": "USD prim path in the mesh file." }
+          },
+          "description": "Where the edge is already modelled, if it is."
+        },
+        "prototype": {
+          "$ref": "#/definitions/id",
+          "description": "Prototype the edge is built from (tyre stacks, hay bales, blocks)."
+        },
+        "spacing": { "type": "number", "description": "m between prototype elements.", "exclusiveMinimum": 0 },
+        "behaviour": {
+          "type": "string",
+          "enum": ["drag", "sensor", "respawn"],
+          "description": "invisible edges: drag slows a car that enters (drag_coefficient), sensor only signals, respawn resets the car."
+        },
+        "drag_coefficient": {
+          "type": "number",
+          "description": "invisible drag edges: F = c * penetration (m) * Fz against the velocity (1/m).",
+          "minimum": 0
+        },
+        "tearable": {
+          "type": "boolean",
+          "description": "Tape or net that tears on contact and stays torn for the drive; gives no force back."
+        }
+      }
+    },
+    "cameras": {
+      "type": "object",
+      "description": "TV and replay cameras, in sets (AC cameras*.ini, rF2 .cam). Activation by s range (AC, Speed Dreams) or by spheres (rF2).",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "sets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "cameras"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "name": { "type": "string" },
+              "cameras": { "type": "array", "items": {"$ref": "#/definitions/camera"} }
+            }
+          }
+        }
+      }
+    },
+    "camera": {
+      "type": "object",
+      "required": ["id", "kind", "position"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "kind": {
+          "type": "string",
+          "enum": ["static", "tracking"],
+          "description": "static = fixed direction; tracking = turns to follow the car."
+        },
+        "position": { "$ref": "#/definitions/vec3" },
+        "look_at": { "$ref": "#/definitions/vec3", "description": "static: point the camera faces." },
+        "fov": {
+          "type": "array",
+          "items": { "type": "number", "exclusiveMinimum": 0 },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[min, max] vertical field of view (rad); equal values = no zoom."
+        },
+        "near": { "type": "number", "exclusiveMinimum": 0 },
+        "far": { "type": "number", "exclusiveMinimum": 0 },
+        "active": {
+          "type": "object",
+          "required": ["s_start", "s_end"],
+          "additionalProperties": false,
+          "properties": { "s_start": {"$ref": "#/definitions/s"}, "s_end": {"$ref": "#/definitions/s"} },
+          "patternProperties": { "^_": {} }
+        },
+        "spheres": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["position", "radius"],
+            "additionalProperties": false,
+            "properties": { "position": {"$ref": "#/definitions/vec3"}, "radius": {"type": "number", "exclusiveMinimum": 0} },
+            "patternProperties": { "^_": {} }
+          }
+        }
+      }
+    },
+    "layout": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["circuit", "point_to_point", "hillclimb", "oval", "rallycross", "drag", "test_area", "other"],
+          "description": "When it differs from track_info.type."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["forward", "reverse"],
+          "default": "forward",
+          "description": "reverse without an own reference: the base reference line driven backwards, s' = L - s."
+        },
+        "reference": { "$ref": "#/definitions/reference" },
+        "timing": { "$ref": "#/definitions/timing" },
+        "race": { "$ref": "#/definitions/race" },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/edge" },
+          "description": "Additional edges, on this layout's reference line."
+        },
+        "include_meshes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/id" },
+          "description": "Only these meshes (default: all)."
+        },
+        "exclude_meshes": { "type": "array", "items": {"$ref": "#/definitions/id"} },
+        "default_laps": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "kind": { "type": "string", "enum": ["time_of_day", "weather", "season", "event", "other"] },
+        "override": { "$ref": "#/definitions/relative_uri", "description": "A .stj-override.json whose base is this file." },
+        "usd_variants": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "minProperties": 1,
+          "description": "USD variant-set selections made with this variant ({set: variant}), next to its JSON patch (spec §3.6)."
+        }
+      },
+      "anyOf": [{"required": ["override"]}, {"required": ["usd_variants"]}]
+    },
+    "pacenotes": {
+      "type": "object",
+      "required": ["notes"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "scale": {
+          "const": "ascending_1_6",
+          "description": "Severity 1 = slowest corner short of a hairpin, 6 = fastest that still needs a call. Notes written on other scales are converted; the original wording stays in call."
+        },
+        "language": { "type": "string", "description": "BCP 47 tag of the call texts, e.g. 'en', 'es'." },
+        "written_for": {
+          "type": "string",
+          "description": "Car or class the notes were made for. Severities are vehicle-specific."
+        },
+        "notes": { "type": "array", "items": {"$ref": "#/definitions/pacenote"} }
+      }
+    },
+    "pacenote": {
+      "type": "object",
+      "required": ["s", "kind"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "s": {
+          "$ref": "#/definitions/s",
+          "description": "Where the feature begins (not where the co-driver calls it; call timing is up to the engine)."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "turn",
+            "hairpin",
+            "square",
+            "acute",
+            "straight",
+            "crest",
+            "jump",
+            "bump",
+            "dip",
+            "water",
+            "narrows",
+            "widens",
+            "junction",
+            "bridge",
+            "tunnel",
+            "surface_change",
+            "keep_in",
+            "keep_out",
+            "caution",
+            "finish",
+            "twisty",
+            "other"
+          ]
+        },
+        "direction": { "type": "string", "enum": ["left", "right"] },
+        "severity": { "type": "integer", "minimum": 1, "maximum": 6, "description": "turn only, on the scale above." },
+        "length": { "type": "number", "minimum": 0, "description": "Length of the feature (m), e.g. of a long corner." },
+        "distance_to_next": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Derived from the next note's s; consumers recompute it. Stored values are hints, checked against the positions."
+        },
+        "modifiers": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "long",
+                  "very_long",
+                  "short",
+                  "tightens",
+                  "opens",
+                  "tightens_late",
+                  "opens_late",
+                  "dont_cut",
+                  "cut",
+                  "flat",
+                  "maybe",
+                  "over_crest",
+                  "into",
+                  "and",
+                  "caution",
+                  "double_caution",
+                  "triple_caution",
+                  "slippy",
+                  "loose",
+                  "rough",
+                  "ruts",
+                  "stone",
+                  "tree",
+                  "post",
+                  "wall",
+                  "ditch",
+                  "tightens_bad",
+                  "narrows",
+                  "widens"
+                ]
+              },
+              { "type": "string", "pattern": "^x_" }
+            ]
+          }
+        },
+        "call": { "type": "string", "description": "Original wording of the note." },
+        "call_adjust": {
+          "type": "number",
+          "description": "Call this note earlier (+) or later (-) than the consumer's normal lookahead, in seconds."
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "geo_reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "description": "Where the track is on Earth. latitude/longitude are in degrees (WGS 84), the one exception to SI radians.",
+          "properties": {
+            "proj": {
+              "type": "string",
+              "description": "PROJ string or EPSG code of the projection of x/y, as OpenDRIVE <geoReference>. A local Transverse Mercator centred on the track is recommended."
+            },
+            "latitude": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90,
+              "description": "Latitude of the frame origin (deg)."
+            },
+            "longitude": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180,
+              "description": "Longitude of the frame origin (deg)."
+            },
+            "altitude": {
+              "type": "number",
+              "description": "Height of the frame origin above the vertical datum (m). z = 0 is at this height."
+            },
+            "vertical_datum": { "type": "string", "description": "E.g. 'EGM2008', 'EPSG:5773', 'ellipsoid'." }
+          }
+        },
+        "north_heading": {
+          "type": "number",
+          "description": "Direction of true north (rad, counter-clockwise from +X). pi/2 when +Y points north. Needed for the sun even with a geo-reference, because grid north is not true north."
+        },
+        "origin_offset": {
+          "$ref": "#/definitions/vec3",
+          "description": "Translation applied when the file was re-origined: x_original = x + origin_offset."
+        },
+        "timezone": { "type": "string", "description": "IANA time zone, e.g. 'Europe/Madrid'." },
+        "default_time": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "date": { "type": "string", "format": "date" },
+            "local_time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$" }
+          }
+        },
+        "sky": { "$ref": "#/definitions/sky" },
+        "lighting": { "$ref": "#/definitions/lighting" },
+        "default_weather": { "$ref": "#/definitions/weather" },
+        "weather_schedule": {
+          "type": "array",
+          "description": "Weather changes during sessions, as rFactor 2 .wet schedules: each entry applies from `time` seconds after the session start.",
+          "items": {
+            "type": "object",
+            "required": ["session", "time", "weather"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "session": { "type": "string", "enum": ["any", "practice", "qualifying", "warmup", "race", "stage"] },
+              "time": { "type": "number", "minimum": 0, "description": "Seconds after the session start." },
+              "weather": { "$ref": "#/definitions/weather" }
+            }
+          }
+        },
+        "season": {
+          "type": "object",
+          "description": "Static season state; sets the defaults of the snow_cover and leaf_fraction signals.",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "name": { "type": "string", "enum": ["spring", "summer", "autumn", "winter"] },
+            "snow_cover": { "type": "number", "minimum": 0, "maximum": 1 },
+            "snow_depth": { "type": "number", "description": "m.", "minimum": 0 },
+            "leaf_fraction": { "type": "number", "description": "1 = full foliage.", "minimum": 0, "maximum": 1 },
+            "ground": { "type": "string", "enum": ["thawed", "frozen", "waterlogged"] }
+          }
+        },
+        "weather_options": {
+          "type": "array",
+          "description": "Conditions the track allows and how likely each is (spec §11).",
+          "items": {
+            "type": "object",
+            "required": ["weight"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "variant": { "$ref": "#/definitions/id" },
+              "weather": { "$ref": "#/definitions/weather" },
+              "weight": { "type": "number", "exclusiveMinimum": 0 }
+            }
+          }
+        },
+        "probes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "position"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "kind": { "type": "string", "enum": ["reflection", "irradiance"] },
+              "position": { "$ref": "#/definitions/vec3" },
+              "extent": {
+                "type": "array",
+                "items": { "type": "number", "exclusiveMinimum": 0 },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "Box size [x, y, z] (m) around position where the probe applies."
+              },
+              "priority": { "type": "integer" },
+              "when": { "$ref": "#/definitions/condition" }
+            }
+          },
+          "description": "Where engines should capture local reflections or lighting (spec §8.8)."
+        },
+        "climate": {
+          "type": "object",
+          "description": "Climate statistics for generating plausible weather for a date (spec §11).",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "source": { "type": "string" },
+            "monthly": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["month"],
+                "additionalProperties": false,
+                "patternProperties": { "^x_": {}, "^_": {} },
+                "properties": {
+                  "month": { "type": "integer", "minimum": 1, "maximum": 12 },
+                  "t_min": { "type": "number", "description": "°C, mean daily minimum." },
+                  "t_max": { "type": "number", "description": "°C, mean daily maximum." },
+                  "rain_days": { "type": "number", "minimum": 0 },
+                  "rain_mm": { "type": "number", "minimum": 0 },
+                  "wind_mean": { "type": "number", "description": "m/s.", "minimum": 0 }
+                }
+              },
+              "minItems": 1
+            }
+          }
+        }
+      }
+    },
+    "weather": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "condition": {
+          "type": "string",
+          "enum": ["clear", "partly_cloudy", "cloudy", "overcast", "fog", "drizzle", "rain", "heavy_rain", "snow"]
+        },
+        "air_temperature": { "type": "number", "description": "°C." },
+        "track_temperature": { "type": "number", "description": "°C." },
+        "relative_humidity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "wind_speed": { "type": "number", "minimum": 0, "description": "m/s." },
+        "wind_from_heading": { "type": "number", "description": "Direction the wind comes from (rad, counter-clockwise from +X)." },
+        "water_depth": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Water-film depth on the racing surface (m); 0 = dry."
+        },
+        "visibility": { "type": "number", "exclusiveMinimum": 0, "description": "Meteorological visibility (m)." },
+        "precipitation": { "type": "number", "description": "mm/h (a documented exception to SI, spec §4.1).", "minimum": 0 }
+      }
+    },
+    "sky": {
+      "type": "object",
+      "description": "How the sky is drawn. Sun position follows from geo_reference, north_heading and the time; this block describes the rest. Engines map model to their own sky system; the original engine's sky settings go in x_<engine>.",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "model": {
+          "type": "string",
+          "enum": ["physical", "preetham", "hosek_wilkie", "hdri", "engine_default"],
+          "description": "physical = single or multiple scattering atmosphere (Blender's successors of Nishita); preetham / hosek_wilkie = the analytic models of those names."
+        },
+        "turbidity": { "type": "number", "minimum": 1, "description": "Atmospheric turbidity (Preetham / Hosek-Wilkie)." },
+        "hdri": {
+          "type": "object",
+          "required": ["uri"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "uri": { "$ref": "#/definitions/relative_uri" },
+            "rotation": { "type": "number", "description": "Rotation about Z (rad)." },
+            "intensity": { "type": "number", "minimum": 0, "description": "Multiplier." }
+          }
+        },
+        "clouds": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+            "kind": { "type": "string", "enum": ["none", "cumulus", "stratus", "cirrus", "mixed"] }
+          }
+        },
+        "fog": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "visibility": { "type": "number", "exclusiveMinimum": 0, "description": "m." },
+            "height_falloff": { "type": "number", "exclusiveMinimum": 0, "description": "Scale height of the fog density (m)." },
+            "color": {
+              "type": "array",
+              "items": { "type": "number", "minimum": 0 },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Linear RGB."
+            }
+          }
+        }
+      }
+    },
+    "lighting": {
+      "type": "object",
+      "description": "Sun strength and artificial lights. Units follow UsdLux: lux for the sun, candela for point and spot lights.",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "sun": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "illuminance": {
+              "type": "number",
+              "minimum": 0,
+              "description": "lux at noon in clear sky; engines usually derive it."
+            },
+            "color_temperature": { "type": "number", "exclusiveMinimum": 0, "description": "K." }
+          }
+        },
+        "lights": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "type", "position"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "kind": {
+                "type": "string",
+                "enum": ["floodlight", "street", "building", "pit", "start_lights", "marker", "other"]
+              },
+              "type": { "type": "string", "enum": ["point", "spot"] },
+              "position": { "$ref": "#/definitions/vec3" },
+              "direction": { "$ref": "#/definitions/vec3", "description": "Spot axis (unit vector)." },
+              "intensity": { "type": "number", "minimum": 0, "description": "cd." },
+              "color_temperature": { "type": "number", "exclusiveMinimum": 0, "description": "K." },
+              "range": { "type": "number", "exclusiveMinimum": 0, "description": "m." },
+              "inner_cone_angle": { "type": "number", "minimum": 0, "description": "rad." },
+              "outer_cone_angle": { "type": "number", "minimum": 0, "description": "rad." },
+              "schedule": { "type": "string", "enum": ["always", "night", "event"], "default": "night" },
+              "when": {
+                "$ref": "#/definitions/condition",
+                "description": "Light is on while true. Takes precedence over schedule."
+              },
+              "intensity_by": { "$ref": "#/definitions/binding", "description": "Multiplier on intensity." }
+            }
+          }
+        },
+        "usd_lights": {
+          "$ref": "#/definitions/id",
+          "description": "geometry.meshes entry whose USD file carries UsdLux lights."
+        }
+      }
+    },
+    "scenery": {
+      "type": "object",
+      "description": "Vegetation and trackside objects described by what they are, so each engine can rebuild them with its own optimised systems (instanced foliage, grass shaders, forest items). The original engine's representation travels in x_<engine> blocks on each prototype or layer; converters back to that engine use it verbatim (spec §8).",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "prototypes": {
+          "type": "object",
+          "propertyNames": { "pattern": "^([a-z0-9_]+|x_.*|_.*)$" },
+          "patternProperties": { "^[a-z0-9_]+$": {"$ref": "#/definitions/prototype"} },
+          "additionalProperties": true
+        },
+        "instances": {
+          "type": "array",
+          "description": "Placed objects, one entry per prototype.",
+          "items": { "$ref": "#/definitions/instance_set" }
+        },
+        "scatter": {
+          "type": "array",
+          "description": "Procedural layers (grass, groundcover, forest fill): a rule, not a list of instances. Engines regenerate them with their own system.",
+          "items": { "$ref": "#/definitions/scatter_layer" }
+        },
+        "crowds": { "type": "array", "items": {"$ref": "#/definitions/crowd"} }
+      }
+    },
+    "prototype": {
+      "type": "object",
+      "required": ["class"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "class": {
+          "type": "string",
+          "enum": [
+            "tree",
+            "bush",
+            "grass",
+            "groundcover",
+            "flowers",
+            "crop",
+            "rock",
+            "building",
+            "fence",
+            "barrier",
+            "tyre_wall",
+            "sign",
+            "pole",
+            "spectators",
+            "prop",
+            "other"
+          ]
+        },
+        "species": {
+          "type": "string",
+          "description": "Botanical name for vegetation (e.g. 'Pinus sylvestris'), so a target engine can pick its closest asset."
+        },
+        "height": { "type": "number", "exclusiveMinimum": 0, "description": "Typical height (m)." },
+        "radius": { "type": "number", "exclusiveMinimum": 0, "description": "Crown or footprint radius (m)." },
+        "collision": { "type": "string", "enum": ["none", "trunk", "box", "mesh"], "description": "What a vehicle hits." },
+        "collision_radius": { "type": "number", "exclusiveMinimum": 0, "description": "Trunk or pole radius (m)." },
+        "breakable": { "type": "boolean" },
+        "mesh": {
+          "type": "object",
+          "required": ["mesh_ref", "prim"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "mesh_ref": { "$ref": "#/definitions/id" },
+            "prim": { "type": "string", "pattern": "^/", "description": "USD prim path in the mesh file." }
+          },
+          "description": "Generic USD representation, used by engines that have no native equivalent."
+        },
+        "physics": {
+          "type": "object",
+          "description": "Rigid-body properties for scale 1 (spec §8.4).",
+          "required": ["mode"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "mode": { "type": "string", "enum": ["static", "movable", "breakable", "tethered", "bendable"] },
+            "mass": { "type": "number", "description": "kg.", "exclusiveMinimum": 0 },
+            "center_of_mass": {
+              "$ref": "#/definitions/vec3",
+              "description": "Prototype frame: X forward, Y left, Z up, origin at the base centre (m)."
+            },
+            "inertia": {
+              "type": "array",
+              "items": { "type": "number", "exclusiveMinimum": 0 },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Principal moments [Ixx, Iyy, Izz] about the centre of mass, prototype axes (kg m2)."
+            },
+            "shape": {
+              "type": "object",
+              "description": "Collision shape; mesh = convex hull of the prototype's mesh node.",
+              "required": ["kind"],
+              "additionalProperties": false,
+              "properties": {
+                "kind": { "type": "string", "enum": ["box", "cylinder", "sphere", "capsule", "mesh"] },
+                "size": {
+                  "type": "array",
+                  "items": { "type": "number", "exclusiveMinimum": 0 },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "box [x, y, z] (m)."
+                },
+                "radius": { "type": "number", "description": "m.", "exclusiveMinimum": 0 },
+                "height": { "type": "number", "description": "m.", "exclusiveMinimum": 0 }
+              },
+              "patternProperties": { "^_": {} }
+            },
+            "friction": { "type": "number", "description": "Coefficient against the ground.", "minimum": 0 },
+            "restitution": { "type": "number", "minimum": 0, "maximum": 1 },
+            "break_impulse": {
+              "type": "number",
+              "description": "N s; breakable props break or detach above it.",
+              "exclusiveMinimum": 0
+            },
+            "tether": {
+              "type": "object",
+              "description": "tethered props: spring to their placed position (rF2 loose objects).",
+              "required": ["stiffness"],
+              "additionalProperties": false,
+              "properties": {
+                "stiffness": { "type": "number", "description": "N/m.", "exclusiveMinimum": 0 },
+                "damping": { "type": "number", "description": "N s/m.", "minimum": 0 },
+                "max_travel": { "type": "number", "description": "m.", "exclusiveMinimum": 0 }
+              },
+              "patternProperties": { "^_": {} }
+            },
+            "respawn": { "type": "string", "enum": ["never", "session", "lap"] },
+            "stiffness": { "type": "number", "description": "bendable: bending stiffness (N m/rad).", "exclusiveMinimum": 0 }
+          }
+        }
+      }
+    },
+    "instance_set": {
+      "type": "object",
+      "required": ["prototype"],
+      "anyOf": [{"required": ["transforms"]}, {"required": ["usd"]}],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "prototype": { "$ref": "#/definitions/id" },
+        "transforms": {
+          "type": "array",
+          "description": "[x, y, z, heading, scale] per instance; scale may be omitted (1). Upright in Z.",
+          "items": { "type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 5 }
+        },
+        "when": { "$ref": "#/definitions/condition", "description": "Instances exist while true." },
+        "usd": {
+          "type": "object",
+          "required": ["mesh_ref", "prim"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "mesh_ref": { "$ref": "#/definitions/id" },
+            "prim": { "type": "string", "pattern": "^/", "description": "USD prim path in the mesh file." }
+          },
+          "description": "A PointInstancer (or a prim with native instances) in a USD mesh file."
+        }
+      }
+    },
+    "scatter_layer": {
+      "type": "object",
+      "required": ["id", "prototypes", "density", "area"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "prototypes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["prototype"],
+            "additionalProperties": false,
+            "properties": {
+              "prototype": { "$ref": "#/definitions/id" },
+              "weight": { "type": "number", "exclusiveMinimum": 0, "default": 1 }
+            },
+            "patternProperties": { "^_": {} }
+          }
+        },
+        "density": { "type": "number", "exclusiveMinimum": 0, "description": "Instances per m² where the area mask is 1." },
+        "area": {
+          "type": "object",
+          "description": "Where the layer grows. Several keys combine as an intersection.",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "surfaces": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/id" },
+              "minItems": 1,
+              "description": "Grow on these surfaces (how BeamNG groundcover, UE landscape grass and CSP grass attach to materials)."
+            },
+            "bands": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["s_start", "s_end", "t_min", "t_max"],
+                "additionalProperties": false,
+                "properties": {
+                  "s_start": { "$ref": "#/definitions/s" },
+                  "s_end": { "$ref": "#/definitions/s" },
+                  "t_min": { "type": "number" },
+                  "t_max": { "type": "number" }
+                },
+                "patternProperties": { "^_": {} }
+              }
+            },
+            "mask": {
+              "type": "object",
+              "required": ["uri", "extent"],
+              "additionalProperties": false,
+              "properties": {
+                "uri": { "$ref": "#/definitions/relative_uri", "description": "Greyscale image, 1 = full density." },
+                "extent": {
+                  "type": "array",
+                  "items": { "type": "number" },
+                  "minItems": 4,
+                  "maxItems": 4,
+                  "description": "[x_min, y_min, x_max, y_max] (m) covered by the image."
+                },
+                "channel": { "type": "string", "enum": ["r", "g", "b", "a", "l"], "default": "l" }
+              },
+              "patternProperties": { "^_": {} }
+            },
+            "mesh_attribute": {
+              "type": "object",
+              "required": ["mesh_ref", "attribute"],
+              "additionalProperties": false,
+              "properties": {
+                "mesh_ref": { "$ref": "#/definitions/id" },
+                "attribute": {
+                  "type": "string",
+                  "pattern": "^stj_",
+                  "description": "Per-vertex density primvar of a USD mesh, e.g. stj_density."
+                }
+              },
+              "patternProperties": { "^_": {} }
+            }
+          }
+        },
+        "exclude_surfaces": { "type": "array", "items": {"$ref": "#/definitions/id"} },
+        "min_spacing": { "type": "number", "minimum": 0, "description": "m." },
+        "scale_range": { "type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2 },
+        "align_to_normal": { "type": "boolean", "default": false },
+        "seed": { "type": "integer" },
+        "cull_distance": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Distance beyond which the layer need not be drawn (m)."
+        },
+        "when": { "$ref": "#/definitions/condition", "description": "Layer exists while true." },
+        "density_by": { "$ref": "#/definitions/binding", "description": "Multiplier on density." }
+      }
+    },
+    "extent": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4,
+      "description": "[x_min, y_min, x_max, y_max] in the STJ world frame (m)."
+    },
+    "polygon_xy": {
+      "type": "array",
+      "minItems": 3,
+      "items": { "type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2 },
+      "description": "Closed polygon [[x, y], ...] in the world frame (m); the last point joins the first."
+    },
+    "s_band": {
+      "type": "object",
+      "description": "Area along the base reference line. On a closed line s_end < s_start crosses s = 0.",
+      "required": ["s_start", "s_end", "t_min", "t_max"],
+      "additionalProperties": false,
+      "properties": {
+        "s_start": { "$ref": "#/definitions/s" },
+        "s_end": { "$ref": "#/definitions/s" },
+        "t_min": { "type": "number", "description": "m, positive left." },
+        "t_max": { "type": "number", "description": "m." }
+      },
+      "patternProperties": { "^_": {} }
+    },
+    "signal": {
+      "type": "string",
+      "pattern": "^(sun_elevation|local_time|day_of_year|precipitation|water_depth|wetness|wind_speed|snow_cover|leaf_fraction|session|session_phase|session_time|flag|start_lights_lit|nearest_vehicle_distance|sector_flag|wear|time_to_arrival|x_[a-z0-9_]+)$",
+      "description": "Runtime state the engine supplies (spec §11.1): sun_elevation, local_time, day_of_year, precipitation, water_depth, wetness, wind_speed, snow_cover, leaf_fraction, session, session_phase, session_time, flag, start_lights_lit, nearest_vehicle_distance, sector_flag, wear, time_to_arrival. Engine-specific signals use x_<engine>_<name>."
+    },
+    "condition": {
+      "type": "object",
+      "description": "Declarative condition on signals (spec §11.1): {signal, op, value}, or all / any / not of conditions. No arithmetic, no scripting.",
+      "oneOf": [
+        { "required": ["signal", "op", "value"] },
+        { "required": ["all"] },
+        { "required": ["any"] },
+        { "required": ["not"] }
+      ],
+      "additionalProperties": false,
+      "patternProperties": { "^_": {} },
+      "properties": {
+        "signal": { "$ref": "#/definitions/signal" },
+        "op": { "type": "string", "enum": ["eq", "ne", "lt", "le", "gt", "ge", "in"] },
+        "value": {
+          "type": ["number", "string", "boolean", "array"],
+          "description": "A list for op 'in'. Enum signals take their enum strings."
+        },
+        "all": { "type": "array", "minItems": 1, "items": {"$ref": "#/definitions/condition"} },
+        "any": { "type": "array", "minItems": 1, "items": {"$ref": "#/definitions/condition"} },
+        "not": { "$ref": "#/definitions/condition" }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "description": "Maps a signal to a number (spec §11.1): curve [[signal, output], ...] (linear, clamped) for numeric signals, map {value: output} for enum signals.",
+      "required": ["signal"],
+      "oneOf": [{"required": ["curve"]}, {"required": ["map"]}],
+      "additionalProperties": false,
+      "patternProperties": { "^_": {} },
+      "properties": {
+        "signal": { "$ref": "#/definitions/signal" },
+        "curve": { "$ref": "#/definitions/curve" },
+        "map": { "type": "object", "minProperties": 1, "additionalProperties": {"type": "number"} },
+        "smoothing": {
+          "type": "number",
+          "description": "First-order lag time constant (s), so outputs do not flicker at a threshold.",
+          "minimum": 0
+        }
+      }
+    },
+    "terrain_layer": {
+      "type": "object",
+      "required": ["id", "surface"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "surface": { "$ref": "#/definitions/id" },
+        "weight": {
+          "type": "object",
+          "description": "Weight map covering the terrain extent at any resolution, sampled bilinearly. The first layer has none: its weight is 1 minus the sum of the others.",
+          "required": ["uri"],
+          "additionalProperties": false,
+          "properties": {
+            "uri": { "$ref": "#/definitions/relative_uri" },
+            "channel": {
+              "type": "string",
+              "enum": ["gray", "r", "g", "b", "a"],
+              "description": "Channel of an 8-bit PNG holding the weight (0..255 = 0..1). Default gray."
+            }
+          },
+          "patternProperties": { "^_": {} }
+        },
+        "material": {
+          "type": "object",
+          "description": "UsdShade material that draws this layer.",
+          "required": ["mesh_ref", "material"],
+          "additionalProperties": false,
+          "properties": { "mesh_ref": {"$ref": "#/definitions/id"}, "material": {"type": "string"} },
+          "patternProperties": { "^_": {} }
+        },
+        "tile": { "type": "number", "description": "World size (m) of one texture repeat.", "exclusiveMinimum": 0 },
+        "ground_layer": {
+          "$ref": "#/definitions/id",
+          "description": "A ground.layers id that draws this terrain layer (instead of material + tile)."
+        }
+      }
+    },
+    "terrain": {
+      "type": "object",
+      "description": "Terrain heightfield (spec §7.4). Converters to mesh-only engines triangulate it.",
+      "required": ["heightmap"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "heightmap": {
+          "type": "object",
+          "description": "Vertex-registered grid, axis-aligned: sample (i, j) at x = x_min + i*dx, y = y_max - j*dy; image row 0 is the +Y (north) edge (spec §7.4).",
+          "required": ["uri", "format", "size", "extent"],
+          "additionalProperties": false,
+          "properties": {
+            "uri": { "$ref": "#/definitions/relative_uri" },
+            "format": {
+              "type": "string",
+              "enum": ["png16", "raw_f32"],
+              "description": "png16: 16-bit PNG, the first channel is the height (greyscale recommended; Blender writes RGBA): height = height_min + v/65535 * (height_max - height_min). raw_f32: little-endian float32 metres, no header."
+            },
+            "size": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 2 },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[nx, ny] samples. 2^n + 1 per side is what UE, Unity and RoR need."
+            },
+            "extent": { "$ref": "#/definitions/extent" },
+            "height_min": { "type": "number", "description": "m (png16)." },
+            "height_max": { "type": "number", "description": "m (png16)." }
+          },
+          "patternProperties": { "^_": {} }
+        },
+        "holes": {
+          "type": "object",
+          "description": "8-bit mask on the heightmap grid; non-zero = no terrain (tunnels, cuttings, under road meshes).",
+          "required": ["uri"],
+          "additionalProperties": false,
+          "properties": { "uri": {"$ref": "#/definitions/relative_uri"} },
+          "patternProperties": { "^_": {} }
+        },
+        "layers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/terrain_layer" },
+          "description": "Material layers. A terrain contact takes the surface of the dominant layer."
+        },
+        "collision": { "type": "boolean", "default": true },
+        "id": { "$ref": "#/definitions/id" }
+      }
+    },
+    "line_state": {
+      "type": "object",
+      "description": "Static state of a line across the surface (spec §6.8): r(s, t) = level * profile(s) * exp(-0.5 * ((t - t_line(s)) / spread)^2). How it evolves during a session is the reserved 'dynamic'.",
+      "required": ["id", "kind", "line", "spread"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "kind": {
+          "type": "string",
+          "enum": ["rubber", "swept"],
+          "description": "rubber: rubber laid on a paved line. swept: loose material cleared from a gravel or snow line."
+        },
+        "applies_to": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/id" },
+          "description": "Surface ids the state lies on."
+        },
+        "line": { "type": "string", "description": "id of the racing line the state follows (race.racing_lines)." },
+        "spread": { "type": "number", "description": "Gaussian sigma across the line (m).", "exclusiveMinimum": 0 },
+        "profile": {
+          "$ref": "#/definitions/curve",
+          "description": "Optional factor along the lap [[s, factor], ...]; braking zones carry more."
+        },
+        "grip_gain": {
+          "type": "object",
+          "description": "Gain g: LMUX and LMUY are multiplied by 1 + g*r on a dry surface.",
+          "additionalProperties": false,
+          "properties": { "LMUX": {"type": "number"}, "LMUY": {"type": "number"} },
+          "patternProperties": { "^_": {} }
+        },
+        "wet_gain": {
+          "type": "number",
+          "description": "Gain replacing grip_gain where the film depth is above 0 (a rubbered line is slippery in the rain)."
+        },
+        "loose_layer_factor": {
+          "type": "number",
+          "description": "swept: loose_layer_depth at full state is multiplied by this (0 = swept bare).",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "marbles": {
+          "type": "object",
+          "required": ["offset", "LMU"],
+          "additionalProperties": false,
+          "properties": {
+            "offset": { "type": "number", "description": "m beyond spread where marbles begin.", "minimum": 0 },
+            "LMU": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Factor on LMUX and LMUY in the marbles at level 1."
+            }
+          },
+          "patternProperties": { "^_": {} }
+        },
+        "levels": {
+          "type": "object",
+          "description": "State level 0..1 at the start of each session.",
+          "additionalProperties": false,
+          "properties": {
+            "practice": { "type": "number", "minimum": 0, "maximum": 1 },
+            "qualifying": { "type": "number", "minimum": 0, "maximum": 1 },
+            "warmup": { "type": "number", "minimum": 0, "maximum": 1 },
+            "race": { "type": "number", "minimum": 0, "maximum": 1 },
+            "stage": { "type": "number", "minimum": 0, "maximum": 1 },
+            "any": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "patternProperties": { "^_": {} }
+        }
+      }
+    },
+    "water_body": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "anyOf": [{"required": ["outline", "level"]}, {"required": ["path"]}],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["sea", "lake", "pond", "river", "stream", "ford", "puddle", "pool", "other"]
+        },
+        "outline": { "$ref": "#/definitions/polygon_xy" },
+        "level": { "type": "number", "description": "Water surface height z (m), polygon bodies." },
+        "path": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "type": "array", "items": {"type": "number"}, "minItems": 5, "maxItems": 5 },
+          "description": "[x, y, z, width, depth] along a river, stream or ford; z is the water surface, flow runs along the path."
+        },
+        "depth": {
+          "type": "number",
+          "description": "m. Omit where the bed is terrain or a mesh.",
+          "exclusiveMinimum": 0
+        },
+        "density": { "type": "number", "exclusiveMinimum": 0, "default": 1000, "description": "kg/m3." },
+        "flow_speed": { "type": "number", "description": "m/s, along the path or towards flow_heading.", "minimum": 0 },
+        "flow_heading": { "$ref": "#/definitions/heading" },
+        "bed_surface": { "$ref": "#/definitions/id" },
+        "wading_drag": {
+          "type": "number",
+          "description": "s/m: F = c * v * Fz against travel, for engines without water physics.",
+          "minimum": 0
+        },
+        "drivable": { "type": "boolean" },
+        "out_of_bounds": { "type": "boolean", "description": "Entering resets the vehicle." },
+        "fill": {
+          "$ref": "#/definitions/binding",
+          "description": "Fraction 0..1 of the full depth, by a signal (puddles: wetness)."
+        },
+        "mesh": {
+          "type": "object",
+          "required": ["mesh_ref"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "mesh_ref": { "$ref": "#/definitions/id" },
+            "prim": { "type": "string", "pattern": "^/", "description": "USD prim path in the mesh file." }
+          },
+          "description": "Visual water surface."
+        },
+        "when": {
+          "$ref": "#/definitions/condition",
+          "description": "The body exists while true (puddles only when wet)."
+        }
+      }
+    },
+    "water": {
+      "type": "object",
+      "description": "Water bodies and where water stands, drains and is sheltered (spec §6.9, §7.5).",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "sea_level": { "type": "number", "description": "z (m) of an infinite sea plane." },
+        "bodies": { "type": "array", "items": {"$ref": "#/definitions/water_body"} },
+        "accumulation": {
+          "type": "object",
+          "description": "Greyscale PNG: factor = 2 * v / v_max on the water_depth signal (1 = average; dips and ruts > 1, crowns < 1).",
+          "required": ["uri", "extent"],
+          "additionalProperties": false,
+          "properties": { "uri": {"$ref": "#/definitions/relative_uri"}, "extent": {"$ref": "#/definitions/extent"} },
+          "patternProperties": { "^_": {} }
+        },
+        "accumulation_bands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["s_start", "s_end", "t_min", "t_max", "factor"],
+            "additionalProperties": false,
+            "properties": {
+              "s_start": { "$ref": "#/definitions/s" },
+              "s_end": { "$ref": "#/definitions/s" },
+              "t_min": { "type": "number" },
+              "t_max": { "type": "number" },
+              "factor": { "type": "number", "minimum": 0, "maximum": 2 }
+            },
+            "patternProperties": { "^_": {} }
+          },
+          "description": "Accumulation along the base reference line; later bands win over earlier ones and over the map."
+        },
+        "drains": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "capacity"],
+            "anyOf": [{"required": ["position"]}, {"required": ["band"]}],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "kind": { "type": "string", "enum": ["grate", "channel", "kerb_drain", "soakaway", "other"] },
+              "position": { "$ref": "#/definitions/vec3" },
+              "band": { "$ref": "#/definitions/s_band" },
+              "capacity": { "type": "number", "description": "mm/h over its catchment.", "exclusiveMinimum": 0 }
+            }
+          }
+        },
+        "shelter": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "factor"],
+            "anyOf": [{"required": ["band"]}, {"required": ["polygon"]}],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "kind": { "type": "string", "enum": ["tunnel", "bridge", "roof", "canopy", "other"] },
+              "band": { "$ref": "#/definitions/s_band" },
+              "polygon": { "$ref": "#/definitions/polygon_xy" },
+              "factor": {
+                "type": "number",
+                "description": "Fraction of rain kept off (1 = none reaches).",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        },
+        "dry_line": {
+          "type": "object",
+          "description": "Snapshot of a drying line (spec §6.9).",
+          "required": ["line", "spread", "factor"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "line": { "type": "string" },
+            "spread": { "type": "number", "description": "m.", "exclusiveMinimum": 0 },
+            "factor": { "type": "number", "description": "Water depth factor on the line.", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+    "animated_object": {
+      "type": "object",
+      "required": ["id", "target", "time_range"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "flag",
+            "windmill",
+            "gate",
+            "barrier_arm",
+            "crowd",
+            "vehicle",
+            "aircraft",
+            "scoreboard",
+            "machinery",
+            "other"
+          ]
+        },
+        "target": {
+          "type": "object",
+          "required": ["mesh_ref", "nodes"],
+          "additionalProperties": false,
+          "properties": {
+            "mesh_ref": { "$ref": "#/definitions/id" },
+            "nodes": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "pattern": "^/", "description": "USD prim path in the mesh file." },
+              "description": "Prims that move."
+            }
+          },
+          "patternProperties": { "^_": {} }
+        },
+        "playback": { "type": "string", "enum": ["loop", "ping_pong", "once", "hold"] },
+        "speed_by": { "$ref": "#/definitions/binding", "description": "Playback-rate multiplier." },
+        "time_by": {
+          "$ref": "#/definitions/binding",
+          "description": "Normalised animation time 0..1 (scrubbing) instead of playback."
+        },
+        "when": {
+          "$ref": "#/definitions/condition",
+          "description": "Plays while true; otherwise rests at time 0 (hold: last frame)."
+        },
+        "collides": { "type": "boolean", "description": "Moving nodes are a kinematic collider." },
+        "time_range": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[start, end] time codes of the animation on the stage."
+        }
+      },
+      "not": { "required": ["speed_by", "time_by"] }
+    },
+    "audio": {
+      "type": "object",
+      "description": "Sound emitters and reverb zones (spec §8.6). Engine sound banks stay in x_<engine>, by event name.",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "emitters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "sound"],
+            "anyOf": [{"required": ["position"]}, {"required": ["path"]}],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "ambient",
+                  "crowd",
+                  "pa",
+                  "music",
+                  "birds",
+                  "water",
+                  "wind",
+                  "machinery",
+                  "generator",
+                  "other"
+                ]
+              },
+              "position": { "$ref": "#/definitions/vec3" },
+              "path": { "$ref": "#/definitions/polyline", "description": "Line source (grandstands, rivers)." },
+              "sound": {
+                "type": "object",
+                "description": "WAV, Ogg Vorbis or FLAC made or licensed by the author.",
+                "required": ["uri"],
+                "additionalProperties": false,
+                "properties": { "uri": {"$ref": "#/definitions/relative_uri"} },
+                "patternProperties": { "^_": {} }
+              },
+              "gain": { "type": "number", "description": "Linear.", "minimum": 0 },
+              "ref_distance": { "type": "number", "description": "m.", "exclusiveMinimum": 0 },
+              "max_distance": { "type": "number", "description": "m.", "exclusiveMinimum": 0 },
+              "rolloff": { "type": "number", "minimum": 0 },
+              "loop": { "type": "boolean" },
+              "cone": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "heading": { "$ref": "#/definitions/heading" },
+                  "pitch": { "type": "number", "description": "rad." },
+                  "inner_angle": { "type": "number", "minimum": 0, "maximum": 6.2832 },
+                  "outer_angle": { "type": "number", "minimum": 0, "maximum": 6.2832 },
+                  "outer_gain": { "type": "number", "minimum": 0, "maximum": 1 }
+                },
+                "patternProperties": { "^_": {} }
+              },
+              "when": { "$ref": "#/definitions/condition" },
+              "gain_by": { "$ref": "#/definitions/binding" }
+            }
+          }
+        },
+        "zones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "shape", "reverb"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "shape": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": false,
+                "properties": {
+                  "band": { "$ref": "#/definitions/s_band" },
+                  "polygon": { "$ref": "#/definitions/polygon_xy" },
+                  "z_min": { "type": "number" },
+                  "z_max": { "type": "number" },
+                  "sphere": {
+                    "type": "object",
+                    "required": ["center", "radius"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "center": { "$ref": "#/definitions/vec3" },
+                      "radius": { "type": "number", "exclusiveMinimum": 0 }
+                    },
+                    "patternProperties": { "^_": {} }
+                  }
+                },
+                "patternProperties": { "^_": {} }
+              },
+              "reverb": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "forest",
+                  "stands",
+                  "urban",
+                  "canyon",
+                  "tunnel",
+                  "underpass",
+                  "garage",
+                  "pit_building"
+                ]
+              },
+              "decay_time": { "type": "number", "description": "s.", "exclusiveMinimum": 0 }
+            }
+          }
+        },
+        "ambience": {
+          "type": "string",
+          "enum": ["open", "forest", "stands", "urban", "canyon", "tunnel", "underpass", "garage", "pit_building"],
+          "description": "Reverb outside every zone."
+        },
+        "reflections": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3 },
+          "description": "[[s, left_m, right_m], ...]: distance to reflecting surfaces on each side, for engine echo (spec §8.6)."
+        }
+      }
+    },
+    "ground_layer": {
+      "type": "object",
+      "description": "A detail layer that repeats over the ground (spec §8.7).",
+      "required": ["albedo", "tile"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "name": { "type": "string" },
+        "albedo": {
+          "type": "object",
+          "required": ["uri"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "uri": { "$ref": "#/definitions/relative_uri" },
+            "height_in_alpha": {
+              "type": "boolean",
+              "description": "The alpha channel is the layer's height (DR2, many terrain packs)."
+            }
+          },
+          "description": "Colour texture (sRGB)."
+        },
+        "normal": {
+          "type": "object",
+          "required": ["uri"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": { "uri": {"$ref": "#/definitions/relative_uri"} },
+          "description": "Tangent-space normal map (linear)."
+        },
+        "height": {
+          "type": "object",
+          "required": ["uri"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "uri": { "$ref": "#/definitions/relative_uri" },
+            "channel": { "type": "string", "enum": ["gray", "r", "g", "b", "a"] }
+          },
+          "description": "Height texture when it is not in the albedo alpha."
+        },
+        "tile": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Metres per texture repeat (DR2 WorldUVScale 0.125 = 8 m)."
+        },
+        "projection": {
+          "description": "world_xy: top-down, u = x/tile, v = y/tile. road: along the reference line, u = t/tile, v = s/tile. {texcoord, scale}: a UV primvar of the mesh whose values times scale are metres, so u = uv * scale / tile (DR2 road UVs: scale 8).",
+          "oneOf": [
+            { "type": "string", "enum": ["world_xy", "road"] },
+            {
+              "type": "object",
+              "required": ["texcoord"],
+              "additionalProperties": false,
+              "patternProperties": { "^_": {} },
+              "properties": {
+                "texcoord": { "$ref": "#/definitions/texcoord" },
+                "scale": { "type": "number", "exclusiveMinimum": 0, "default": 1 }
+              }
+            }
+          ],
+          "default": "world_xy"
+        },
+        "height_contrast": {
+          "type": "number",
+          "minimum": 0,
+          "default": 1,
+          "description": "How strongly the height pushes in the blend (DR2 Thickness)."
+        },
+        "surface": { "$ref": "#/definitions/id", "description": "Physics surface; a contact takes the dominant layer's." }
+      }
+    },
+    "ground_weights": {
+      "type": "object",
+      "description": "Where the palette's weights are stored (spec §8.7).",
+      "required": ["encoding"],
+      "additionalProperties": false,
+      "patternProperties": { "^_": {} },
+      "properties": {
+        "encoding": { "type": "string", "enum": ["vertex_top3", "vertex_dense", "image", "id_map"] },
+        "indices": {
+          "oneOf": [
+            { "type": "string", "pattern": "^stj_" },
+            { "type": "array", "items": {"type": "string", "pattern": "^stj_"}, "minItems": 3, "maxItems": 3 }
+          ],
+          "description": "vertex_top3: the face's 3 palette indices as uniform (per-face) primvars: one int3 primvar such as 'stj_surf_layers', or three int primvars ['stj_surf_layers_0', 'stj_surf_layers_1', 'stj_surf_layers_2'], the form Blender can write and read."
+        },
+        "weights": {
+          "type": "string",
+          "pattern": "^stj_",
+          "description": "vertex_top3: float2 primvar (vertex or faceVarying) with wa, wb; wc = 1 - wa - wb."
+        },
+        "attributes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^stj_" },
+          "description": "vertex_dense: float4 primvars, 4 palette entries each, in palette order."
+        },
+        "maps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["uri"],
+            "additionalProperties": false,
+            "patternProperties": { "^_": {} },
+            "properties": {
+              "uri": { "$ref": "#/definitions/relative_uri" },
+              "channels": { "type": "string", "pattern": "^(gray|[rgba]{1,4})$", "default": "rgba" }
+            }
+          },
+          "description": "image: weight images; channels map to palette entries in order across the maps. id_map: one image whose value is the palette index."
+        },
+        "texcoord": {
+          "$ref": "#/definitions/texcoord",
+          "description": "image / id_map: UV set the maps use. Give texcoord or extent."
+        },
+        "extent": { "$ref": "#/definitions/extent" }
+      }
+    },
+    "ground_material": {
+      "type": "object",
+      "description": "A UsdShade material drawn as a blend of ground layers (spec §8.7). The material's own surface is the fallback.",
+      "required": ["mesh_ref", "material", "palette", "weights"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "mesh_ref": { "$ref": "#/definitions/id" },
+        "material": { "type": "string", "description": "UsdShade material name." },
+        "palette": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/id" },
+          "description": "ground.layers ids; weights refer to them by index."
+        },
+        "weights": { "$ref": "#/definitions/ground_weights" },
+        "blend": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "method": { "type": "string", "enum": ["height", "linear"], "default": "height" },
+            "height_influence": { "type": "number", "minimum": 0, "default": 0.5 },
+            "depth": { "type": "number", "exclusiveMinimum": 0, "default": 0.2 }
+          },
+          "description": "Reference blend (spec §8.7): score_i = w_i + (h_i - mean_i) * height_influence * height_contrast_i; m_i = max(score_i - (max score - depth), 0); detail = sum(colour_i * m_i) / sum(m_i)."
+        },
+        "macro": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "uri"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "kind": { "type": "string", "enum": ["tint", "occlusion", "other"] },
+              "uri": { "$ref": "#/definitions/relative_uri" },
+              "texcoord": { "$ref": "#/definitions/texcoord" },
+              "extent": { "$ref": "#/definitions/extent" },
+              "encoding": {
+                "type": "string",
+                "enum": ["grey_centred", "multiply"],
+                "default": "grey_centred",
+                "description": "grey_centred: colour x 2 * map (0.5 = unchanged), read as linear data. multiply: colour x map."
+              }
+            }
+          }
+        },
+        "when": {
+          "$ref": "#/definitions/condition",
+          "description": "State in which this ground material applies; first match wins."
+        }
+      }
+    },
+    "ground": {
+      "type": "object",
+      "description": "Layered ground shading: detail layers, where they go and how they blend, plus macro maps (spec §8.7). Mesh materials cannot express it; engines rebuild it natively.",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "layers": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^[a-z0-9_]+$": {"$ref": "#/definitions/ground_layer"}, "^x_": {}, "^_": {} }
+        },
+        "materials": { "type": "array", "items": {"$ref": "#/definitions/ground_material"} }
+      }
+    },
+    "surface_map": {
+      "type": "object",
+      "description": "Surfaces that vary inside collision primitives (spec §6.3).",
+      "required": ["mesh_ref", "material", "palette", "weights"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "mesh_ref": { "$ref": "#/definitions/id" },
+        "material": { "type": "string", "description": "UsdShade material of the collision faces the map covers." },
+        "palette": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/id" },
+          "description": "Surface ids; the weights refer to them by index."
+        },
+        "weights": { "$ref": "#/definitions/ground_weights" },
+        "contact": {
+          "type": "string",
+          "enum": ["blend", "dominant"],
+          "default": "blend",
+          "description": "blend: surface parameters are the weighted mean of the palette entries present. dominant: the largest weight wins."
+        },
+        "when": {
+          "$ref": "#/definitions/condition",
+          "description": "State in which this map applies (e.g. wear, wetness). The first map whose condition holds is used; no condition = always."
+        }
+      }
+    },
+    "mu": {
+      "type": "object",
+      "required": ["peak"],
+      "additionalProperties": false,
+      "patternProperties": { "^_": {} },
+      "properties": {
+        "peak": { "type": "number", "exclusiveMinimum": 0 },
+        "sliding": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "description": "Absolute friction coefficients."
+    },
+    "zone_shape": {
+      "type": "object",
+      "description": "A band along the base reference line or a polygon.",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": { "^_": {} },
+      "properties": { "band": {"$ref": "#/definitions/s_band"}, "polygon": {"$ref": "#/definitions/polygon_xy"} }
+    },
+    "marshals": {
+      "type": "object",
+      "description": "Race control: marshal sectors and posts, vehicles, restricted zones, reset rules (spec §10.1).",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "sectors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "s_start", "s_end"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "s_start": { "$ref": "#/definitions/s" },
+              "s_end": { "$ref": "#/definitions/s" }
+            }
+          },
+          "description": "Marshal sectors, contiguous along s; sector_flag refers to them."
+        },
+        "posts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "kind": {
+                "type": "string",
+                "enum": ["flag_post", "light_panel", "radio_point", "medical", "fire", "spectator_point", "other"]
+              },
+              "sector": { "$ref": "#/definitions/id" },
+              "s": { "$ref": "#/definitions/s" },
+              "side": { "type": "string", "enum": ["left", "right"] },
+              "position": { "$ref": "#/definitions/vec3" },
+              "signals": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "green",
+                    "yellow",
+                    "double_yellow",
+                    "blue",
+                    "white",
+                    "red",
+                    "black",
+                    "chequered",
+                    "slippery",
+                    "safety_car",
+                    "virtual_safety_car",
+                    "code_60"
+                  ]
+                },
+                "uniqueItems": true,
+                "description": "Flags or panels the post can show."
+              },
+              "light_panel": { "type": "boolean" }
+            }
+          }
+        },
+        "vehicles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "kind": {
+                "type": "string",
+                "enum": ["safety_car", "medical", "recovery", "fire", "course_car", "helicopter", "other"]
+              },
+              "pose": { "$ref": "#/definitions/pose" },
+              "base": { "$ref": "#/definitions/id" }
+            }
+          }
+        },
+        "restricted_zones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "shape", "rule"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "id": { "$ref": "#/definitions/id" },
+              "shape": { "$ref": "#/definitions/zone_shape" },
+              "rule": {
+                "type": "string",
+                "enum": ["penalty", "reset", "speed_limit", "no_entry"],
+                "description": "penalty: value in s. speed_limit: value in m/s."
+              },
+              "value": { "type": "number" },
+              "when": { "$ref": "#/definitions/condition" }
+            }
+          }
+        },
+        "reset": {
+          "type": "object",
+          "description": "Where a car is put back after leaving the road (spec §10.1).",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "mode": { "type": "string", "enum": ["nearest_on_line", "points_only", "engine"] },
+            "t": { "type": "number", "description": "Lateral offset of a reset on the line (m)." },
+            "min_spacing": {
+              "type": "number",
+              "description": "Minimum distance (m) of a line reset from the explicit points and from corner apexes.",
+              "minimum": 0
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["s"],
+                "additionalProperties": false,
+                "patternProperties": { "^x_": {}, "^_": {} },
+                "properties": {
+                  "s": { "$ref": "#/definitions/s" },
+                  "t": { "type": "number" },
+                  "heading_offset": { "$ref": "#/definitions/heading" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "dynamic": {
+      "type": "object",
+      "description": "How the track evolves during an event, with STJ's reference laws (spec §6.10). Static starting states stay in their own blocks.",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "line_states": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["line_state"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "line_state": { "$ref": "#/definitions/id" },
+              "gain_per_pass": {
+                "type": "number",
+                "description": "level += gain * (1 - level) per car pass.",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "wash": {
+                "type": "number",
+                "description": "Rain wash: d level/dt = -wash * precipitation (mm/h) * level / 3600, per second.",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "water": {
+          "type": "object",
+          "description": "Reference water law (spec §6.10).",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "e0": { "type": "number", "description": "Evaporation scale (mm/h) of the reference law.", "minimum": 0 },
+            "c_wind": { "type": "number", "description": "Wind factor (s/m).", "minimum": 0 }
+          }
+        },
+        "ruts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["surfaces", "line", "depth_per_pass", "max_depth"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "surfaces": { "type": "array", "items": {"$ref": "#/definitions/id"}, "minItems": 1 },
+              "line": { "type": "string", "description": "Racing line whose wheel tracks rut." },
+              "depth_per_pass": { "type": "number", "description": "m added per pass at zero depth.", "exclusiveMinimum": 0 },
+              "max_depth": { "type": "number", "description": "m.", "exclusiveMinimum": 0 },
+              "track_width": {
+                "type": "number",
+                "description": "Distance between the wheel tracks (m).",
+                "exclusiveMinimum": 0,
+                "default": 1.6
+              },
+              "rut_width": { "type": "number", "description": "m.", "exclusiveMinimum": 0, "default": 0.3 }
+            }
+          }
+        },
+        "wear": {
+          "type": "object",
+          "required": ["cars_to_worn"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "cars_to_worn": { "type": "number", "description": "wear = 1 - exp(-cars / cars_to_worn).", "exclusiveMinimum": 0 }
+          }
+        },
+        "track_temperature": {
+          "type": "object",
+          "required": ["sun_gain", "tau"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "sun_gain": { "type": "number", "description": "K at full insolation above air temperature.", "minimum": 0 },
+            "tau": { "type": "number", "description": "Time constant (s).", "exclusiveMinimum": 0 },
+            "shade": {
+              "type": "object",
+              "description": "Greyscale map, 1 = full shade, placed like every STJ raster.",
+              "required": ["uri", "extent"],
+              "additionalProperties": false,
+              "patternProperties": { "^_": {} },
+              "properties": { "uri": {"$ref": "#/definitions/relative_uri"}, "extent": {"$ref": "#/definitions/extent"} }
+            }
+          }
+        }
+      }
+    },
+    "screen": {
+      "type": "object",
+      "required": ["id", "target", "content"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "target": {
+          "type": "object",
+          "required": ["mesh_ref"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "mesh_ref": { "$ref": "#/definitions/id" },
+            "material": { "type": "string" },
+            "prim": { "type": "string", "pattern": "^/" }
+          }
+        },
+        "content": {
+          "type": "string",
+          "enum": ["timing_tower", "leaderboard", "replay", "live_camera", "image", "video", "other"]
+        },
+        "uri": { "$ref": "#/definitions/relative_uri" },
+        "when": { "$ref": "#/definitions/condition" }
+      }
+    },
+    "crowd": {
+      "type": "object",
+      "description": "Spectators as a rule: area, density, behaviour (spec §8.8).",
+      "required": ["id", "area", "density"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "area": { "$ref": "#/definitions/zone_shape" },
+        "density": { "type": "number", "description": "People per m².", "exclusiveMinimum": 0 },
+        "prototype": { "$ref": "#/definitions/id" },
+        "behaviour": { "type": "string", "enum": ["static", "cheer", "follow", "flee"] },
+        "flee_distance": { "type": "number", "description": "m kept from a passing car.", "exclusiveMinimum": 0 },
+        "when": { "$ref": "#/definitions/condition" }
+      }
+    },
+    "texcoord": { "type": "string", "minLength": 1, "description": "A texture-coordinate primvar by name (e.g. 'st')." }
+  }
+}

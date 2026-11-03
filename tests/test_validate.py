@@ -1,0 +1,914 @@
+"""Tests for tools/validate.py and tools/stj_core.py. Run: python -m unittest discover tests"""
+
+import copy
+import json
+import math
+import struct
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tools"))
+import stj_core as core  # noqa: E402
+import validate  # noqa: E402
+
+EX = ROOT / "examples"
+RING = EX / "test_ring_minimal.usda"
+GP = EX / "test_ring_gp.usda"
+STAGE = EX / "coll_de_prova_gravel.usda"
+WET = EX / "coll_de_prova_gravel_wet.usda"
+BLEND = EX / "test_ring_blend.usda"
+
+
+def run(doc, where=EX):
+    """Validate a document written next to the examples (so relative URIs resolve)."""
+    with tempfile.NamedTemporaryFile("w", suffix=".stj.json", dir=where, delete=False, encoding="utf-8") as f:
+        json.dump(doc, f)
+        name = f.name
+    try:
+        return validate.validate(name)
+    finally:
+        Path(name).unlink()
+
+
+def messages(rep, level):
+    return [f"{p}: {m}" for lv, p, m in rep.items if lv == level]
+
+
+class Examples(unittest.TestCase):
+    def test_examples_pass_strict(self):
+        files = sorted(EX.glob("*.usda")) + sorted(EX.glob("*.usdz"))
+        self.assertGreaterEqual(len(files), 10)
+        for f in files:
+            rep = validate.validate(f)
+            self.assertEqual(messages(rep, "ERROR") + messages(rep, "WARN"), [], f.name)
+
+    def test_minimal_file(self):
+        doc = {"_metadata": {"specification": "STJ", "version": "0.1", "coordinate_system": "OpenDRIVE", "units": "SI"},
+               "reference": {"centerline": {"points": [[0, 0, 0], [100, 0, 0]]}},
+               "surfaces": {"default": "a", "library": {"a": {"class": "asphalt"}}}}
+        self.assertEqual(messages(run(doc), "ERROR"), [])
+
+
+class CrossReferences(unittest.TestCase):
+    def setUp(self):
+        self.ring = core.load_document(RING)
+        self.stage = core.load_document(STAGE)
+
+    def assertError(self, doc, fragment):
+        errs = messages(run(doc), "ERROR")
+        self.assertTrue(any(fragment in e for e in errs), f"no error containing {fragment!r} in {errs}")
+
+    def assertWarn(self, doc, fragment):
+        warns = messages(run(doc), "WARN")
+        self.assertTrue(any(fragment in w for w in warns), f"no warning containing {fragment!r} in {warns}")
+
+    def test_schema_rejects_typo(self):
+        self.ring["timing"]["start_finsh"] = {"s": 1}
+        self.assertError(self.ring, "start_finsh")
+
+    def test_unknown_surface_in_band(self):
+        self.ring["surfaces"]["bands"][0]["surface"] = "tarmac"
+        self.assertError(self.ring, "unknown surface 'tarmac'")
+
+    def test_unknown_base_surface(self):
+        self.stage["surfaces"]["library"]["gravel_loose"]["deformable"]["effective"]["base_surface"] = "rock"
+        self.assertError(self.stage, "unknown surface 'rock'")
+
+    def test_binding_to_missing_material(self):
+        self.stage["surfaces"]["bindings"][0]["material"] = "GravelCoarse"
+        self.assertError(self.stage, "material 'GravelCoarse' not in")
+
+    def test_binding_to_unknown_mesh(self):
+        self.stage["surfaces"]["bindings"][0]["mesh_ref"] = "terrain"
+        self.assertError(self.stage, "unknown mesh 'terrain'")
+
+    def test_sector_gap(self):
+        self.ring["timing"]["sectors"][1]["s_start"] = 430.0
+        self.assertError(self.ring, "not at the end of sector 's1'")
+
+    def test_sectors_do_not_close_the_lap(self):
+        self.ring["timing"]["sectors"].pop()
+        self.assertError(self.ring, "sectors end")
+
+    def test_sectors_wrap_on_closed_track(self):
+        # s3 runs from 720 through s = 0 to 150: valid only because the line is closed
+        self.assertEqual(messages(run(self.ring), "ERROR"), [])
+
+    def test_splits_out_of_order(self):
+        sp = self.stage["timing"]["split_points"]
+        sp[0]["s"], sp[1]["s"] = sp[1]["s"], sp[0]["s"]
+        self.assertError(self.stage, "is not after the previous timing point")
+
+    def test_finish_before_start(self):
+        self.stage["timing"]["finish"]["s"] = 10.0
+        self.assertError(self.stage, "must come after start")
+
+    def test_s_beyond_line(self):
+        self.stage["timing"]["stop"]["s"] = 99999.0
+        self.assertError(self.stage, "beyond the reference line")
+
+    def test_pacenotes_out_of_order(self):
+        notes = self.stage["race"]["pacenotes"]["notes"]
+        notes[2], notes[3] = notes[3], notes[2]
+        self.assertError(self.stage, "comes before the previous note")
+
+    def test_s_without_reference(self):
+        del self.ring["reference"]
+        del self.ring["surfaces"]["bands"]
+        self.assertError(self.ring, "needs a reference line")
+
+    def test_grid_gap(self):
+        self.ring["race"]["grid"][3]["position"] = 6
+        self.assertError(self.ring, "positions must be 1..4")
+
+    def test_grid_order(self):
+        g = self.ring["race"]["grid"]
+        g[0]["pose"], g[1]["pose"] = g[1]["pose"], g[0]["pose"]
+        self.assertWarn(self.ring, "is ahead of position")
+
+    def test_degrees_instead_of_radians(self):
+        self.ring["environment"]["north_heading"] = 90
+        self.assertWarn(self.ring, "angles are in radians")
+
+    def test_kmh_instead_of_ms(self):
+        self.ring["timing"]["pit_lane"] = {"entry_s": 900.0, "exit_s": 200.0, "speed_limit": 60}
+        self.assertWarn(self.ring, "speeds are in m/s")
+
+    def test_geographic_projection_rejected(self):
+        self.stage["environment"]["geo_reference"]["proj"] = "EPSG:4326"
+        self.assertError(self.stage, "projected metres")
+
+    def test_unknown_prototype(self):
+        self.stage["scenery"]["scatter"][1]["prototypes"][0]["prototype"] = "oak"
+        self.assertError(self.stage, "unknown prototype 'oak'")
+
+    def test_scatter_on_unknown_surface(self):
+        self.stage["scenery"]["scatter"][0]["area"]["surfaces"] = ["meadow"]
+        self.assertError(self.stage, "unknown surface 'meadow'")
+
+    def test_newer_key_in_older_file_warns(self):
+        self.ring["dynamic"] = {}
+        self.assertWarn(self.ring, "declares 0.1 but uses v0.3 features")
+
+    def test_track_type_mismatch(self):
+        self.ring["track_info"]["type"] = "point_to_point"
+        self.assertWarn(self.ring, "centerline is closed")
+
+    def test_wet_response_order(self):
+        self.ring["surfaces"]["library"]["asphalt"]["wet_response"] = [[0.0, 1.0], [0.002, 0.7], [0.001, 0.8]]
+        self.assertError(self.ring, "x values must increase")
+
+
+class Tier1(unittest.TestCase):
+    """Layouts, variants, edges, cameras, AI, race control."""
+
+    def setUp(self):
+        self.gp = core.load_document(GP)
+        self.stage = core.load_document(STAGE)
+
+    def assertFinding(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def test_reverse_layout_sectors_checked_on_reversed_line(self):
+        self.gp["layouts"][0]["timing"]["sectors"][1]["s_start"] += 5
+        self.assertFinding(self.gp, "ERROR", "layouts[0](gp_reverse).timing.sectors[1].s_start")
+
+    def test_reverse_layout_pacenotes_order(self):
+        notes = self.stage["layouts"][0]["race"]["pacenotes"]["notes"]
+        notes[1], notes[2] = notes[2], notes[1]
+        self.assertFinding(self.stage, "ERROR", "layouts[0](ss1_reverse).race.pacenotes")
+
+    def test_layout_unknown_mesh(self):
+        self.stage["layouts"][0]["include_meshes"] = ["stage_visual"]
+        self.assertFinding(self.stage, "ERROR", "unknown mesh 'stage_visual'")
+
+    def test_variant_with_foreign_base(self):
+        self.gp["variants"][0]["override"] = "coll_de_prova_gravel_wet.usda"
+        self.assertFinding(self.gp, "ERROR", "not this file")
+
+    def test_variant_findings_are_prefixed(self):
+        with tempfile.TemporaryDirectory(dir=EX) as d:
+            base = Path(d, "base.stj.json")
+            ring = core.load_document(RING)
+            ring["variants"] = [{"id": "flood", "kind": "weather", "override": "flood.stj-override.json"}]
+            base.write_text(json.dumps(ring))
+            Path(d, "flood.stj-override.json").write_text(json.dumps({
+                "_metadata": {"specification": "STJ-OVERRIDE", "version": "0.1", "base": "base.stj.json"},
+                "patch": {"environment": {"default_weather": {"water_depth": 0.5}}}}))
+            warns = messages(validate.validate(base), "WARN")
+        self.assertTrue(any(w.startswith("variants[0](flood).environment.default_weather.water_depth") for w in warns), warns)
+
+    def test_drs_order(self):
+        z = self.gp["timing"]["drs_zones"][0]
+        z["activation_s"], z["deactivation_s"] = z["deactivation_s"], z["activation_s"]
+        self.assertFinding(self.gp, "ERROR", "detection, activation, deactivation")
+
+    def test_edge_checks(self):
+        self.gp["edges"][0]["surface"] = "astroturf"
+        self.gp["edges"][3]["t"] = 25.0                     # right-side barrier with a left offset
+        self.gp["edges"][4]["style"] = "rumble"             # a kerb style on a barrier
+        doc = run(self.gp)
+        self.assertTrue(any("unknown surface 'astroturf'" in e for e in messages(doc, "ERROR")))
+        warns = messages(doc, "WARN")
+        self.assertTrue(any("edges[3].t" in w for w in warns), warns)
+        self.assertTrue(any("is not a barrier style" in w for w in warns), warns)
+
+    def test_camera_checks(self):
+        cams = self.gp["cameras"]["sets"][0]["cameras"]
+        cams[1]["fov"] = [10, 40]
+        del cams[0]["look_at"]
+        doc = run(self.gp)
+        warns = messages(doc, "WARN")
+        self.assertTrue(any("field of view is in radians" in w for w in warns), warns)
+        self.assertTrue(any("needs look_at" in w for w in warns), warns)
+
+    def test_ai_checks(self):
+        ai = self.gp["race"]["ai"]
+        ai["corridor"][3][0] = ai["corridor"][2][0]
+        ai["hints"][0]["value"] = 100 * 3.6
+        doc = run(self.gp)
+        self.assertTrue(any("corridor[3]: s must increase" in e for e in messages(doc, "ERROR")))
+        self.assertTrue(any("speeds are in m/s" in w for w in messages(doc, "WARN")))
+
+    def test_start_procedure_checks(self):
+        self.stage["race"]["start_procedure"] = {"type": "rolling", "rolling_start_speed": 80}
+        doc = run(self.stage)
+        warns = messages(doc, "WARN")
+        self.assertTrue(any("start on an open track" in w for w in warns), warns)
+        self.assertTrue(any("speeds are in m/s" in w for w in warns), warns)
+
+    def test_weather_schedule_order(self):
+        self.gp["environment"]["weather_schedule"][2]["time"] = 600.0
+        self.assertFinding(self.gp, "ERROR", "must not decrease")
+
+    def test_rally_controls_and_side_roads(self):
+        self.stage["timing"]["controls"][1]["id"] = "tc1"
+        self.stage["timing"]["side_roads"][0]["s"] = 99999.0
+        doc = run(self.stage)
+        errs = messages(doc, "ERROR")
+        self.assertTrue(any("duplicate control id 'tc1'" in e for e in errs), errs)
+        self.assertTrue(any("side_roads[0].s" in e for e in errs), errs)
+
+    def test_reverse_reference_geometry(self):
+        doc = core.load_document(GP)
+        fwd = core.reference_line(doc)
+        rev = core.reference_line(core.layout_document(doc, "gp_reverse"))
+        self.assertAlmostEqual(fwd.length, rev.length)
+        for s in (0.0, 123.4, 500.0, 900.0):                         # the line itself: s' = L - s
+            a = fwd.point(s)
+            b = rev.point((fwd.length - s) % fwd.length)
+            self.assertAlmostEqual(math.dist(a, b), 0.0, places=6)
+        for i in (0, 7, 20):                                         # offsets, away from vertices: left becomes right
+            s = 0.5 * (fwd.s[i] + fwd.s[i + 1])
+            a = fwd.point(s, 2.0)
+            b = rev.point(fwd.length - s, -2.0)
+            self.assertAlmostEqual(math.dist(a, b), 0.0, places=6)
+
+    def test_layout_document_replaces_race_data(self):
+        doc = core.layout_document(core.load_document(STAGE), "ss1_reverse")
+        self.assertEqual(doc["track_info"]["layout"], "SS1 reverse")
+        self.assertNotIn("edges", doc)                 # base edges sit on the forward line
+        self.assertNotIn("layouts", doc)
+        self.assertEqual(doc["race"]["pacenotes"]["notes"][-1]["kind"], "finish")
+
+
+class Core(unittest.TestCase):
+    def test_merge_patch_rfc7396(self):
+        # examples from RFC 7396 appendix A
+        self.assertEqual(core.merge_patch({"a": "b"}, {"a": "c"}), {"a": "c"})
+        self.assertEqual(core.merge_patch({"a": "b"}, {"a": None}), {})
+        self.assertEqual(core.merge_patch({"a": [{"b": "c"}]}, {"a": [1]}), {"a": [1]})
+        self.assertEqual(core.merge_patch({"a": {"b": "c"}}, {"a": {"b": "d", "c": None}}), {"a": {"b": "d"}})
+        self.assertEqual(core.merge_patch({"e": None}, {"a": 1}), {"e": None, "a": 1})
+
+    def test_override_applies(self):
+        doc, chain = core.resolve(WET)
+        self.assertEqual(doc["environment"]["default_weather"]["condition"], "rain")
+        self.assertEqual(doc["surfaces"]["library"]["verge_grass"]["deformable"]["effective"]["sinkage"], 0.04)
+        self.assertEqual(doc["surfaces"]["library"]["verge_grass"]["deformable"]["effective"]["drag_coefficient"], 0.004)
+        self.assertEqual([p.name for p in chain], [STAGE.name, WET.name])
+
+    def test_circular_ref(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "a.json").write_text('{"x": {"$ref": "b.json"}}')
+            Path(d, "b.json").write_text('{"y": {"$ref": "a.json"}}')
+            with self.assertRaises(core.StjLoadError):
+                core.resolve(Path(d, "a.json"))
+
+    def test_reference_line(self):
+        line = core.ReferenceLine([[0, 0, 0], [100, 0, 10], [100, 100, 10]])
+        self.assertAlmostEqual(line.length, 200.0)          # x/y-plane length, z ignored (OpenDRIVE s)
+        x, y, z = line.point(50, 2.0)                       # t positive to the left of +X is +Y
+        self.assertAlmostEqual((x, y, z), (50.0, 2.0, 5.0))
+        closed = core.ReferenceLine([[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]], closed=True)
+        self.assertAlmostEqual(closed.length, 40.0)
+        self.assertAlmostEqual(closed.lap_distance(5, 35), 10.0)
+
+
+class Tier2(unittest.TestCase):
+    """v0.2: signals, terrain, water, substitutions, line states, props, animation, audio."""
+
+    def setUp(self):
+        self.gp = core.load_document(GP)
+        self.stage = core.load_document(STAGE)
+
+    def assertFinding(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def light(self, i=0):
+        return self.gp["environment"]["lighting"]["lights"][i]
+
+    # signals
+    def test_unknown_signal_is_a_schema_error(self):
+        self.light()["when"] = {"signal": "sun_angle", "op": "lt", "value": 0.0}
+        self.assertFinding(self.gp, "ERROR", "sun_angle")
+
+    def test_enum_signal_needs_eq_ne_in(self):
+        self.light()["when"] = {"signal": "session", "op": "lt", "value": "race"}
+        self.assertFinding(self.gp, "ERROR", "is an enum signal")
+
+    def test_enum_signal_value(self):
+        self.light()["when"] = {"signal": "flag", "op": "in", "value": ["yellow", "purple"]}
+        self.assertFinding(self.gp, "ERROR", "'purple' is not a value of 'flag'")
+
+    def test_sun_elevation_in_degrees(self):
+        self.light()["when"] = {"signal": "sun_elevation", "op": "lt", "value": 3}
+        self.assertFinding(self.gp, "WARN", "check the unit")
+
+    def test_map_on_numeric_signal(self):
+        self.light()["intensity_by"] = {"signal": "wind_speed", "map": {"calm": 1.0}}
+        self.assertFinding(self.gp, "ERROR", "use curve, not map")
+
+    def test_more_start_lights_than_the_gantry_has(self):
+        self.light(6)["when"]["value"] = 7
+        self.assertFinding(self.gp, "WARN", "start_procedure.lights.count is 5")
+
+    # terrain
+    def test_terrain_above_road(self):
+        hm = self.stage["geometry"]["terrain"]["heightmap"]
+        hm["height_min"] += 3.0
+        hm["height_max"] += 3.0
+        self.assertFinding(self.stage, "WARN", "terrain rises above the road")
+
+    def test_terrain_size_mismatch(self):
+        self.stage["geometry"]["terrain"]["heightmap"]["size"] = [65, 129]
+        self.assertFinding(self.stage, "ERROR", "heightmap.size says 65 x 129")
+
+    def test_terrain_non_square_cells(self):
+        ext = self.stage["geometry"]["terrain"]["heightmap"]["extent"]
+        ext[3] += 100.0
+        self.assertFinding(self.stage, "WARN", "square cells")
+
+    def test_terrain_layer_surface(self):
+        self.stage["geometry"]["terrain"]["layers"][1]["surface"] = "moss"
+        self.assertFinding(self.stage, "ERROR", "unknown surface 'moss'")
+
+    def test_terrain_raw_f32_size(self):
+        with tempfile.TemporaryDirectory(dir=EX) as d:
+            Path(d, "h.raw").write_bytes(bytes(100))
+            ter = self.stage["geometry"]["terrain"]
+            ter["heightmap"].update({"uri": Path(d).name + "/h.raw", "format": "raw_f32"})
+            self.assertFinding(self.stage, "ERROR", "expected")
+
+    # surfaces
+    def test_substitution_chain(self):
+        winter = core.resolve(EX / "coll_de_prova_gravel_winter.usda")[0]
+        winter["surfaces"]["substitutions"]["snow_packed"] = "snow_soft"
+        self.assertFinding(winter, "ERROR", "no chains")
+
+    def test_substitution_unknown_target(self):
+        self.stage["surfaces"]["substitutions"] = {"gravel_loose": "ice_sheet"}
+        self.assertFinding(self.stage, "ERROR", "unknown surface 'ice_sheet'")
+
+    def test_line_state_needs_a_racing_line(self):
+        self.gp["surfaces"]["line_states"][0]["line"] = "quali"
+        self.assertFinding(self.gp, "ERROR", "unknown racing line 'quali'")
+
+    def test_rubber_on_gravel(self):
+        self.stage["surfaces"]["line_states"][0]["kind"] = "rubber"
+        self.assertFinding(self.stage, "WARN", "use kind 'swept'")
+
+    def test_dry_line_needs_a_racing_line(self):
+        self.gp["water"]["dry_line"] = {"line": "wet", "spread": 0.9, "factor": 0.3}
+        self.assertFinding(self.gp, "ERROR", "unknown racing line 'wet'")
+
+    # water
+    def test_drivable_and_out_of_bounds(self):
+        self.stage["water"]["bodies"][0]["out_of_bounds"] = True
+        self.assertFinding(self.stage, "ERROR", "both drivable and out of bounds")
+
+    def test_ford_width(self):
+        self.stage["water"]["bodies"][0]["path"][0][3] = 0.0
+        self.assertFinding(self.stage, "ERROR", "width and depth must be positive")
+
+    # props, animation, audio
+    def test_inertia_triangle(self):
+        self.gp["scenery"]["prototypes"]["cone"]["physics"]["inertia"] = [0.1, 0.1, 0.5]
+        self.assertFinding(self.gp, "ERROR", "triangle inequality")
+
+    def test_tethered_needs_tether(self):
+        del self.gp["scenery"]["prototypes"]["tyre_stack"]["physics"]["tether"]
+        self.assertFinding(self.gp, "ERROR", "needs a tether")
+
+    def test_scaled_physical_prop(self):
+        self.gp["scenery"]["instances"][0]["transforms"][0].append(1.5)
+        self.assertFinding(self.gp, "WARN", "physics values are for scale 1")
+
+    def test_animation_time_range(self):
+        self.gp["animated_objects"][0]["time_range"] = [96, 0]
+        self.assertFinding(self.gp, "ERROR", "end must be after start")
+
+    def test_animation_node(self):
+        self.gp["animated_objects"][1]["target"]["nodes"] = ["/track/props/Gate"]
+        self.assertFinding(self.gp, "ERROR", "prim '/track/props/Gate' not in")
+
+    def test_speed_by_and_time_by_exclusive(self):
+        self.gp["animated_objects"][1]["speed_by"] = {"signal": "wind_speed", "curve": [[0, 0], [10, 1]]}
+        self.assertFinding(self.gp, "ERROR", "animated_objects[1]")
+
+    def test_audio_distances(self):
+        e = self.gp["audio"]["emitters"][0]
+        e["ref_distance"], e["max_distance"] = 300.0, 250.0
+        self.assertFinding(self.gp, "ERROR", "ref_distance must be smaller")
+
+    def test_audio_bank_file(self):
+        self.gp["audio"]["emitters"][0]["sound"]["uri"] = "audio/track.bank"
+        self.assertFinding(self.gp, "WARN", "WAV, Ogg Vorbis or FLAC")
+
+    # version
+    def test_v02_features_in_a_v01_file(self):
+        self.gp["_metadata"]["version"] = "0.1"
+        self.assertFinding(self.gp, "WARN", "declares 0.1 but uses v0.2 features")
+
+
+class CoreV02(unittest.TestCase):
+    def test_png_roundtrip(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "a.png")
+            vals = [(i * 997) % 65536 for i in range(7 * 5)]
+            core.write_png(p, 7, 5, vals, 1, 16)
+            img = core.read_png(p)
+            self.assertEqual((img.width, img.height, img.maxval, img.data), (7, 5, 65535, vals))
+
+    def test_png_filters(self):
+        """Rows encoded with None, Sub, Up, Average and Paeth decode to the original bytes."""
+        import struct
+        import zlib
+        w, h, bpp = 4, 5, 3
+        rows = [bytes((17 * (i + 3 * j) + 5 * k) % 256 for i in range(w) for k in range(bpp)) for j in range(h)]
+
+        def paeth(a, b, c):
+            pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+            return a if pa <= pb and pa <= pc else b if pb <= pc else c
+
+        raw, prev = b"", bytes(w * bpp)
+        for j, row in enumerate(rows):
+            f = j % 5
+            out = bytearray()
+            for k, x in enumerate(row):
+                a = row[k - bpp] if k >= bpp else 0
+                b = prev[k]
+                c = prev[k - bpp] if k >= bpp else 0
+                pred = [0, a, b, (a + b) // 2, paeth(a, b, c)][f]
+                out.append((x - pred) % 256)
+            raw += bytes([f]) + bytes(out)
+            prev = row
+
+        def chunk(kind, body):
+            return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "f.png")
+            p.write_bytes(core.PNG_MAGIC + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                          + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+            self.assertEqual(core.read_png(p).data, list(b"".join(rows)))
+
+    def test_terrain_row_zero_is_north(self):
+        with tempfile.TemporaryDirectory() as d:
+            core.write_png(Path(d, "h.png"), 3, 3, [65535] * 3 + [0] * 6, 1, 16)
+            ter = core.Terrain({"heightmap": {"uri": "h.png", "format": "png16", "size": [3, 3],
+                                              "extent": [0, 0, 10, 10], "height_min": 0.0, "height_max": 8.0}}, d)
+            self.assertAlmostEqual(ter.height(5, 10), 8.0)     # y_max edge = image row 0
+            self.assertAlmostEqual(ter.height(5, 0), 0.0)
+            self.assertAlmostEqual(ter.height(5, 7.5), 4.0)    # bilinear between rows 0 and 1
+            self.assertIsNone(ter.height(11, 5))
+
+    def test_conditions(self):
+        cond = {"all": [{"signal": "sun_elevation", "op": "lt", "value": 0.05},
+                        {"not": {"signal": "session", "op": "in", "value": ["practice"]}}]}
+        self.assertTrue(core.eval_condition(cond, {"sun_elevation": 0.0, "session": "race"}))
+        self.assertFalse(core.eval_condition(cond, {"sun_elevation": 0.0, "session": "practice"}))
+        self.assertFalse(core.eval_condition(cond, {"session": "race"}))   # missing signal: false
+        self.assertAlmostEqual(core.eval_curve([[0, 0], [12, 2]], 6), 1.0)
+        self.assertEqual(core.eval_curve([[0, 0], [12, 2]], 30), 2)
+
+    def test_film_depth(self):
+        ref = core.ReferenceLine([[0, 0, 0], [100, 0, 0]])
+        asphalt = {"class": "asphalt", "roughness": {"mean_profile_depth": 0.0008}}   # holds 0.4 mm
+        doc = {"water": {"accumulation_bands": [{"s_start": 40, "s_end": 60, "t_min": -5, "t_max": 5, "factor": 2.0}],
+                         "shelter": [{"id": "bridge", "factor": 1.0, "band": {"s_start": 80, "s_end": 90, "t_min": -5, "t_max": 5}}],
+                         "dry_line": {"line": "race", "spread": 1.0, "factor": 0.2}}}
+        off = [(float(s), 1.0) for s in range(0, 101, 5)]            # racing line 1 m left of the centerline
+
+        def d(s, t, depth=0.002):
+            return core.film_depth(doc, ".", asphalt, s, t, s, t, depth, ref, off)
+
+        far = 1.0 - 0.8 * math.exp(-0.5 * 25)                        # 5 m off the line: almost no drying
+        self.assertAlmostEqual(d(20, -4), 0.002 * far - 0.0004, places=6)
+        self.assertAlmostEqual(d(50, -4), 0.004 * far - 0.0004, places=6)   # standing water x2
+        self.assertEqual(d(85, -4), 0.0)                                   # under the bridge
+        self.assertAlmostEqual(d(20, 1, 0.004), 0.004 * 0.2 - 0.0004, places=6)   # on the drying line
+        self.assertEqual(d(20, 1), 0.0)                                    # 0.4 mm on the line, all held
+
+    def test_line_state_value(self):
+        st = {"spread": 1.0, "profile": [[0, 1.0], [100, 2.0]]}
+        self.assertAlmostEqual(core.line_state_value(st, 0.5, 50, 3.0, 3.0), 0.75)
+        self.assertAlmostEqual(core.line_state_value(st, 0.5, 0, 4.0, 3.0), 0.5 * math.exp(-0.5))
+
+    def test_project(self):
+        line = core.ReferenceLine([[0, 0, 0], [100, 0, 0], [100, 100, 0]])
+        s, t = line.project(110, 50)
+        self.assertAlmostEqual(s, 150.0)
+        self.assertAlmostEqual(t, -10.0)                               # right of a +Y heading is +X
+
+
+class Ground(unittest.TestCase):
+    """Layered ground materials (spec §8.7)."""
+
+    def setUp(self):
+        self.stage = core.load_document(STAGE)
+        self.gm = self.stage["ground"]["materials"][0]
+
+    def assertFinding(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def test_unknown_palette_layer(self):
+        self.gm["palette"][3] = "moss"
+        self.assertFinding(self.stage, "ERROR", "unknown ground layer 'moss'")
+
+    def test_indices_outside_short_palette(self):
+        self.gm["palette"] = self.gm["palette"][:2]
+        self.assertFinding(self.stage, "ERROR", "indices outside the palette")
+
+    def test_missing_attribute(self):
+        self.gm["weights"]["weights"] = "stj_blend"
+        self.assertFinding(self.stage, "ERROR", "primvar 'stj_blend' missing")
+
+    def test_missing_texcoord_for_projection(self):
+        self.stage["ground"]["layers"]["stage_grass"]["projection"] = {"texcoord": "uv9"}
+        self.assertFinding(self.stage, "ERROR", "UV primvar 'uv9' missing")
+
+    def test_unknown_material(self):
+        self.gm["material"] = "Ground_Sec02"
+        self.assertFinding(self.stage, "ERROR", "no mesh uses material 'Ground_Sec02'")
+
+    def test_tile_given_as_scale(self):
+        self.stage["ground"]["layers"]["rock"]["tile"] = 0.0625
+        self.stage["ground"]["layers"]["stage_gravel"]["tile"] = 0.004
+        self.assertFinding(self.stage, "WARN", "metres per repeat")
+
+    def test_image_encoding_channels(self):
+        self.gm["weights"] = {"encoding": "image", "maps": [{"uri": "ground/sec01_tint.png", "channels": "rgb"}], "texcoord": "st"}
+        self.assertFinding(self.stage, "ERROR", "3 channels for 4 palette layers")
+
+    def test_terrain_ground_layer(self):
+        self.stage["geometry"]["terrain"]["layers"][0]["ground_layer"] = "lichen"
+        self.assertFinding(self.stage, "ERROR", "unknown ground layer 'lichen'")
+
+    def test_reference_blend(self):
+        flat = [0.5] * 3
+        self.assertEqual(core.ground_blend([0.6, 0.3, 0.1], flat, flat, [1, 1, 1]), [1.0, 0.0, 0.0])
+        f = core.ground_blend([0.45, 0.4, 0.15], flat, flat, [1, 1, 1])
+        self.assertAlmostEqual(f[0], 0.2 / 0.35)                      # within 0.2 of the top: both blend
+        self.assertAlmostEqual(f[1], 0.15 / 0.35)
+        # a high stone on the weaker layer wins against a low grass texel
+        f = core.ground_blend([0.6, 0.4, 0.0], [0.2, 0.9, 0.5], flat, [1, 1, 1])
+        self.assertAlmostEqual(f[1], 0.8)                              # scores 0.45 vs 0.6: the stone dominates
+        self.assertEqual(core.ground_blend([1, 3, 0], flat, flat, flat, method="linear"), [0.25, 0.75, 0.0])
+
+    def test_macro(self):
+        self.assertEqual(core.apply_macro((0.4, 0.4, 0.4), [(0.5, "grey_centred")]), (0.4, 0.4, 0.4))
+        self.assertAlmostEqual(core.apply_macro((0.4, 0.4, 0.4), [(0.75, "grey_centred"), (0.5, "multiply")])[0], 0.3)
+
+    def test_bake_runs(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import ground_bake
+        rows = ground_bake.bake(self.stage, EX, 0, 120, 24)
+        centre, edge = rows[12][60], rows[1][60]
+        self.assertNotEqual(centre, (0, 0, 0))
+        self.assertNotEqual(centre, edge)                     # road gravel is not forest floor
+
+
+class LessonsFromRbr(unittest.TestCase):
+    """Surface maps, states, absolute mu, chainage and the smaller additions."""
+
+    def setUp(self):
+        self.stage = core.load_document(STAGE)
+        self.maps = self.stage["surfaces"]["maps"]
+
+    def assertFinding(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def test_example_has_the_features(self):
+        s = self.stage
+        self.assertEqual(len(self.maps), 2)
+        self.assertIn("chainage", s["reference"]["centerline"])
+        self.assertTrue(any(b.get("when") for b in s["water"]["bodies"]))
+        self.assertTrue(any(e["kind"] == "invisible" for e in s["edges"]))
+
+    def test_surface_map_unknown_surface(self):
+        self.maps[1]["palette"][1] = "hardpack"
+        self.assertFinding(self.stage, "ERROR", "unknown surface 'hardpack'")
+
+    def test_surface_map_indices_outside_palette(self):
+        self.maps[1]["palette"] = self.maps[1]["palette"][:2]
+        self.assertFinding(self.stage, "ERROR", "indices outside the palette")
+
+    def test_surface_map_unreachable(self):
+        self.maps.reverse()                                  # the unconditional map now hides the worn one
+        self.assertFinding(self.stage, "WARN", "never used")
+
+    def test_wear_signal_values(self):
+        self.maps[0]["when"]["value"] = 75
+        self.assertFinding(self.stage, "WARN", "check the unit")
+
+    def test_mu_needs_reference(self):
+        del self.stage["surfaces"]["reference_mu"]["gravel"]
+        self.assertFinding(self.stage, "ERROR", "needs surfaces.reference_mu.gravel")
+
+    def test_mu_sliding_above_peak(self):
+        self.stage["surfaces"]["library"]["gravel_rutted"]["by_tyre_class"]["gravel"]["mu"]["sliding"] = 0.95
+        self.assertFinding(self.stage, "WARN", "sliding mu above peak mu")
+
+    def test_chainage_mismatch(self):
+        cl = self.stage["reference"]["centerline"]
+        cl["chainage"] = [c * 1.05 for c in cl["chainage"]]
+        self.assertFinding(self.stage, "WARN", "more than 1% apart")
+
+    def test_chainage_must_increase(self):
+        cl = self.stage["reference"]["centerline"]
+        cl["chainage"][5] = cl["chainage"][4]
+        self.assertFinding(self.stage, "ERROR", "must increase")
+
+    def test_chainage_count(self):
+        self.stage["reference"]["centerline"]["chainage"].pop()
+        self.assertFinding(self.stage, "ERROR", "values for")
+
+    def test_invisible_edge_needs_behaviour(self):
+        del next(e for e in self.stage["edges"] if e["kind"] == "invisible")["behaviour"]
+        self.assertFinding(self.stage, "ERROR", "needs a behaviour")
+
+    def test_weather_option_variant(self):
+        self.stage["environment"]["weather_options"][1]["variant"] = "snowstorm"
+        self.assertFinding(self.stage, "ERROR", "unknown variant 'snowstorm'")
+
+    def test_sections_order(self):
+        sec = self.stage["race"]["sections"][1]
+        sec["s_end"] = sec["s_start"] - 10
+        self.assertFinding(self.stage, "ERROR", "s_end must be after s_start")
+
+    def test_reflections_order(self):
+        self.stage["audio"]["reflections"][2][0] = 1700.0
+        self.assertFinding(self.stage, "ERROR", "s must increase")
+
+    def test_distance_to_next_checked(self):
+        self.stage["race"]["pacenotes"]["notes"][0]["distance_to_next"] = 500
+        self.assertFinding(self.stage, "WARN", "the next note is")
+
+    def test_bendable_without_stiffness(self):
+        del self.stage["scenery"]["prototypes"]["birch_sapling"]["physics"]["stiffness"]
+        self.assertFinding(self.stage, "WARN", "bendable without stiffness")
+
+    def test_hermite_line(self):
+        r = 100.0
+        line = core.ReferenceLine([[r, 0, 0], [0, r, 0]], tangents=[[0, r * math.pi / 2, 0], [-r * math.pi / 2, 0, 0]])
+        self.assertAlmostEqual(line.length, r * math.pi / 2, delta=2.0)     # a cubic close to the quarter circle
+        x, y, _z, h = line.frame(0.0)
+        self.assertAlmostEqual(h, math.pi / 2)                             # leaves heading +Y
+        s, t = line.project(*line.point(60.0, 2.0)[:2])
+        self.assertAlmostEqual(s, 60.0, delta=0.5)
+        self.assertAlmostEqual(t, 2.0, delta=0.05)
+
+    def test_chainage_defines_s(self):
+        line = core.ReferenceLine([[0, 0, 0], [100, 0, 0], [100, 50, 0]], chainage=[0, 101, 152])
+        self.assertEqual(line.length, 152)
+        self.assertAlmostEqual(line.point(101)[0], 100.0)                 # the stored distance reaches the corner
+        rev = core.reverse_reference({"centerline": {"points": [[0, 0, 0], [100, 0, 0], [100, 50, 0]], "chainage": [0, 101, 152]}})
+        self.assertEqual(rev["centerline"]["chainage"], [0.0, 51.0, 152.0])
+
+
+class Tier3(unittest.TestCase):
+    """v0.3: race control, evolution laws, large worlds, presentation."""
+
+    def setUp(self):
+        self.gp = core.load_document(GP)
+        self.stage = core.load_document(STAGE)
+
+    def assertFinding(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def test_sector_flag_needs_sectors(self):
+        del self.gp["marshals"]["sectors"]
+        del self.gp["marshals"]["posts"][0]["sector"], self.gp["marshals"]["posts"][1]["sector"]
+        self.assertFinding(self.gp, "WARN", "no marshal sectors are defined")
+
+    def test_post_outside_its_sector(self):
+        self.gp["marshals"]["posts"][0]["s"] = 100.0
+        self.assertFinding(self.gp, "WARN", "outside sector 'm2'")
+
+    def test_sectors_must_join(self):
+        self.gp["marshals"]["sectors"][2]["s_start"] += 20
+        self.assertFinding(self.gp, "WARN", "do not join")
+
+    def test_vehicle_base(self):
+        self.gp["marshals"]["vehicles"][1]["base"] = "post_t9"
+        self.assertFinding(self.gp, "ERROR", "unknown post 'post_t9'")
+
+    def test_penalty_needs_value(self):
+        del self.gp["marshals"]["restricted_zones"][0]["value"]
+        self.assertFinding(self.gp, "ERROR", "needs a value")
+
+    def test_speed_limit_in_kmh(self):
+        self.stage["marshals"]["restricted_zones"][0]["value"] = 30
+        self.assertFinding(self.stage, "WARN", "km/h given?")
+
+    def test_reset_points_only(self):
+        self.gp["marshals"]["reset"] = {"mode": "points_only"}
+        self.assertFinding(self.gp, "ERROR", "without points")
+
+    def test_dynamic_line_state(self):
+        self.gp["dynamic"]["line_states"][0]["line_state"] = "groove"
+        self.assertFinding(self.gp, "ERROR", "unknown line state 'groove'")
+
+    def test_ruts(self):
+        self.stage["dynamic"]["ruts"][0]["depth_per_pass"] = 0.2
+        self.assertFinding(self.stage, "ERROR", "depth_per_pass cannot exceed max_depth")
+
+    def test_chunks(self):
+        geo = self.gp["geometry"]
+        geo["meshes"][0]["chunk"] = "c1"
+        geo["chunks"] = [{"id": "c1", "s_start": 0.0, "s_end": 500.0, "origin": [0.0, 0.0, 0.0], "meshes": ["props"]},
+                         {"id": "c2", "s_start": 520.0, "s_end": 970.0, "origin": [100.0, 0.0, 0.0], "terrain": "t9"}]
+        rep = run(self.gp)
+        errs = [e for e in messages(rep, "ERROR") if not e.startswith("variants")]   # the temp copy is not the variants' base
+        self.assertEqual(errs, ["geometry.chunks[1].terrain: unknown terrain 't9'"])
+        self.assertTrue(any("do not join" in w for w in messages(rep, "WARN")))
+        geo["meshes"][0]["chunk"] = "c7"
+        self.assertFinding(self.gp, "ERROR", "unknown chunk 'c7'")
+
+    def test_chunk_mesh_without_chunk(self):
+        self.gp["geometry"]["chunks"] = [{"id": "c1", "s_start": 0.0, "s_end": 977.0, "origin": [0.0, 0.0, 0.0], "meshes": ["props"]}]
+        self.assertFinding(self.gp, "WARN", "does not say chunk 'c1'")
+
+    def test_tiles(self):
+        self.gp["geometry"]["tiles"] = {"size": 500.0, "origin": [-500.0, -500.0, 0.0],
+                                        "items": [{"index": [0, 0], "meshes": ["props"]}, {"index": [0, 0]}]}
+        self.assertFinding(self.gp, "ERROR", "appears twice")
+
+    def test_terrains_need_ids(self):
+        ter = self.stage["geometry"].pop("terrain")
+        self.stage["geometry"]["terrains"] = [ter]
+        self.assertFinding(self.stage, "ERROR", "need an id")
+
+    def test_screen_image_needs_uri(self):
+        self.gp["screens"][0]["content"] = "image"
+        self.assertFinding(self.gp, "ERROR", "needs a uri")
+
+    def test_screen_node(self):
+        self.gp["screens"][0]["target"]["prim"] = "/track/props/Screen"
+        self.assertFinding(self.gp, "ERROR", "prim '/track/props/Screen' not in")
+
+    def test_crowd(self):
+        c = self.stage["scenery"]["crowds"][0]
+        del c["flee_distance"]
+        c["prototype"] = "fan"
+        rep = run(self.stage)
+        self.assertTrue(any("unknown prototype 'fan'" in e for e in messages(rep, "ERROR")))
+        self.assertTrue(any("flee without flee_distance" in w for w in messages(rep, "WARN")))
+
+    def test_climate(self):
+        m = self.gp["environment"]["climate"]["monthly"]
+        m[1]["month"] = 1
+        m[2]["t_min"] = 30
+        rep = run(self.gp)
+        errs = messages(rep, "ERROR")
+        self.assertTrue(any("month 1 appears twice" in e for e in errs), errs)
+        self.assertTrue(any("t_min above t_max" in e for e in errs), errs)
+
+    def test_v03_keys_in_v02_file(self):
+        self.gp["_metadata"]["version"] = "0.2"
+        self.assertFinding(self.gp, "WARN", "declares 0.2 but uses v0.3 features")
+
+    def test_reference_laws(self):
+        lvl = 0.2
+        for _ in range(100):
+            lvl += 0.01 * (1 - lvl)
+        self.assertAlmostEqual(core.line_state_after_passes(0.2, 0.01, 100), lvl)
+        d = 0.0
+        for _ in range(50):
+            d += 0.002 * (1 - d / 0.08)
+        self.assertAlmostEqual(core.rut_depth_after_passes(0.0, 0.002, 0.08, 50), d)
+        self.assertAlmostEqual(core.wear_from_cars(60, 60), 1 - math.exp(-1))
+        self.assertAlmostEqual(core.dew_point(20.0, 1.0), 20.0, places=6)
+        # a 1 mm film under 4 mm/h of rain with 1 mm/h drainage grows 3 mm/h
+        self.assertAlmostEqual(core.water_step(0.001, 3600, 4.0, 1.0, 0.0), 0.004)
+        self.assertEqual(core.water_step(0.0005, 3600, 0.0, 2.0, 0.5), 0.0)       # never below zero
+        self.assertAlmostEqual(core.line_state_washed(0.5, 0.05, 4.0, 3600), 0.5 * math.exp(-0.2))
+        t = core.track_temperature_step(20.0, 1e9, 20.0, 18.0, 1.0, 0.5, 1800.0)
+        self.assertAlmostEqual(t, 29.0)                                          # half shade: half the sun gain
+
+
+@unittest.skipUnless(core.have_pxr(), "needs the pxr module (pip install usd-core)")
+class OpenUsd(unittest.TestCase):
+    """STJ with OpenUSD: USD meshes, the document inside a layer, .usdz packages (spec §7.7, §7.8)."""
+
+    def setUp(self):
+        import shutil
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        for name in ("test_ring_blend.usda", "test_ring_blend_wet.usda"):
+            shutil.copy(EX / name, self.dir / name)
+        self.track = self.dir / "test_ring_blend.usda"
+        self.doc = core.usd_document(self.track)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def check(self, doc=None):
+        if doc is not None:
+            core.embed_document(doc, self.track)
+        return validate.validate(self.track)
+
+    def assertFinding(self, rep, level, fragment):
+        found = messages(rep, level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def test_extract_matches_embedded(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import stj_usd
+        out = self.dir / "out.stj.json"
+        stj_usd.main(["extract", str(EX / "test_ring_blend.usdz"), "-o", str(out)])
+        self.assertEqual(core.load_json(out), core.usd_document(EX / "test_ring_blend.usda"))
+
+    def test_layer_index_outside_palette(self):
+        from pxr import Usd, UsdGeom
+        st = Usd.Stage.Open(str(self.track))
+        pv = UsdGeom.PrimvarsAPI(st.GetPrimAtPath("/track/ribbon")).GetPrimvar("stj_surf_layers_2")
+        vals = list(pv.Get())
+        vals[0] = 9
+        pv.Set(vals)
+        st.GetRootLayer().Save()
+        self.assertFinding(self.check(), "ERROR", "indices outside the palette")
+
+    def test_missing_primvar(self):
+        self.doc["surfaces"]["maps"][0]["weights"]["weights"] = "stj_blend"
+        self.assertFinding(self.check(self.doc), "ERROR", "primvar 'stj_blend' missing")
+
+    def test_unknown_usd_variant(self):
+        self.doc["variants"][0]["usd_variants"] = {"stj_condition": "snow"}
+        self.assertFinding(self.check(self.doc), "ERROR", "variant 'snow' not in set 'stj_condition'")
+
+    def test_target_needs_time_range(self):
+        del self.doc["animated_objects"][0]["time_range"]
+        self.assertFinding(self.check(self.doc), "ERROR", "'time_range' is a required property")
+
+    def test_physics_disagreement(self):
+        self.doc["scenery"]["prototypes"]["cone"]["physics"]["mass"] = 6.0
+        self.assertFinding(self.check(self.doc), "WARN", "the STJ JSON is normative")
+
+    def test_stage_axes(self):
+        from pxr import Usd, UsdGeom
+        st = Usd.Stage.Open(str(self.track))
+        UsdGeom.SetStageUpAxis(st, UsdGeom.Tokens.y)
+        st.GetRootLayer().Save()
+        self.assertFinding(self.check(), "WARN", "upAxis Y")
+
+    def test_usdz_holds_no_json(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import stj_usd
+        (self.dir / "notes.json").write_text("{}")
+        with self.assertRaises(SystemExit):
+            stj_usd.write_usdz(self.track, self.dir / "x.usdz", {"notes.json"})
+
+    def test_usdz_alignment(self):
+        import zipfile
+        with zipfile.ZipFile(EX / "test_ring_blend.usdz") as z:
+            infos = z.infolist()
+            self.assertEqual(infos[0].filename, "test_ring_blend.usda")            # root layer first
+            raw = (EX / "test_ring_blend.usdz").read_bytes()
+            for info in infos:
+                self.assertEqual(info.compress_type, zipfile.ZIP_STORED)
+                name_len, extra_len = struct.unpack_from("<HH", raw, info.header_offset + 26)
+                self.assertEqual((info.header_offset + 30 + name_len + extra_len) % 64, 0, info.filename)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    customLayerData = {
+        string stj = '{"_metadata":{"specification":"STJ-OVERRIDE","version":"0.3","base":"./coll_de_prova_gravel.usda","variant":"season","description":"Winter: packed snow on the road, soft snow on the verges."},"patch":{"environment":{"season":{"name":"winter","snow_cover":0.8,"snow_depth":0.08,"leaf_fraction":0.6,"ground":"frozen"},"default_time":{"date":"2026-01-24"},"default_weather":{"condition":"snow","air_temperature":-4.0,"track_temperature":-6.0}},"surfaces":{"library":{"snow_packed":{"class":"snow","mf_scaling":{"LMUX":0.32,"LMUY":0.3,"LKX":0.5,"LKY":0.5,"_est":true},"by_tyre_class":{"studded":{"mu":{"peak":0.55,"sliding":0.48,"_est":true}}},"rolling_resistance":0.02,"track_limits":"inside"},"snow_soft":{"class":"snow","mf_scaling":{"LMUX":0.25,"LMUY":0.22,"LKX":0.4,"LKY":0.4,"_est":true},"rolling_resistance":0.06,"deformable":{"effective":{"drag_coefficient":0.006,"sinkage":0.06,"_est":true}},"track_limits":"outside"}},"substitutions":{"gravel_loose":"snow_packed","gravel_hardpack":"snow_packed","gravel_rutted":"snow_packed","asphalt_worn":"snow_packed","verge_grass":"snow_soft"}}}}'
+    }
+    subLayers = [
+        @./coll_de_prova_gravel.usda@
+    ]
+)
+

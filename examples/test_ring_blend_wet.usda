@@ -1,0 +1,18 @@
+#usda 1.0
+(
+    customLayerData = {
+        string stj = "{\"_metadata\":{\"specification\":\"STJ-OVERRIDE\",\"version\":\"0.3\",\"base\":\"./test_ring_blend.usda\",\"variant\":\"weather\",\"description\":\"Rain: the patch sets the water film; this layer also selects the USD 'wet' look.\"},\"patch\":{\"environment\":{\"default_weather\":{\"condition\":\"rain\",\"air_temperature\":14.0,\"water_depth\":0.0012,\"precipitation\":3.0}}}}"
+    }
+    subLayers = [
+        @./test_ring_blend.usda@
+    ]
+)
+
+over "track" (
+    variants = {
+        string stj_condition = "wet"
+    }
+)
+{
+}
+

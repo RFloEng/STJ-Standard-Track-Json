@@ -1,0 +1,2 @@
+jsonschema>=4.0
+usd-core>=25.0   # OpenUSD: tracks are USD stages (spec §3)

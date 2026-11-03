@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    customLayerData = {
+        string stj = '{"_metadata":{"specification":"STJ-OVERRIDE","version":"0.3","base":"./test_ring_gp.usda","variant":"time_of_day","description":"Night race: the floodlights come on by themselves (sun_elevation)."},"patch":{"environment":{"default_time":{"local_time":"22:00"},"default_weather":{"air_temperature":18.0,"track_temperature":20.0}}}}'
+    }
+    subLayers = [
+        @./test_ring_gp.usda@
+    ]
+)
+

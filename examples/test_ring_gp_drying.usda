@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    customLayerData = {
+        string stj = '{"_metadata":{"specification":"STJ-OVERRIDE","version":"0.3","base":"./test_ring_gp.usda","variant":"weather","description":"Rain has stopped: a thin film with a drying racing line."},"patch":{"environment":{"default_weather":{"condition":"cloudy","air_temperature":17.0,"track_temperature":19.0,"precipitation":0.0,"water_depth":0.0008}},"water":{"dry_line":{"line":"race","spread":0.9,"factor":0.25}}}}'
+    }
+    subLayers = [
+        @./test_ring_gp.usda@
+    ]
+)
+

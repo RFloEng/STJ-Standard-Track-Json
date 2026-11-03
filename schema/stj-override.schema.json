@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:stj:schema:override:v0.1",
+  "title": "STJ Override File",
+  "description": "A delta file applying an RFC 7396 JSON Merge Patch on top of a base STJ file (wet version, night, alternate layout). Same model as SVJ override files (SVJ_Spec.md §3.4). See STJ_Spec.md §3.3.",
+  "type": "object",
+  "required": ["_metadata", "patch"],
+  "additionalProperties": false,
+  "patternProperties": { "^_": {} },
+  "properties": {
+    "$schema": { "type": "string" },
+    "_metadata": {
+      "type": "object",
+      "required": ["specification", "version", "base"],
+      "additionalProperties": true,
+      "properties": {
+        "specification": { "const": "STJ-OVERRIDE" },
+        "version": { "type": "string", "enum": ["0.1", "0.2", "0.3"] },
+        "base": { "type": "string", "description": "Relative path to the base .stj.json (or another .stj-override.json) this file patches." },
+        "variant": { "type": "string", "enum": ["weather", "time_of_day", "layout", "season", "setup", "other"], "description": "What kind of variant this is." },
+        "description": { "type": "string" }
+      }
+    },
+    "patch": {
+      "type": "object",
+      "description": "RFC 7396 JSON Merge Patch applied over the resolved base document. The result must validate against stj.schema.json."
+    }
+  }
+}
