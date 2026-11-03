@@ -6,12 +6,13 @@
 
 <p align="center">
   <b>The track half of the Rosetta Stone for driving simulation.</b><br>
-  One open, engine-neutral JSON description of a race track or rally stage.
+  One open, engine-neutral description of a race track or rally stage, in one OpenUSD file.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
   <img alt="Version 0.3 draft" src="https://img.shields.io/badge/version-0.3%20draft-orange.svg">
+  <img alt="Container: OpenUSD" src="https://img.shields.io/badge/container-OpenUSD-lightgrey.svg">
   <img alt="JSON Schema Draft-07" src="https://img.shields.io/badge/JSON%20Schema-Draft--07-lightgrey.svg">
   <a href="https://github.com/RFloEng/SVJ-standard-vehicle-json"><img alt="Sister format: SVJ" src="https://img.shields.io/badge/sister-SVJ-fa6b1d.svg"></a>
 </p>
@@ -22,23 +23,30 @@ Every simulator stores tracks its own way: models, surface tables, AI splines, d
 
 **STJ** describes a track completely enough for any engine to rebuild it:
 
-- **where the road is**: a reference line with distance `s` and lateral offset `t`, glTF meshes, a terrain heightfield
+- **where the road is**: a reference line with distance `s` and lateral offset `t`, USD meshes, a terrain heightfield
 - **what it is made of and how it grips**: surfaces relative to a defined reference road, wet behaviour, loose ground, surfaces that vary inside a mesh
-- **how a race on it is run**: timing, grid, pits, racing lines, AI hints, rally controls, pace notes
+- **how a race on it is run**: timing, grid, pits, racing lines, AI hints, race control, rally controls, pace notes
 - **what surrounds it**: vegetation and objects, water, sky, lights, sound, animated objects
 
 It is the sister format of **[SVJ — Standard Vehicle JSON](https://github.com/RFloEng/SVJ-standard-vehicle-json)**. SVJ says what a car is; STJ says what it drives on. Put an SVJ car on an STJ stage and the grip at each tyre follows from both ([spec §6.4](spec/STJ_Spec.md#64-svj-tyre--stj-surface--grip)).
 
-STJ is a **vocabulary**, not a simulator and not a mesh format. It builds on existing standards instead of reinventing them:
+## One track, one OpenUSD stage
+
+A track is an **[OpenUSD](https://openusd.org) stage**: a `.usda` while you work on it, and a single `.usdz` to ship it ([spec §7.8](spec/STJ_Spec.md#78-stj-inside-usd-and-single-file-tracks)).
+- **Geometry lives in USD**: meshes, materials, per-face and per-corner data (primvars), animation, instancing, variant sets, streaming payloads ([spec §7.7](spec/STJ_Spec.md#77-openusd-geometry)).
+- **The STJ document lives in the same file**, in the root layer's `customLayerData["stj"]`. It holds what USD has no schema for: the reference line, surfaces and grip, timing, race data, pace notes, weather, signals. It points to the geometry by material name or prim path.
+- **Variants** (night, wet, winter) are USD layers that sublayer the track, carry an RFC 7396 patch for the document, and select USD variant sets. Any USD tool shows them; STJ tools apply them.
+- **A `.usdz` holds only USD layers, images and audio.** A track that uses OpenDRIVE, OpenCRG or raw terrain ships as a folder instead.
+
+The document is JSON checked by a JSON Schema, and `tools/stj_usd.py extract` always writes it back out as plain text for reading and diffing. STJ builds on existing standards instead of reinventing them:
+- **OpenUSD** for the container and all geometry
 - **ASAM OpenDRIVE** for road layout
 - **ASAM OpenCRG** for road surface grids
-- **glTF 2.0** for lean delivery meshes
-- **OpenUSD** for rich geometry. A whole track can be one `.usdz`, with the STJ document inside it.
-- **RFC 7396** for variant files
+- **RFC 7396** for variant patches
 
 ## A first look
 
-A centerline and one surface make a valid, drivable file:
+This is the document inside a minimal track. A centerline and one surface make a valid, drivable track:
 
 ```json
 {
@@ -53,18 +61,32 @@ A centerline and one surface make a valid, drivable file:
 }
 ```
 
+Put it into a track, check it, and pack it into one file:
+
+```bash
+python tools/stj_usd.py embed my_stage.stj.json my_stage.usda
+```
+
+```bash
+python tools/validate.py my_stage.usda --strict
+```
+
+```bash
+python tools/stj_usd.py package my_stage.usda -o my_stage.usdz
+```
+
 Everything except `_metadata` is optional. Add what you have: meshes, timing, pace notes, scenery, weather.
 
 ## What's inside
 
 | Section | Content |
 |---|---|
-| `_metadata` | Version, licence (SPDX, redistributable), provenance: original, scanned or converted, with what each conversion step lost |
+| `_metadata` | Version, licence (SPDX, redistributable), provenance: original, scanned or converted, with what each conversion step lost; the authoring source file |
 | `track_info` | Name, layout, type, country, primary surface, length, short name, tags, media, minimap, records |
 | `reference` | OpenDRIVE route, or a centerline (polyline or Hermite spline) with widths and optional stored chainage. Defines `s` and `t`. |
-| `geometry` | glTF or OpenUSD meshes by role (visual, collision, LOD), OpenCRG grids, terrain heightfields with layers; long stages and open areas cut into chunks or tiles with local origins (USD payloads) |
+| `geometry` | USD meshes by role (visual, collision, LOD), OpenCRG grids, terrain heightfields with layers; long stages and open areas cut into chunks or tiles with local origins (USD payloads) |
 | `surfaces` | <ul><li>A surface library relative to **STJ-REF** (dry, clean asphalt): Magic Formula scaling λ or absolute μ per tyre class, rolling resistance, roughness (ISO 8608, sinusoid, macrotexture), wet response, deformable loose ground (effective and terramechanics tiers), impact and visual effects</li><li>Where each surface applies: mesh materials, surface maps that blend inside a mesh with one map per state (new/worn, dry/wet), OpenDRIVE lanes, bands along the line</li><li>Rubber and swept-gravel line states</li><li>Season substitutions</li></ul> |
-| `ground` | Layered ground shading that glTF cannot express: detail layers, per-vertex or image weights, a reference height blend, macro maps |
+| `ground` | Layered ground shading that a single material cannot express: detail layers, per-face layers with per-corner or image weights, a reference height blend, macro maps |
 | `timing` | Start/finish, sectors, splits, stop, pit lane, track limits, DRS zones, rally controls, side roads |
 | `marshals` | Race control: marshal sectors and posts, radio points, safety and recovery vehicles, restricted zones, where a car is reset |
 | `dynamic` | How the track evolves during an event: rubbering, sweeping, water and drying, ruts, wear, track temperature. Uses STJ's reference laws, so the numbers mean the same everywhere. |
@@ -74,11 +96,11 @@ Everything except `_metadata` is optional. Add what you have: meshes, timing, pa
 | `environment` | Geo-reference, true north, time zone, date and time, sky, sun and lights, reflection probes, weather (schedule, options, climate statistics), season |
 | `scenery` | Vegetation and object prototypes, instances and scatter rules; crowds as areas with behaviour. Props can be rigid, tethered or bendable. Engine-native `x_<engine>` blocks travel alongside. |
 | `water` | Lakes, rivers, fords and puddles; where water stands, drains and is sheltered; a drying line |
-| `animated_objects` | Flags, windmills, gates and helicopters on glTF animations |
+| `animated_objects` | Flags, windmills, gates and helicopters on USD time samples (`time_range`) |
 | `audio`, `screens` | Point and line emitters, reverb zones, roadside reflections; scoreboards and big screens |
-| `layouts`, `variants` | Alternative layouts on the same models (including reverse), and the override files for night, wet and winter |
+| `layouts`, `variants` | Alternative layouts on the same models (including reverse), and the variant layers for night, wet and winter |
 
-**State signals** connect it all without scripting. A signal is a value the engine supplies, such as `sun_elevation`, `wetness`, `wear`, `flag` or `time_to_arrival`, with a unit and a default. Conditions on signals let the file react on its own:
+**State signals** connect it all without scripting. A signal is a value the engine supplies, such as `sun_elevation`, `wetness`, `wear`, `flag` or `time_to_arrival`, with a unit and a default. Conditions on signals let the track react on its own:
 - floodlights come on at dusk
 - start lights follow the countdown
 - a crowd cheers as a car approaches
@@ -90,11 +112,12 @@ Everything except `_metadata` is optional. Add what you have: meshes, timing, pa
 From SVJ: explicit over implicit, multi-fidelity, SI units, human-readable, `x_<engine>` extensions, validatable (JSON Schema Draft-07 plus a cross-reference validator).
 
 New in STJ:
+- **The document is normative.** USD may carry copies of STJ data for USD tools, such as UsdPhysics on a prop or a preview curve. Where they disagree, the document wins and the validator warns.
 - **Semantic first, native alongside.** A tree is a tree with a species and a height; the original engine's tree travels next to it, so nothing is lost going back to that engine.
 - **Honest about portability.** [Spec §14](spec/STJ_Spec.md#14-where-portability-is-a-lie) lists what STJ can carry but cannot make mean the same everywhere: loose-surface feel, game friction numbers, ground blending, vehicle-specific racing lines and pace notes.
 - **Strict schema.** Unknown keys are errors, so typos never pass silently. This is a deliberate difference from SVJ.
 
-**Coordinates.** Z up, right-handed, map-projected x/y in metres, heading counter-clockwise from +X: the OpenDRIVE inertial frame. Blender scene coordinates are STJ coordinates; glTF maps with one fixed rotation ([spec §4](spec/STJ_Spec.md#4-units-and-frames)).
+**Coordinates.** Z up, right-handed, map-projected x/y in metres, heading counter-clockwise from +X: the OpenDRIVE inertial frame ([spec §4](spec/STJ_Spec.md#4-units-and-frames)). A track's USD stage declares `upAxis = "Z"` and `metersPerUnit = 1`, which is also Blender's scene frame, so Blender scene coordinates are STJ coordinates.
 
 ## Files you own, and nothing else
 
@@ -107,15 +130,23 @@ STJ is **not** for extracting or redistributing anyone's content.
 ## Quick start
 
 ```bash
-pip install -r requirements.txt          # jsonschema, and usd-core for the optional USD checks
+pip install -r requirements.txt
+```
+
+```bash
 python tools/validate.py examples/*.usda examples/*.usdz --strict
+```
+
+```bash
 python -m unittest discover tests
 ```
 
+`requirements.txt` installs `jsonschema` and `usd-core` (OpenUSD). Without `usd-core` the validator still checks plain JSON documents, but it cannot read a track's USD layers.
+
 Other tools:
-- `python tools/ribbon_usd.py <file> -o road.usda` builds a collision ribbon from a centerline and surface bands.
-- `python tools/ground_bake.py <file> -o ground.png` previews a layered ground with the reference blend.
-- `python tools/stj_usd.py package track.usda -o track.usdz` makes a single-file track; `extract` gives the JSON back.
+- `python tools/stj_usd.py extract track.usdz -o track.stj.json` writes the document out as plain JSON.
+- `python tools/ribbon_usd.py <track> -o road.usda` builds a collision ribbon from a centerline and surface bands.
+- `python tools/ground_bake.py <track> -o ground.png` previews a layered ground with the reference blend.
 
 **Building a track?** Read [`docs/best_practices.md`](docs/best_practices.md): the polygon, texture, terrain and world-size limits that simulators publish, each with its source, and a portable baseline.
 
@@ -123,22 +154,23 @@ Other tools:
 
 | Tool | Purpose |
 |---|---|
-| `tools/validate.py` | Schema validation, plus the cross-reference checks a schema cannot express ([spec §12](spec/STJ_Spec.md#12-validation)). For example:<ul><li>ids, glTF materials, attributes and animations exist</li><li>every `s` lies on the line</li><li>timing and pace notes are in order</li><li>signal values are valid</li><li>terrain stays below the road</li><li>inertias are physical</li><li>unit slips such as degrees for radians or km/h for m/s</li></ul>`--strict` fails on warnings. |
-| `tools/stj_core.py` | Loading, `$ref`, RFC 7396 merge patch, the reference line (chainage, Hermite), glTF and PNG reading, terrain sampling. It also holds the reference implementations of conditions, line states, the water-film depth and the ground blend. |
-| `tools/ribbon_usd.py` | Collision ribbon (USD) from centerline and bands |
+| `tools/validate.py` | Schema validation of the document, plus the cross-reference checks a schema cannot express ([spec §12](spec/STJ_Spec.md#12-validation)). For example:<ul><li>ids, USD materials, prims and primvars exist</li><li>every `s` lies on the line</li><li>timing and pace notes are in order</li><li>signal values are valid</li><li>terrain stays below the road</li><li>inertias are physical</li><li>`.usdz` packages follow OpenUSD's rules</li><li>unit slips such as degrees for radians or km/h for m/s</li></ul>`--strict` fails on warnings. |
+| `tools/stj_usd.py` | STJ inside OpenUSD: embed the document in a layer, extract it as JSON, package a `.usdz` |
+| `tools/stj_core.py` | Loading, `$ref`, RFC 7396 merge patch, the reference line (chainage, Hermite), USD and PNG reading, terrain sampling. It also holds the reference implementations of conditions, line states, the water-film depth, the ground blend and the evolution laws. |
+| `tools/ribbon_usd.py` | A USD collision ribbon from a centerline and surface bands, one GeomSubset per surface |
 | `tools/ground_bake.py` | Layered ground baked into an image |
-| `tools/stj_usd.py` | STJ inside OpenUSD: embed the document in a layer, extract it, package a `.usdz` |
-| `tools/blender/` | Probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md): what a `.blend` can hold for STJ, checked in Blender 5.2 |
+| `tools/blender/` | Probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md): what Blender 5.2 keeps in a `.blend` and in its USD export |
+| `viewer/index.html` | A browser viewer for the document and its meshes. It reads text USD: a `.usda`, or a `.usdz` with `.usda` inside. |
 | `examples/make_examples.py` | Regenerates every example from one definition |
 
 ## Examples
 
-| File | What it shows |
+| Track | What it shows |
 |---|---|
 | [`test_ring_minimal.usda`](examples/test_ring_minimal.usda) | A 977 m circuit with bands, sectors and a grid. No meshes; still v0.1. |
-| [`test_ring_gp.usda`](examples/test_ring_gp.usda) | The same ring, race-ready: <ul><li>edges, pit lane, DRS</li><li>racing lines and AI data</li><li>cameras</li><li>rubber</li><li>drains and a pit-roof shelter</li><li>physical props</li><li>animated windmill, gate and flag</li><li>floodlights and start lights on signals</li><li>audio, minimap</li><li>marshal sectors and posts, a safety car, evolution parameters, a big screen, a grandstand crowd, climate</li><li>a reverse layout</li><li>night and drying variants</li></ul> |
-| [`coll_de_prova_gravel.usda`](examples/coll_de_prova_gravel.usda) | A 2.2 km gravel stage: <ul><li>deformable surfaces with per-tyre-class and absolute μ</li><li>a surface map with a worn state</li><li>terrain</li><li>a layered ground section</li><li>pace notes and a reverse layout with its own notes</li><li>a ford and a puddle that appears in the wet</li><li>forest shelter</li><li>hay bales, saplings, tape and a runoff drag zone</li><li>a crowd reacting to the approaching car</li><li>sections and weather options</li><li>radio points, ruts and wear evolution, a crowd that steps back</li><li>wet and winter variants</li></ul> |
-| [`test_ring_blend.usda`](examples/test_ring_blend.usda), [`.usdz`](examples/test_ring_blend.usdz) | The ring as STJ inside OpenUSD: <ul><li>the document in the layer</li><li>a collision mesh blending four surfaces with per-face layers and per-corner weights (no split vertices)</li><li>a dry/wet USD variant set</li><li>an animated flag</li><li>a cone with UsdPhysics</li><li>a wet override that is itself a USD layer</li><li>everything in one `.usdz`</li></ul> |
+| [`test_ring_gp.usda`](examples/test_ring_gp.usda) | The same ring, race-ready: <ul><li>edges, pit lane, DRS</li><li>racing lines and AI data</li><li>cameras</li><li>rubber</li><li>drains and a pit-roof shelter</li><li>physical props</li><li>animated windmill, gate and flag</li><li>floodlights and start lights on signals</li><li>audio, minimap</li><li>marshal sectors and posts, a safety car, evolution parameters, a big screen, a grandstand crowd, climate</li><li>a reverse layout</li><li>night and drying variant layers</li></ul> |
+| [`coll_de_prova_gravel.usda`](examples/coll_de_prova_gravel.usda) | A 2.2 km gravel stage: <ul><li>deformable surfaces with per-tyre-class and absolute μ</li><li>a surface map with a worn state</li><li>terrain</li><li>a layered ground section</li><li>pace notes and a reverse layout with its own notes</li><li>a ford and a puddle that appears in the wet</li><li>forest shelter</li><li>hay bales, saplings, tape and a runoff drag zone</li><li>a crowd reacting to the approaching car</li><li>sections and weather options</li><li>radio points, ruts and wear evolution, a crowd that steps back</li><li>wet and winter variant layers</li></ul> |
+| [`test_ring_blend.usda`](examples/test_ring_blend.usda), [`.usdz`](examples/test_ring_blend.usdz) | The ring as one file: <ul><li>a collision mesh blending four surfaces with per-face layers and per-corner weights (no split vertices)</li><li>a dry/wet USD variant set</li><li>an animated flag</li><li>a cone with UsdPhysics</li><li>a wet variant layer</li><li>everything in one `.usdz`</li></ul> |
 
 Both tracks are fictional. All surface numbers in them are estimates, marked `_est`.
 
@@ -147,12 +179,13 @@ Both tracks are fictional. All surface numbers in them are estimates, marked `_e
 ## Repository
 
 ```
-schema/     stj.schema.json (Draft-07), stj-override.schema.json
+schema/     stj.schema.json (the document, Draft-07), stj-override.schema.json (variant patches)
 spec/       STJ_Spec.md, the specification
 docs/       best practices, Blender mapping, converter plan, feature survey, open questions, logo
 proposals/  design proposals with their decisions
-examples/   two tracks, five variant files, meshes, terrain, ground, audio, UI, the Blender-round-trip ring (`test_ring_blend`), the generator
-tools/      validator, core library, ribbon and ground tools, Blender probes
+examples/   USD tracks and variant layers, meshes, terrain, ground, audio, UI, the generator
+viewer/     the browser viewer
+tools/      validator, core library, USD and ground tools, Blender probes
 tests/      unittest suite
 ```
 
@@ -164,4 +197,4 @@ Contributions are welcome. A change to the standard starts as a proposal in `pro
 
 ## License
 
-Apache License 2.0, the same as SVJ. See [LICENSE](LICENSE).
+Apache License 2.0, the same as SVJ. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
