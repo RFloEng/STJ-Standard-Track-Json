@@ -21,7 +21,7 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - `tools/stj_usd.py` (embed, extract, package)
   - optional `pxr` checks in the validator, including OpenUSD's package rules
   - the `test_ring_blend` ring as `.usda` and `.usdz`, plus a wet layer
-- **Terrain macro maps** (`proposals/stj_terrain_macro_proposal.md`, proposed, pending acceptance; additive):
+- **Terrain macro maps** (`proposals/stj_terrain_macro_proposal.md`, accepted 2026-11-05; additive):
   - `geometry.terrain.macro[]`: tint, occlusion or colour maps over a heightfield, with an optional extent (§7.4)
   - the `colour` macro encoding (an sRGB map of the ground's average colour) and `strength`, also on `ground.materials[].macro` (§8.7)
   - validator checks and the version check; `stj_core.apply_macro` and `tools/ground_bake.py` handle `colour`

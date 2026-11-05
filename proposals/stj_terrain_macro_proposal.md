@@ -1,6 +1,6 @@
 # STJ proposal: macro maps on a heightfield terrain
 
-Status: **proposed** 2026-11-04, pending the owner's decision on §8. A reference implementation (schema, validator, `stj_core`, the baker, spec text, an example and tests) accompanies it as a patch, written 2026-11-05; §7 is the plan it follows. If the proposal is accepted, this line becomes `accepted <date>` with the answers chosen in §8; if not, the patch is simply not applied.
+Status: **accepted** 2026-11-05 with the recommended answers of §8 (D1 `geometry.terrain.macro[]`, D2 the `colour` encoding, D3 optional extent, D4 core first, engine converters after). Proposed 2026-11-04; the reference implementation (schema, validator, `stj_core`, the baker, spec text, an example and tests) was merged on that basis.
 
 Source: converting three WRC Generations stages (a 2.2 km shakedown, a 1 km arena stage and a 4.9 km mountain stage) with a WRCG to STJ converter that reads the files the user's own export tool wrote. Every number in §2 was measured on those exports.
 
