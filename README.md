@@ -44,6 +44,28 @@ The document is JSON checked by a JSON Schema, and `tools/stj_usd.py extract` al
 - **ASAM OpenCRG** for road surface grids
 - **RFC 7396** for variant patches
 
+## What STJ is for, and what it is not
+
+STJ is the **shared starting point** for moving a track between simulators, not a one-click converter.
+
+```
+ game A ──import──┐                          ┌──export──▶ game B
+ game C ──import──┼──▶  STJ  ◀──▶ Blender ──┼──export──▶ game D
+ scans, GIS ──────┘   (the track, described) └──export──▶ game E
+```
+
+- **The framework does the mechanical work.** Read a track into STJ once, and each target game starts from a description that is already complete: geometry, surfaces and grip, timing, scenery, weather. That is most of the work, and it is the same work for every target.
+- **The last part is hand-tuned, in Blender.** Each game wants its own fine tuning at export, and no shared format changes that. The Blender mapping ([`docs/blender_mapping.md`](docs/blender_mapping.md)) keeps the STJ document and its rules inside the `.blend`, so you finish a track in one place.
+- **Engine-specific tuning stays in `x_<engine>`.** What a game needs and no other game does lives next to the shared data, so going back to the same engine loses nothing.
+- **It is a hub on purpose.** With N games, direct conversion between every pair needs about N×N converters, and a hub needs two per game. A hub also keeps the meaning: a surface is described once, relative to a reference road, and each target reads that one description, instead of one game's friction numbers being translated into another's.
+- **A direct converter for one pair can still do better for that pair.** Existing tools can serve as the export side of the hub: they read STJ (or the Blender scene) and write that game's format.
+
+What STJ does not promise:
+- **The same result everywhere.** Loose-surface feel, ground blending and AI racing lines mean different things in different engines. [Spec §14](spec/STJ_Spec.md#14-where-portability-is-a-lie) lists what carries over and what does not.
+- **No manual work.** The aim is that manual work is the game-specific finishing, not rebuilding the track.
+
+Planned: a per-target report from each exporter, saying what was converted, what was approximated and what needs a person. STJ already marks estimates (`_est`), what a conversion dropped (`provenance.lost`) and the validator's notes, which a report would build on.
+
 ## A first look
 
 This is the document inside a minimal track. A centerline and one surface make a valid, drivable track:
