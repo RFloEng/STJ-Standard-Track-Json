@@ -228,6 +228,12 @@ def check_geometry(ctx):
                 rep.error(f"{p}.lod.of", f"unknown mesh '{m['lod']['of']}'")
             elif m["lod"]["of"] == m["id"]:
                 rep.error(f"{p}.lod.of", "a mesh cannot be a LOD of itself")
+        for k in ("shadow_map", "specular_map"):
+            bk = (m.get("baked") or {}).get(k)
+            if bk and not ctx.file(bk["uri"]).is_file():
+                rep.warn(f"{p}.baked.{k}.uri", f"file not found: {bk['uri']}")
+        if m.get("reflective") and "collision" in roles:
+            rep.warn(f"{p}.reflective", "a collision mesh is a driving surface: put the mirror on a separate visual mesh")
         path = ctx.file(m["uri"])
         if not path.is_file():
             rep.warn(f"{p}.uri", f"file not found: {m['uri']}")
@@ -750,7 +756,10 @@ def check_environment(ctx):
     last = {}
     for i, entry in enumerate(env.get("weather_schedule", [])):
         p = f"environment.weather_schedule[{i}]"
-        check_weather(rep, f"{p}.weather", entry["weather"])
+        if "weather" in entry:
+            check_weather(rep, f"{p}.weather", entry["weather"])
+        if "variant" in entry and entry["variant"] not in {v["id"] for v in ctx.doc.get("variants", [])}:
+            rep.error(f"{p}.variant", f"unknown variant '{entry['variant']}'")
         if entry["time"] < last.get(entry["session"], -1):
             rep.error(f"{p}.time", f"times of session '{entry['session']}' must not decrease")
         last[entry["session"]] = entry["time"]
@@ -760,6 +769,15 @@ def check_environment(ctx):
     if sky.get("model") == "hdri" and "hdri" not in sky:
         rep.error("environment.sky", "model 'hdri' needs an hdri block")
     light = env.get("lighting") or {}
+    sun_dir = (light.get("sun") or {}).get("direction")
+    if sun_dir is not None:
+        norm = math.sqrt(sum(c * c for c in sun_dir))
+        if abs(norm - 1.0) > 0.01:
+            rep.warn("environment.lighting.sun.direction", f"length {norm:.3f}: a unit vector is expected")
+        elif sun_dir[2] < 0:
+            rep.note("environment.lighting.sun.direction", "points below the horizon: the sun is down")
+        if env.get("default_time") or geo:
+            rep.note("environment.lighting.sun.direction", "the sun is fixed: date, time and place no longer move it")
     if "usd_lights" in light and light["usd_lights"] not in ctx.meshes:
         rep.error("environment.lighting.usd_lights", f"unknown mesh '{light['usd_lights']}'")
     ids = [x["id"] for x in light.get("lights", [])]
@@ -802,6 +820,11 @@ def check_scenery(ctx):
             rep.note(f"scenery.prototypes.{pid}", "trunk collision without collision_radius")
         if pr.get("height", 0) > 150:
             rep.warn(f"scenery.prototypes.{pid}.height", f"{pr['height']} m: heights are in metres")
+        wind = pr.get("wind") or {}
+        if wind.get("amplitude", 0) > 3 or wind.get("frequency", 0) > 10:
+            rep.warn(f"scenery.prototypes.{pid}.wind", "amplitude is in metres and frequency in Hz: values this large look like a unit slip")
+        if ("weight_primvar" in wind or "phase_primvar" in wind) and "mesh" not in pr:
+            rep.note(f"scenery.prototypes.{pid}.wind", "per-vertex primvars need the prototype's USD mesh")
     for i, ins in enumerate(sc.get("instances", [])):
         p = f"scenery.instances[{i}]"
         proto(f"{p}.prototype", ins["prototype"])
@@ -1084,7 +1107,14 @@ def check_water(ctx):
     _dups(rep, "water.bodies", bodies, "water body")
     for i, b in enumerate(bodies):
         p = f"water.bodies[{i}]"
-        if b["kind"] in POLYGON_BODIES and "outline" not in b:
+        if b.get("physical") is False:
+            ignored = [k for k in ("depth", "density", "wading_drag", "flow_speed", "bed_surface", "drivable", "out_of_bounds")
+                       if k in b]
+            if ignored:
+                rep.note(p, f"physical is false: {', '.join(ignored)} ignored")
+            if "mesh" not in b:
+                rep.warn(p, "a visual-only body needs a mesh to draw")
+        if b["kind"] in POLYGON_BODIES and "outline" not in b and b.get("physical") is not False:
             rep.warn(p, f"a {b['kind']} is normally an outline with a level")
         if b["kind"] in PATH_BODIES and "path" not in b:
             rep.warn(p, f"a {b['kind']} is normally a path with widths and depths")
@@ -1252,7 +1282,12 @@ def check_animated(ctx):
         p = f"animated_objects[{i}]"
         tgt = a["target"]
         _mesh_has(ctx, rep, f"{p}.target", tgt["mesh_ref"], nodes=tgt["nodes"])
-        if a["time_range"][1] <= a["time_range"][0]:
+        if "time_range" not in a:
+            if not any(k.startswith("x_") for k in a):
+                rep.warn(p, "no time_range and no x_<engine> block: nothing says how it moves")
+            elif any(k in a for k in ("playback", "speed_by", "time_by")):
+                rep.note(p, "no time_range: playback, speed_by and time_by have no animation to act on")
+        elif a["time_range"][1] <= a["time_range"][0]:
             rep.error(f"{p}.time_range", "end must be after start")
         if "time_by" in a and "playback" in a:
             rep.note(f"{p}.playback", "ignored: time_by scrubs the animation")
@@ -1274,11 +1309,17 @@ def check_audio(ctx):
             rep.warn(p, "both position and path: a point source or a line source, not both")
         if e.get("ref_distance", 0) and e.get("max_distance") and e["ref_distance"] >= e["max_distance"]:
             rep.error(p, "ref_distance must be smaller than max_distance")
-        uri = e["sound"]["uri"]
-        if Path(uri).suffix.lower() not in AUDIO_EXT:
-            rep.warn(f"{p}.sound.uri", "use WAV, Ogg Vorbis or FLAC; engine sound banks go in x_<engine>")
-        if not ctx.file(uri).is_file():
-            rep.warn(f"{p}.sound.uri", f"file not found: {uri}")
+        uri = (e.get("sound") or {}).get("uri")
+        if uri is None:
+            if not any(k.startswith("x_") for k in e):
+                rep.error(p, "no sound file and no x_<engine> block: name a sound file or an engine sound event")
+            elif "position" in e and not e.get("max_distance"):
+                rep.note(p, "an engine event without max_distance: the radius where it fires is not stated")
+        else:
+            if Path(uri).suffix.lower() not in AUDIO_EXT:
+                rep.warn(f"{p}.sound.uri", "use WAV, Ogg Vorbis or FLAC; engine sound banks go in x_<engine>")
+            if not ctx.file(uri).is_file():
+                rep.warn(f"{p}.sound.uri", f"file not found: {uri}")
         if e.get("gain", 1) > 10:
             rep.warn(f"{p}.gain", f"{e['gain']}: gain is linear, not dB")
         cone = e.get("cone") or {}
@@ -1321,7 +1362,7 @@ def check_v02_extras(ctx):
     if season.get("snow_depth", 0) > 5:
         rep.warn("environment.season.snow_depth", f"{season['snow_depth']} m of snow: depths are in metres")
     for p, wx in [("environment.default_weather", env.get("default_weather") or {})] + \
-                 [(f"environment.weather_schedule[{i}].weather", e["weather"]) for i, e in enumerate(env.get("weather_schedule", []))]:
+                 [(f"environment.weather_schedule[{i}].weather", e["weather"]) for i, e in enumerate(env.get("weather_schedule", [])) if "weather" in e]:
         if wx.get("precipitation", 0) > 300:
             rep.warn(f"{p}.precipitation", f"{wx['precipitation']} mm/h is beyond any recorded rain rate")
     for i, lt in enumerate((env.get("lighting") or {}).get("lights", [])):
@@ -1459,21 +1500,32 @@ def check_chainage(ctx):
             rep.error(p, "must increase")
         elif ctx.line and abs(ctx.line.length - ctx.line.geometric_length) > 0.01 * ctx.line.geometric_length:
             rep.warn(p, f"chainage gives {ctx.line.length:.1f} m, the geometry {ctx.line.geometric_length:.1f} m: more than 1% apart")
-    tans = cl.get("tangents")
-    if tans is not None:
-        p = "reference.centerline.tangents"
-        if len(tans) != n:
-            rep.error(p, f"{len(tans)} tangents for {n} points")
-        elif ctx.line:
-            pts = ctx.line.points
-            for i in range(len(pts) - 1):
-                chord = math.dist(pts[i][:2], pts[i + 1][:2])
-                for j in (i, i + 1):
-                    mag = math.hypot(*ctx.line.tangents[j][:2])
-                    if chord > 1e-6 and not 0.3 <= mag / chord <= 3.0:
-                        rep.warn(f"{p}[{j % n}]", f"tangent length {mag:.1f} m against a {chord:.1f} m segment: "
-                                                  "tangents are dP/du over the segment, about its length")
-                        break
+    tans, t_out, t_in = cl.get("tangents"), cl.get("tangents_out"), cl.get("tangents_in")
+    if t_in is not None and t_out is None:
+        rep.error("reference.centerline.tangents_in", "tangents_in needs tangents_out")
+    if t_out is not None and tans is not None:
+        rep.note("reference.centerline.tangents", "tangents_out is given: it wins over tangents")
+    key_out = "tangents_out" if t_out is not None else "tangents"
+    outs = t_out if t_out is not None else tans
+    ins = t_in if (t_in is not None and t_out is not None) else outs
+    sized = True
+    for key, v in (("tangents", tans), ("tangents_out", t_out), ("tangents_in", t_in)):
+        if v is not None and len(v) != n:
+            rep.error(f"reference.centerline.{key}", f"{len(v)} tangents for {n} points")
+            sized = False
+    if outs is not None and sized and ctx.line and ctx.line.t_out:
+        pts = ctx.line.points
+        key_in = "tangents_in" if (t_in is not None and t_out is not None) else key_out
+        for i in range(len(pts) - 1):
+            chord = math.dist(pts[i][:2], pts[i + 1][:2])
+            if chord <= 1e-6:
+                continue
+            for key, vec, j in ((key_out, ctx.line.t_out[i], i), (key_in, ctx.line.t_in[i + 1], i + 1)):
+                if not 0.3 <= math.hypot(*vec[:2]) / chord <= 3.0:
+                    rep.warn(f"reference.centerline.{key}[{j % n}]",
+                             f"tangent length {math.hypot(*vec[:2]):.1f} m against a {chord:.1f} m segment: "
+                             "tangents are dP/du over the segment, about its length")
+                    break
 
 
 def check_surface_maps(ctx):

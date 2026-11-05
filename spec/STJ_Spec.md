@@ -416,11 +416,19 @@ STJ fixes simple, first-order **reference laws**. An engine may run its own, bet
   - The geometric length is checked against it (WARN beyond 1%).
   - On a closed line, the closing segment adds its geometric length.
 - **`tangents`**: one cubic Hermite tangent `dP/du` per point (m, u = 0…1 over a segment). The line passes through the points and is smooth, instead of a polyline.
+- **`tangents_out` and `tangents_in`** (optional): per-segment tangents, for sources that store one tangent for each segment (a game's driveline). Segment `i` starts with `tangents_out[i]` and ends with `tangents_in[i + 1]`; `tangents_in` defaults to `tangents_out`, and giving `tangents_in` without `tangents_out` is an error. When present they win over `tangents`. With one tangent per point, two neighbouring segments of 5 m and 23 m cannot both be reproduced; with these they can. A reversed layout swaps the two lists (`stj_core.reverse_reference`).
 - **Within a segment, s maps linearly onto u.** With straight segments and no chainage this is exact arc length. Otherwise it is the stored-distance interpolation that drivelines use.
 
 ### 7.2 Geometry
 
 `geometry.meshes[]`: `{id, uri, roles: ["visual" | "collision" | "lod"], lod {of, level, switch_distance}}`. `geometry.terrain` (v0.2) is §7.4. A mesh may be visual and collision at once. glTF node names that STJ tools generate or recognise follow SVJ's convention with an STJ prefix: `STJ::<category>::<id>`, with categories `collision`, `surface` (material names), `reference`, `timing`, `grid`, `pit`, `spawn`, `light`, `scatter`, `instance`, `helper`, `lod`.
+
+**Mesh hints.**
+- `reflective: true` marks a visual mesh that mirrors its surroundings: a mirror, glass or a decorative water face. It is not a driving surface, so the validator warns when it also has the `collision` role.
+- `baked {vertex_colour, shadow_map, specular_map}` says which lighting is stored in the mesh or beside it, so an engine can use it or leave it out instead of multiplying it blindly:
+  - `vertex_colour {primvar, role}`: the vertex colour primvar (such as `displayColor`) and what it holds: `light` (baked illumination, the default), `occlusion` or `tint` (a colour variation that is not lighting).
+  - `shadow_map {uri, texcoord}`: baked shadows or a lightmap, read through that UV set.
+  - `specular_map {uri, texcoord}`: baked specular highlights.
 
 `geometry.crg[]`: OpenCRG files placed on the reference line with the attributes of OpenDRIVE `<surface><CRG>`: `s_start`, `s_end`, `mode` (`attached`, `attached0`, `genuine`, `global`), `purpose` (`elevation`, `friction`), `t_offset`, `z_offset`, `z_scale`.
 
@@ -487,6 +495,7 @@ Top-level `water` holds `sea_level` (z of an infinite plane), `bodies[]`, and th
 | Key | Meaning |
 |---|---|
 | `kind` | `sea`, `lake`, `pond`, `river`, `stream`, `ford`, `puddle`, `pool`, `other` |
+| `physical` | `false`: a visual water surface only. Nothing floats, drags or drowns, and `depth`, `density` and `wading_drag` are ignored. It needs a `mesh` to draw, and an outline or path is optional. A game's decorative water and reflection faces use this. Default `true`. |
 | `outline` + `level` | Polygon bodies: `[[x, y], …]` and the water surface z |
 | `path` | Path bodies (rivers, streams, fords): `[[x, y, z, width, depth], …]`; z is the water surface, flow runs along the path |
 | `depth`, `density` | m, kg/m³ (default 1000). Omit `depth` where the bed is terrain or a mesh. |
@@ -566,6 +575,7 @@ Each engine has an optimised way to draw grass, trees, crowds and sky: GPU-insta
 ### 8.2 `scenery`
 
 - `prototypes` (by id): `class` (`tree`, `bush`, `grass`, `groundcover`, `flowers`, `crop`, `rock`, `building`, `fence`, `barrier`, `tyre_wall`, `sign`, `pole`, `spectators`, `prop`, `other`), `species` (botanical name), `height`, `radius`, `collision` (`none`, `trunk`, `box`, `mesh`), `collision_radius`, `breakable`, `mesh {mesh_ref, node}`, `x_<engine>`.
+- `prototypes[].wind {amplitude, frequency, weight_primvar, phase_primvar}`: wind-driven sway of trees, bushes and cards. `amplitude` (m) is the sway of the free end in a reference wind and `frequency` is in Hz; the engine scales both with the wind speed of the weather. The two primvars (names starting `stj_`) are float vertex primvars on the prototype's USD mesh: the sway weight per vertex (0 at the base, 1 at the free end) and a phase per vertex in turns, so the parts of one object do not move together. Games that store sway per vertex (billboards and trees in RBR) map to these. The alpha-test cutoff of such cards is a material property and stays in USD (`opacityThreshold`).
 - `instances[]`: `{prototype, transforms: [[x, y, z, heading, scale?], …]}`, upright in Z, or `{prototype, gltf {mesh_ref, node}}` for a node carrying `EXT_mesh_gpu_instancing`. Blender exports linked duplicates under one empty that way.
 - `scatter[]`: `{id, prototypes [{prototype, weight}], density (per m²), area, exclude_surfaces, min_spacing, scale_range, align_to_normal, seed, cull_distance, x_<engine>}`. `area` is the intersection of the given keys:
   - `surfaces` (grow on these surfaces; how BeamNG groundcover, UE landscape grass and CSP grass attach)
@@ -584,7 +594,9 @@ Since v0.2, instance sets and scatter layers take `when` (a condition, §11.1), 
 The sun, moon and stars follow from `geo_reference`, `north_heading`, `timezone` and the date and time. STJ does not store their positions.
 
 - `environment.sky`: `model` (`physical` = single or multiple scattering atmosphere, `preetham`, `hosek_wilkie`, `hdri`, `engine_default`), `turbidity`, `hdri {uri, rotation, intensity}`, `clouds {coverage, kind}`, `fog {visibility, height_falloff, color}`. The Blender 5.2 Sky Texture types map directly.
-- `environment.lighting`: `sun {illuminance, color_temperature}`, `lights[]` `{id, kind, type: point | spot, position, direction, intensity (cd), color_temperature, range, inner/outer_cone_angle, schedule: always | night | event}`, or `gltf_lights` naming a glTF mesh entry whose file carries `KHR_lights_punctual` (Blender exports its lights that way).
+- `environment.lighting`: `sun {illuminance, color_temperature, color, direction}`, `ambient {color, intensity}`, `lights[]` `{id, kind, type: point | spot, position, direction, intensity (cd), color_temperature, range, inner/outer_cone_angle, schedule: always | night | event}`, or `gltf_lights` naming a glTF mesh entry whose file carries `KHR_lights_punctual` (Blender exports its lights that way).
+  - **A fixed lighting rig.** Some games store a sun direction and ambient and diffuse colours for each weather instead of computing the sun. `sun.direction` is a unit vector from the ground towards the sun, in STJ world axes. When it is present the sun is fixed there: date, time and place no longer move it, and the `sun_elevation` signal follows from the vector. `sun.color` (linear RGB) wins over `color_temperature`. `ambient.color` is linear RGB and `intensity` a multiplier. Without them the sky model supplies both.
+  - Light that changes with the weather (fog colour, ambient, sun) goes in the weather's variant (§3.6, §11).
 - Since v0.2, lights also take `when` (on while true) and `intensity_by` (a multiplier).
   - `schedule` stays as a shorthand: `night` means `sun_elevation < 0`, `always` means no condition, and `event` means the engine decides. `when` wins over `schedule`.
   - Floodlights that switch on below 3° of sun elevation live in the base file, so a night variant only moves the clock.
@@ -615,7 +627,7 @@ Values are for scale 1. A scaled physical instance is a WARN, because engines di
 
 | Key | Meaning |
 |---|---|
-| `id`, `kind` | `flag`, `windmill`, `gate`, `barrier_arm`, `crowd`, `vehicle`, `aircraft`, `scoreboard`, `machinery`, `other`; lets an engine substitute its own system |
+| `id`, `kind` | `flag`, `clock`, `windmill`, `gate`, `barrier_arm`, `crowd`, `vehicle`, `aircraft`, `scoreboard`, `machinery`, `other`; lets an engine substitute its own system |
 | `target {mesh_ref, nodes[]}` | glTF nodes that move |
 | `animation` | Name of a **glTF animation** in that file (TRS and morph weights; skinning allowed). Engine files (AC `.ksanim`, rF2 `.ANIM`) stay in `x_<engine>`. |
 | `playback` | `loop`, `ping_pong`, `once`, `hold` |
@@ -626,11 +638,14 @@ Values are for scale 1. A scaled physical instance is a WARN, because engines di
 
 Blender actions export as glTF animations under their action name (verified in Blender 5.2).
 
+**Engine-driven objects.** Some games name an animated object (a start clock, a flag) and let their own script move it, with no keyframes stored. Such an object has a `kind` and a `target` but no `time_range`; the script name stays in `x_<engine>` (`x_rbr: {script: …}`), because it means nothing to another engine, while the `kind` is what another engine can act on. The validator warns when an object has neither a `time_range` nor an `x_<engine>` block, since nothing then says how it moves.
+
 ### 8.6 Audio (v0.2)
 
 Top-level `audio`:
 - `emitters[]`: `{id, kind, position | path, sound {uri}, gain, ref_distance, max_distance, rolloff, loop, cone {heading, pitch, inner_angle, outer_angle, outer_gain}, when, gain_by}`.
   - `path` makes a line source (grandstands, rivers).
+  - **Engine sound events.** An emitter without `sound` names an event from the game's own sound banks in `x_<engine>`, because a converter does not extract a game's audio. It then needs an `x_<engine>` block (the validator errors otherwise), and `max_distance` is the radius of the sphere where the event fires.
   - Distance parameters follow the glTF audio-emitter drafts (KHR_audio_emitter); STJ does not depend on them.
   - `gain` is linear.
   - `kind` is `ambient`, `crowd`, `pa`, `music`, `birds`, `water`, `wind`, `machinery`, `generator` or `other`.
@@ -808,7 +823,7 @@ Post-processing, shake and lens effects stay in `x_<engine>`.
 
 ## 11. Environment
 
-`geo_reference {proj, latitude, longitude, altitude, vertical_datum}`, `north_heading`, `origin_offset`, `timezone` (IANA), `default_time {date, local_time}`, `sky`, `lighting` (§8.3), `default_weather {condition, air_temperature, track_temperature, relative_humidity, wind_speed, wind_from_heading, water_depth, visibility}`, and `weather_schedule[] {session, time, weather}`: weather changes during a session, applied from `time` seconds after its start, as rFactor 2 `.wet` schedules. `session` is `any`, `practice`, `qualifying`, `warmup`, `race` or `stage`. Wind direction is where the wind comes **from**, in rad CCW from +X.
+`geo_reference {proj, latitude, longitude, altitude, vertical_datum}`, `north_heading`, `origin_offset`, `timezone` (IANA), `default_time {date, local_time}`, `sky`, `lighting` (§8.3), `default_weather {condition, air_temperature, track_temperature, relative_humidity, wind_speed, wind_from_heading, water_depth, visibility}`, and `weather_schedule[] {session, time, weather | variant}`: weather changes during a session, applied from `time` seconds after its start, as rFactor 2 `.wet` schedules. An entry may name a `variant` (§3.6) instead of, or together with, a `weather`: the sky, fog and lighting that go with that weather then change at the same moment. `session` is `any`, `practice`, `qualifying`, `warmup`, `race` or `stage`. Wind direction is where the wind comes **from**, in rad CCW from +X.
 
 Since v0.2:
 - `environment.season {name, snow_cover, snow_depth, leaf_fraction, ground}` is the static season state. `name` is `spring`, `summer`, `autumn` or `winter`; `ground` is `thawed`, `frozen` or `waterlogged`. It sets the defaults of the `snow_cover` and `leaf_fraction` signals.

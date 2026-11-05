@@ -343,7 +343,19 @@
           "type": "array",
           "items": { "$ref": "#/definitions/vec3" },
           "minItems": 2,
-          "description": "Cubic Hermite tangents dP/du per point (m), u = 0..1 over each segment; the curve passes through the points. Absent: straight segments."
+          "description": "Cubic Hermite tangents dP/du per point (m), u = 0..1 over each segment; the curve passes through the points. Shared by the two segments around a point. Absent: straight segments."
+        },
+        "tangents_out": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/vec3" },
+          "minItems": 2,
+          "description": "Per-segment Hermite tangents: segment i starts with tangents_out[i] (dP/du, m). Use when a game stores one tangent per segment, so the two segments around a point differ. Wins over tangents."
+        },
+        "tangents_in": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/vec3" },
+          "minItems": 2,
+          "description": "Segment i ends with tangents_in[i + 1]. Defaults to tangents_out. Needs tangents_out."
         }
       }
     },
@@ -452,6 +464,51 @@
         "chunk": {
           "$ref": "#/definitions/id",
           "description": "Chunk or tile whose local origin this mesh uses (spec §7.6)."
+        },
+        "reflective": {
+          "type": "boolean",
+          "default": false,
+          "description": "A visual mesh that mirrors its surroundings (a mirror, glass, a decorative water face). Not a driving surface (spec §7.2)."
+        },
+        "baked": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "description": "Lighting stored in the mesh or beside it, so an engine can use it or leave it out instead of multiplying it blindly (spec §7.2).",
+          "properties": {
+            "vertex_colour": {
+              "type": "object",
+              "required": ["primvar"],
+              "additionalProperties": false,
+              "patternProperties": { "^_": {} },
+              "properties": {
+                "primvar": { "type": "string", "description": "Vertex colour primvar, such as displayColor." },
+                "role": { "type": "string", "enum": ["light", "occlusion", "tint"], "default": "light", "description": "light: baked illumination. occlusion: baked ambient occlusion. tint: a colour variation, not lighting." }
+              }
+            },
+            "shadow_map": {
+              "type": "object",
+              "required": ["uri"],
+              "additionalProperties": false,
+              "patternProperties": { "^_": {} },
+              "properties": {
+                "uri": { "$ref": "#/definitions/relative_uri" },
+                "texcoord": { "$ref": "#/definitions/texcoord" }
+              },
+              "description": "Baked shadows or a lightmap, read through texcoord."
+            },
+            "specular_map": {
+              "type": "object",
+              "required": ["uri"],
+              "additionalProperties": false,
+              "patternProperties": { "^_": {} },
+              "properties": {
+                "uri": { "$ref": "#/definitions/relative_uri" },
+                "texcoord": { "$ref": "#/definitions/texcoord" }
+              },
+              "description": "Baked specular highlights, read through texcoord."
+            }
+          }
         }
       }
     },
@@ -1656,13 +1713,15 @@
           "description": "Weather changes during sessions, as rFactor 2 .wet schedules: each entry applies from `time` seconds after the session start.",
           "items": {
             "type": "object",
-            "required": ["session", "time", "weather"],
+            "required": ["session", "time"],
+            "anyOf": [{"required": ["weather"]}, {"required": ["variant"]}],
             "additionalProperties": false,
             "patternProperties": { "^x_": {}, "^_": {} },
             "properties": {
               "session": { "type": "string", "enum": ["any", "practice", "qualifying", "warmup", "race", "stage"] },
               "time": { "type": "number", "minimum": 0, "description": "Seconds after the session start." },
-              "weather": { "$ref": "#/definitions/weather" }
+              "weather": { "$ref": "#/definitions/weather" },
+              "variant": { "$ref": "#/definitions/id", "description": "A variants[] entry applied from this time on: sky, fog and lighting that change with the weather (spec §11)." }
             }
           }
         },
@@ -1836,8 +1895,35 @@
               "minimum": 0,
               "description": "lux at noon in clear sky; engines usually derive it."
             },
-            "color_temperature": { "type": "number", "exclusiveMinimum": 0, "description": "K." }
+            "color_temperature": { "type": "number", "exclusiveMinimum": 0, "description": "K." },
+            "color": {
+              "type": "array",
+              "items": { "type": "number", "minimum": 0 },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Linear RGB of the sunlight, for games that store a colour instead of a temperature. Wins over color_temperature."
+            },
+            "direction": {
+              "$ref": "#/definitions/vec3",
+              "description": "Unit vector from the ground towards the sun, in STJ world axes (Z up). Present: the sun is fixed there and does not follow date and time (a game with a fixed lighting rig); the sun_elevation signal follows from it. Absent: the sun follows geo_reference, north_heading and the time."
+            }
           }
+        },
+        "ambient": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "color": {
+              "type": "array",
+              "items": { "type": "number", "minimum": 0 },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Linear RGB of the light that reaches everything from all sides."
+            },
+            "intensity": { "type": "number", "minimum": 0, "default": 1, "description": "Multiplier on color." }
+          },
+          "description": "Ambient light. The sky model supplies it when absent; give it for games with a fixed rig (spec §8.3)."
         },
         "lights": {
           "type": "array",
@@ -1935,6 +2021,18 @@
         },
         "height": { "type": "number", "exclusiveMinimum": 0, "description": "Typical height (m)." },
         "radius": { "type": "number", "exclusiveMinimum": 0, "description": "Crown or footprint radius (m)." },
+        "wind": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "amplitude": { "type": "number", "minimum": 0, "description": "Sway of the free end in a reference wind (m)." },
+            "frequency": { "type": "number", "exclusiveMinimum": 0, "description": "Hz." },
+            "weight_primvar": { "type": "string", "pattern": "^stj_", "description": "Float vertex primvar on the prototype's USD mesh scaling the sway per vertex (0 at the base, 1 at the free end)." },
+            "phase_primvar": { "type": "string", "pattern": "^stj_", "description": "Float vertex primvar with the phase per vertex (turns), so parts of one object do not move together." }
+          },
+          "description": "Wind-driven sway of vegetation and cards (spec §8.2). The engine scales it with the wind speed of the weather."
+        },
         "collision": { "type": "string", "enum": ["none", "trunk", "box", "mesh"], "description": "What a vehicle hits." },
         "collision_radius": { "type": "number", "exclusiveMinimum": 0, "description": "Trunk or pole radius (m)." },
         "breakable": { "type": "boolean" },
@@ -2404,12 +2502,17 @@
     "water_body": {
       "type": "object",
       "required": ["id", "kind"],
-      "anyOf": [{"required": ["outline", "level"]}, {"required": ["path"]}],
+      "anyOf": [{"required": ["outline", "level"]}, {"required": ["path"]}, {"required": ["mesh"]}],
       "additionalProperties": false,
       "patternProperties": { "^x_": {}, "^_": {} },
       "properties": {
         "id": { "$ref": "#/definitions/id" },
         "name": { "type": "string" },
+        "physical": {
+          "type": "boolean",
+          "default": true,
+          "description": "false: a visual water surface only. Nothing floats, drags or drowns, and depth, density and wading_drag are ignored (a game's decorative water, spec §7.5)."
+        },
         "kind": {
           "type": "string",
           "enum": ["sea", "lake", "pond", "river", "stream", "ford", "puddle", "pool", "other"]
@@ -2547,7 +2650,8 @@
     },
     "animated_object": {
       "type": "object",
-      "required": ["id", "target", "time_range"],
+      "required": ["id", "target"],
+      "anyOf": [{"required": ["time_range"]}, {"required": ["kind"]}],
       "additionalProperties": false,
       "patternProperties": { "^x_": {}, "^_": {} },
       "properties": {
@@ -2555,8 +2659,10 @@
         "name": { "type": "string" },
         "kind": {
           "type": "string",
+          "description": "What the object is. Without time_range the engine drives it (a start clock, a flag a script raises): the kind is what another engine can act on, and the original script name stays in x_<engine> (spec §8.5).",
           "enum": [
             "flag",
+            "clock",
             "windmill",
             "gate",
             "barrier_arm",
@@ -2614,7 +2720,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "sound"],
+            "required": ["id"],
             "anyOf": [{"required": ["position"]}, {"required": ["path"]}],
             "additionalProperties": false,
             "patternProperties": { "^x_": {}, "^_": {} },
@@ -2639,7 +2745,7 @@
               "path": { "$ref": "#/definitions/polyline", "description": "Line source (grandstands, rivers)." },
               "sound": {
                 "type": "object",
-                "description": "WAV, Ogg Vorbis or FLAC made or licensed by the author.",
+                "description": "WAV, Ogg Vorbis or FLAC made or licensed by the author. An emitter without a sound file names an engine sound event in its x_<engine> block instead (spec §8.6); its max_distance is the radius of the sphere where the event fires.",
                 "required": ["uri"],
                 "additionalProperties": false,
                 "properties": { "uri": {"$ref": "#/definitions/relative_uri"} },

@@ -113,15 +113,27 @@ class ReferenceLine:
 
     SAMPLES = 32
 
-    def __init__(self, points, closed=False, chainage=None, tangents=None):
+    def __init__(self, points, closed=False, chainage=None, tangents=None, tangents_out=None, tangents_in=None):
+        """tangents: one per point, shared by the two segments around it. tangents_out / tangents_in: a segment
+        starts with tangents_out[i] and ends with tangents_in[i + 1]; tangents_in defaults to tangents_out, and
+        either wins over tangents."""
         pts = [tuple(float(c) for c in p) for p in points]
-        tans = [tuple(float(c) for c in t) for t in tangents] if tangents else None
+
+        def vecs(v):
+            return [tuple(float(c) for c in t) for t in v] if v else None
+        t_out = vecs(tangents_out) or vecs(tangents)
+        t_in = vecs(tangents_in) or t_out
         if closed:
             pts = pts + [pts[0]]
-            if tans:
-                tans = tans + [tans[0]]
+            if t_out:
+                t_out = t_out + [t_out[0]]
+            if t_in:
+                t_in = t_in + [t_in[0]]
+        tans = t_out
         self.points = pts
-        self.tangents = tans
+        self.tangents = tans            # the tangent at the start of each segment (None: straight segments)
+        self.t_out = t_out
+        self.t_in = t_in
         self.closed = bool(closed)
         self.geo = [0.0]
         for i in range(len(pts) - 1):
@@ -149,7 +161,7 @@ class ReferenceLine:
         a, b = self.points[i], self.points[i + 1]
         if not self.tangents:
             return tuple(a[k] + u * (b[k] - a[k]) for k in range(3))
-        ta, tb = self.tangents[i], self.tangents[i + 1]
+        ta, tb = self.t_out[i], self.t_in[i + 1]
         u2, u3 = u * u, u * u * u
         h = (2 * u3 - 3 * u2 + 1, u3 - 2 * u2 + u, -2 * u3 + 3 * u2, u3 - u2)
         return tuple(h[0] * a[k] + h[1] * ta[k] + h[2] * b[k] + h[3] * tb[k] for k in range(3))
@@ -158,7 +170,7 @@ class ReferenceLine:
         a, b = self.points[i], self.points[i + 1]
         if not self.tangents:
             return (b[0] - a[0], b[1] - a[1])
-        ta, tb = self.tangents[i], self.tangents[i + 1]
+        ta, tb = self.t_out[i], self.t_in[i + 1]
         u2 = u * u
         h = (6 * u2 - 6 * u, 3 * u2 - 4 * u + 1, -6 * u2 + 6 * u, 3 * u2 - 2 * u)
         return tuple(h[0] * a[k] + h[1] * ta[k] + h[2] * b[k] + h[3] * tb[k] for k in range(2))
@@ -232,11 +244,16 @@ def reference_line(doc):
     if not isinstance(cl, dict) or not isinstance(cl.get("points"), list) or len(cl["points"]) < 2:
         return None
     n = len(cl["points"])
-    ch, tan = cl.get("chainage"), cl.get("tangents")
+    ch = cl.get("chainage")
     # malformed chainage or tangents are reported by the validator; the line falls back to the geometry
     ch = ch if isinstance(ch, list) and len(ch) == n and all(b > a for a, b in zip(ch, ch[1:])) else None
-    tan = tan if isinstance(tan, list) and len(tan) == n else None
-    return ReferenceLine(cl["points"], cl.get("closed", False), ch, tan)
+
+    def per_point(key):
+        v = cl.get(key)
+        return v if isinstance(v, list) and len(v) == n else None
+    t_out = per_point("tangents_out")
+    t_in = per_point("tangents_in") if t_out else None
+    return ReferenceLine(cl["points"], cl.get("closed", False), ch, per_point("tangents"), t_out, t_in)
 
 
 def half_widths(doc, s):
@@ -268,9 +285,15 @@ def reverse_reference(ref):
         length = reference_line({"reference": {"centerline": cl}}).length
         # a closed line keeps its first point, so s' = 0 stays where s = 0 was
         cl["points"] = [pts[0]] + pts[:0:-1] if cl.get("closed") else pts[::-1]
+        def flip(v):
+            tan = [[-c for c in t] for t in v]
+            return [tan[0]] + tan[:0:-1] if cl.get("closed") else tan[::-1]
         if "tangents" in cl:
-            tan = [[-c for c in v] for v in cl["tangents"]]
-            cl["tangents"] = [tan[0]] + tan[:0:-1] if cl.get("closed") else tan[::-1]
+            cl["tangents"] = flip(cl["tangents"])
+        if "tangents_out" in cl:
+            # driven backwards a segment starts where it ended: what left a point now arrives at it
+            out_, in_ = cl["tangents_out"], cl.get("tangents_in", cl["tangents_out"])
+            cl["tangents_out"], cl["tangents_in"] = flip(in_), flip(out_)
         if "chainage" in cl and len(cl["chainage"]) == len(pts):
             ch = cl["chainage"]
             cl["chainage"] = [0.0] + [length - c for c in ch[:0:-1]] if cl.get("closed") else [length - c for c in ch[::-1]]

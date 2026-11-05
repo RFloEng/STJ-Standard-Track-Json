@@ -1108,9 +1108,17 @@ class OpenUsd(unittest.TestCase):
         self.doc["variants"][0]["usd_variants"] = {"stj_condition": "snow"}
         self.assertFinding(self.check(self.doc), "ERROR", "variant 'snow' not in set 'stj_condition'")
 
-    def test_target_needs_time_range(self):
+    def test_target_needs_time_range_or_kind(self):
         del self.doc["animated_objects"][0]["time_range"]
-        self.assertFinding(self.check(self.doc), "ERROR", "'time_range' is a required property")
+        del self.doc["animated_objects"][0]["kind"]
+        self.assertFinding(self.check(self.doc), "ERROR", "is not valid under any of the given schemas")
+
+    def test_engine_driven_object_needs_an_engine_block(self):
+        del self.doc["animated_objects"][0]["time_range"]
+        self.doc["animated_objects"][0]["kind"] = "clock"
+        self.assertFinding(self.check(self.doc), "WARN", "nothing says how it moves")
+        self.doc["animated_objects"][0]["x_rbr"] = {"script": "StartClock"}
+        self.assertFalse(any("nothing says" in m for m in messages(self.check(self.doc), "WARN")))
 
     def test_physics_disagreement(self):
         self.doc["scenery"]["prototypes"]["cone"]["physics"]["mass"] = 6.0
@@ -1140,6 +1148,88 @@ class OpenUsd(unittest.TestCase):
                 self.assertEqual(info.compress_type, zipfile.ZIP_STORED)
                 name_len, extra_len = struct.unpack_from("<HH", raw, info.header_offset + 26)
                 self.assertEqual((info.header_offset + 30 + name_len + extra_len) % 64, 0, info.filename)
+
+
+
+class RbrGaps(unittest.TestCase):
+    """Additions from the RBR conversion (tangents, fixed lighting, engine-driven things)."""
+
+    def setUp(self):
+        self.doc = core.load_document(STAGE)
+
+    def finding(self, level, fragment):
+        found = messages(run(self.doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def test_per_segment_tangents(self):
+        # two segments of different length with their own tangents meeting at a point
+        line = core.ReferenceLine([[0, 0, 0], [10, 0, 0], [33, 0, 0]],
+                                  tangents_out=[[10, 0, 0], [23, 0, 0], [23, 0, 0]],
+                                  tangents_in=[[10, 0, 0], [10, 0, 0], [23, 0, 0]])
+        self.assertAlmostEqual(line.frame(5.0)[0], 5.0)
+        self.assertAlmostEqual(line.frame(21.5)[0], 21.5)
+        self.assertAlmostEqual(line.length, 33.0)
+
+    def test_shared_tangent_cannot_fit_both_lengths(self):
+        # the old single tangent per point is wrong for one of the two segments: the curve bulges
+        line = core.ReferenceLine([[0, 0, 0], [10, 0, 0], [33, 0, 0]],
+                                  tangents=[[10, 0, 0], [16.5, 0, 0], [23, 0, 0]])
+        self.assertNotAlmostEqual(line.frame(2.5)[0], 2.5, places=2)
+
+    def test_tangents_in_defaults_to_out(self):
+        line = core.ReferenceLine([[0, 0, 0], [10, 0, 0]], tangents_out=[[10, 0, 0], [10, 0, 0]])
+        self.assertEqual(line.t_in, line.t_out)
+
+    def test_reverse_swaps_in_and_out(self):
+        ref = {"centerline": {"points": [[0, 0, 0], [10, 0, 0], [33, 0, 0]],
+                              "tangents_out": [[10, 0, 0], [23, 0, 0], [23, 0, 0]],
+                              "tangents_in": [[10, 0, 0], [10, 0, 0], [23, 0, 0]]}}
+        rev = core.reverse_reference(ref)["centerline"]
+        self.assertEqual(rev["tangents_out"][0], [-23, 0, 0])      # first segment of the reversed line is the 23 m one
+        self.assertEqual(rev["tangents_out"][1], [-10, 0, 0])
+        line = core.reference_line({"reference": core.reverse_reference(ref)})
+        self.assertAlmostEqual(line.length, 33.0)
+
+    def test_tangents_in_needs_out(self):
+        self.doc["reference"]["centerline"]["tangents_in"] = self.doc["reference"]["centerline"]["points"]
+        self.finding("ERROR", "tangents_in needs tangents_out")
+
+    def test_sun_direction_checks(self):
+        self.doc["environment"]["lighting"] = {"sun": {"direction": [0, 0, 2]}}
+        self.finding("WARN", "a unit vector is expected")
+        self.doc["environment"]["lighting"] = {"sun": {"direction": [0.6, 0, -0.8]}}
+        self.finding("NOTE", "below the horizon")
+
+    def test_ambient_and_schedule_variant(self):
+        self.doc["environment"]["lighting"] = {"ambient": {"color": [0.5, 0.5, 0.5]}}
+        self.doc["environment"]["weather_schedule"] = [{"session": "race", "time": 0, "variant": "no_such"}]
+        self.finding("ERROR", "unknown variant 'no_such'")
+
+    def test_emitter_without_a_sound_file(self):
+        self.doc.setdefault("audio", {})["emitters"] = [{"id": "start_voice", "position": [0, 0, 0]}]
+        self.finding("ERROR", "no sound file and no x_<engine> block")
+        self.doc["audio"]["emitters"][0]["x_rbr"] = {"sound_event": "start_countdown"}
+        self.assertFalse(any("no sound file" in m for m in messages(run(self.doc), "ERROR")))
+
+    def test_visual_water_needs_a_mesh(self):
+        self.doc.setdefault("water", {})["bodies"] = [{"id": "deco", "kind": "lake", "physical": False,
+                                                       "outline": [[0, 0], [10, 0], [0, 10]], "level": 0, "depth": 2}]
+        self.finding("WARN", "needs a mesh to draw")
+        self.finding("NOTE", "physical is false")
+
+    def test_baked_lighting_and_reflective(self):
+        mesh = self.doc["geometry"]["meshes"][0]
+        mesh["baked"] = {"shadow_map": {"uri": "missing_shadow.png", "texcoord": "st"},
+                         "vertex_colour": {"primvar": "displayColor", "role": "light"}}
+        self.finding("WARN", "missing_shadow.png")
+        mesh["roles"] = ["collision"]
+        mesh["reflective"] = True
+        self.finding("WARN", "put the mirror on a separate visual mesh")
+
+    def test_wind_values(self):
+        proto = next(iter(self.doc["scenery"]["prototypes"].values()))
+        proto["wind"] = {"amplitude": 40, "frequency": 2}
+        self.finding("WARN", "unit slip")
 
 
 if __name__ == "__main__":

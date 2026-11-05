@@ -33,6 +33,13 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - `blend.method: "mask"` with `blend.mask` and `softness`: a tiling blend mask for each layer after the first, provisional until fitted to an engine
   - `macro` kind `wetness`: where the ground shows water, scaled by the `wetness` signal
   - validator checks; `stj_core.ground_blend` (mask) and `wet_amount`; `tools/ground_bake.py` bakes the mask blend and skips wetness maps
+- **RBR conversion gaps** (`proposals/stj_rbr_gaps_proposal.md`; additive):
+  - `reference.centerline.tangents_out` and `tangents_in`: one tangent per segment (§7.1)
+  - `lighting.ambient`, `sun.direction` (a fixed sun) and `sun.color` (§8.3); `weather_schedule[].variant`
+  - animated objects without keyframes (`kind` `clock`, engine script in `x_<engine>`, §8.5); emitters with an engine sound event instead of a file (§8.6)
+  - `prototypes[].wind` (§8.2); `water.bodies[].physical: false` (§7.5); `meshes[].reflective` and `baked` (§7.2)
+  - validator checks for all of them; `stj_core.ReferenceLine` takes per-segment tangents
+  - open: asset manifest with licences, and LOD ranges for prototypes
 
 ## 0.2 (draft) — 2026-11-02
 
