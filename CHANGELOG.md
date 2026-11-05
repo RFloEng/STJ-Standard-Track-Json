@@ -40,6 +40,12 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - `prototypes[].wind` (§8.2); `water.bodies[].physical: false` (§7.5); `meshes[].reflective` and `baked` (§7.2)
   - validator checks for all of them; `stj_core.ReferenceLine` takes per-segment tangents
   - open: asset manifest with licences, and LOD ranges for prototypes
+- **Scan sources** (`proposals/stj_lidar_proposal.md`; additive):
+  - `provenance.scan.sources[]`: the survey a track came from (format, CRS, datum, density, accuracy, licence)
+  - `derived {source, product, classes, cell_size, method, void_fill}` on the heightmap, OpenCRG, meshes, instances and scatter (§5.2)
+  - `heightmap.nodata` and no-data cells in `stj_core.Terrain` (§7.4)
+  - validator checks, including a NOTE for a cell finer than the point density supports
+  - `tools/las_dtm.py`: LAS (and, with `laspy`, LAZ and COPC) to a heightmap
 
 ## 0.2 (draft) — 2026-11-02
 

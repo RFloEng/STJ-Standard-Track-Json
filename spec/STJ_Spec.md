@@ -223,10 +223,28 @@ Pit count and length are not repeated: they follow from `race.pit_boxes` and the
 | `description`, `created`, `author` | no | as SVJ |
 | `source_format` | no | Original format if converted (`"Assetto Corsa"`, `"RBR/BTB"`, `"Blender"`), null for native |
 | `licence` | no | `spdx`, `holder`, `url`, `redistributable`, `notes` |
-| `provenance` | no | `type` (`original`, `scanned`, `converted`, `mixed`, `unknown`), `detail`, `confidence`, `scan {method, date, accuracy, operator}`, `converted_from [{format, tool, tool_version, source, date, lost[]}]` |
+| `provenance` | no | `type` (`original`, `scanned`, `converted`, `mixed`, `unknown`), `detail`, `confidence`, `scan {method, date, accuracy, operator, sources[]}`, `converted_from [{format, tool, tool_version, source, date, lost[]}]` |
 | `authoring_source` | no | `{uri, tool, tool_version}`: the editable file the package was made from (§3.4). Not shipped is fine (NOTE). |
 
 `provenance` plays the role of SVJ's `data_origin`, extended for tracks: a scan has a method and an accuracy, and a conversion has a chain. Its `lost` list records what each step dropped. **`licence.redistributable: false`** marks a file converted from content the user may use but not share. Tools SHOULD refuse to publish or upload such a file.
+
+**Scans (`provenance.scan.sources[]` and `derived`).** Many tracks start as a LiDAR, photogrammetry or GNSS survey. STJ does not carry the raw cloud: it is hundreds of millions of points and no simulator renders it. What belongs in the file is what engines can use (the heightmap, the OpenCRG surface, the instances) and a record of where it came from, so it can be made again at a better resolution (`proposals/stj_lidar_proposal.md`).
+
+- A **source** is `{id, format (las | laz | copc | e57 | ept | other), uri?, reference?, crs, vertical_datum, date, point_density (points per m²), accuracy {horizontal, vertical}, classified, licence}`. The survey's `crs` and `vertical_datum` are its own; the track's projection stays `environment.geo_reference`. `uri` is given only when the cloud ships with the track, which is rare; otherwise `reference` says where it came from. `licence` records the survey's licence and is not judged.
+- A product made from a scan carries **`derived {source, product, classes, cell_size, method, void_fill}`**: on `geometry.terrain.heightmap`, `geometry.crg[]`, `geometry.meshes[]`, `scenery.instances[]` and `scenery.scatter[]`. `product` is `dtm` (bare ground), `dsm` (top surface), `chm` (canopy height), `road_surface` or `other`. `classes` are ASPRS classification codes, and the usual ones map as follows:
+
+| ASPRS class | Goes into |
+|---|---|
+| 2 ground | `geometry.terrain` heightmap |
+| 11 road surface | `geometry.crg` (OpenCRG exists for exactly this) |
+| 3, 4, 5 vegetation | `scenery` instances (canopy height gives `height`) or scatter density |
+| 6 building | meshes |
+| 9 water | `water.bodies` outlines |
+| 17 bridge deck | meshes |
+
+- The validator checks that `derived.source` names a source (ERROR) and that the source has a `crs` (WARN). It notes a cell size finer than about `2 / sqrt(point_density)`, because detail below the point spacing is interpolated, and it notes a product from a source that may not be redistributed.
+- `tools/las_dtm.py` is the converter step: it grids the ground points of a LAS tile (`.laz` and COPC with the optional `laspy`) into a heightmap, with `nodata`, and writes the `derived` and source records.
+- A GeoTIFF is not a heightmap format. STJ does not resample (§7.4), so a converter writes `png16` or `raw_f32` and records the original in `derived`.
 
 ---
 
@@ -474,6 +492,7 @@ Edges add meaning to the geometry. They do not replace collision meshes: a conve
 **Grid rules.** These are where converters go wrong:
 - **Vertex-registered and axis-aligned.** Sample (i, j) is at `x = x_min + i·dx`, `y = y_max − j·dy`, with `dx = (x_max − x_min)/(nx − 1)`. **Image row 0 is the +Y (north) edge**, so the PNG reads like a map. Every STJ raster over an `extent` (weights, accumulation, scatter masks, the minimap) is placed the same way.
 - **Formats.** `png16` is a 16-bit PNG whose first channel is the height: `height_min + v/65535 · (height_max − height_min)`, which gives 3 mm steps over 200 m. Greyscale is recommended; Blender writes RGBA. `raw_f32` is little-endian float32 metres, without a header. Both can be read without libraries. GeoTIFF and EXR are for converters.
+- **No-data cells.** `nodata` names the value that means "no measurement here": a 16-bit integer code for `png16`, a value for `raw_f32` (NaN always counts as well). Water, dark tarmac and dense canopy return no LiDAR points, and `holes` is not for that (it cuts tunnels and cuttings). Engines fill no-data cells from the surroundings, and the validator says how many there are. A height read over a no-data cell is absent.
 - **Square cells** are expected (WARN otherwise). `2^n + 1` samples per side is what UE, Unity and RoR need (NOTE otherwise). STJ does not resample.
 - **Blender.** Its image pixel buffer runs bottom row first. An exporter writing `pixels` directly must flip the rows.
 

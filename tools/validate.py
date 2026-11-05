@@ -1040,6 +1040,9 @@ def check_one_terrain(ctx, ter, p):
     ext_ok = _extent_ok(rep, f"{p}.heightmap.extent", hm["extent"])
     if hm["format"] == "png16" and not hm.get("height_min", 0) < hm.get("height_max", 0):
         rep.error(f"{p}.heightmap", "png16 needs height_min < height_max")
+    nd = hm.get("nodata")
+    if nd is not None and hm["format"] == "png16" and (nd != int(nd) or not 0 <= nd <= 65535):
+        rep.error(f"{p}.heightmap.nodata", f"{nd}: a png16 nodata is a 16-bit integer code (0 to 65535)")
     if ext_ok:
         dx = (hm["extent"][2] - hm["extent"][0]) / (nx - 1)
         dy = (hm["extent"][3] - hm["extent"][1]) / (ny - 1)
@@ -1073,6 +1076,13 @@ def check_one_terrain(ctx, ter, p):
     except (core.StjLoadError, OSError, ValueError) as e:
         rep.error(p, str(e))
         return
+    if terrain.void_count:
+        share = terrain.void_count / (nx * ny)
+        fill = (hm.get("derived") or {}).get("void_fill")
+        rep.note(f"{p}.heightmap", f"{terrain.void_count} of {nx * ny} cells ({share * 100:.1f} %) have no measurement"
+                                   + (f" (filled: {fill})" if fill else "") + ": engines fill them from the surroundings")
+        if share > 0.2:
+            rep.warn(f"{p}.heightmap", f"{share * 100:.0f} % of the grid has no measurement")
     if terrain.height_channels > 1:
         rep.note(f"{p}.heightmap.uri", f"{terrain.height_channels}-channel PNG: only the first channel is the height")
     if terrain.holes is not None and (terrain.holes.width, terrain.holes.height) != (nx, ny):
@@ -1853,6 +1863,8 @@ def check_version(ctx):
     found += ["scenery.crowds"] * ("crowds" in (doc.get("scenery") or {}))
     terrains = ([geo["terrain"]] if geo.get("terrain") else []) + list(geo.get("terrains", []))
     found += ["geometry.terrain.macro"] * any("macro" in t for t in terrains)
+    found += ["scan sources"] * bool((((doc.get("_metadata") or {}).get("provenance") or {}).get("scan") or {}).get("sources"))
+    found += ["heightmap nodata"] * any("nodata" in (t.get("heightmap") or {}) for t in terrains)
     found += ["ground macro encoding 'colour'"] * any(
         m.get("encoding") == "colour" for gm in (doc.get("ground") or {}).get("materials", [])
         for m in gm.get("macro", []))
@@ -1968,6 +1980,61 @@ def check_metadata(ctx):
         rep.warn("_metadata.provenance", "type 'converted' without converted_from")
 
 
+def _derived_blocks(doc):
+    """(path, derived block, owner) for every product that says which scan it came from (spec §5.2)."""
+    geo = doc.get("geometry") or {}
+    terrains = ([("geometry.terrain", geo["terrain"])] if geo.get("terrain") else []) + \
+        [(f"geometry.terrains[{i}]", t) for i, t in enumerate(geo.get("terrains", []))]
+    for tp, ter in terrains:
+        hm = ter.get("heightmap") or {}
+        if "derived" in hm:
+            yield f"{tp}.heightmap.derived", hm["derived"], hm
+    for kind in ("crg", "meshes"):
+        for i, item in enumerate(geo.get(kind, [])):
+            if "derived" in item:
+                yield f"geometry.{kind}[{i}].derived", item["derived"], item
+    sc = doc.get("scenery") or {}
+    for kind in ("instances", "scatter"):
+        for i, item in enumerate(sc.get(kind, [])):
+            if "derived" in item:
+                yield f"scenery.{kind}[{i}].derived", item["derived"], item
+
+
+def check_scan(ctx):
+    """Scan sources and the products derived from them (spec §5.2)."""
+    rep, doc = ctx.rep, ctx.doc
+    scan = ((doc.get("_metadata") or {}).get("provenance") or {}).get("scan") or {}
+    sources = scan.get("sources", [])
+    _dups(rep, "_metadata.provenance.scan.sources", sources, "scan source")
+    by_id = {src["id"]: src for src in sources}
+    for i, src in enumerate(sources):
+        p = f"_metadata.provenance.scan.sources[{i}]"
+        if "uri" in src and not ctx.file(src["uri"]).is_file():
+            rep.warn(f"{p}.uri", f"file not found: {src['uri']}")
+        if "uri" not in src and "reference" not in src:
+            rep.note(p, "neither a uri nor a reference: nothing says where this survey came from")
+    for path, d, owner in _derived_blocks(doc):
+        src = by_id.get(d["source"])
+        if src is None:
+            rep.error(f"{path}.source", f"unknown scan source '{d['source']}'")
+            continue
+        if "crs" not in src:
+            rep.warn(path, f"source '{src['id']}' has no crs: the reprojection into this track cannot be checked")
+        if src.get("classified") is False and d.get("classes"):
+            rep.warn(f"{path}.classes", f"classes given, but source '{src['id']}' is not classified")
+        if (src.get("licence") or {}).get("redistributable") is False:
+            rep.note(path, f"source '{src['id']}' is not redistributable: check this product may be published")
+        density = src.get("point_density")
+        cell = d.get("cell_size")
+        if cell is None and "size" in owner and "extent" in owner:     # a heightmap
+            cell = (owner["extent"][2] - owner["extent"][0]) / (owner["size"][0] - 1)
+        if density and cell and cell < 2.0 / math.sqrt(density) * 0.999:
+            rep.note(path, f"cell size {cell:g} m is finer than about 2/sqrt(point density) = "
+                           f"{2.0 / math.sqrt(density):.2f} m: detail below that is interpolated")
+        if d["product"] in ("dtm", "dsm", "chm") and "cell_size" not in d and "size" not in owner:
+            rep.note(path, "no cell_size: the grid spacing of this product is not recorded")
+
+
 def check_unused_surfaces(ctx):
     sc = ctx.doc.get("scenery") or {}
     for layer in sc.get("scatter", []):
@@ -2066,6 +2133,7 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     check_terrain(ctx)
     check_ground(ctx)
     check_chainage(ctx)
+    check_scan(ctx)
     check_surface_maps(ctx)
     check_mu(ctx)
     check_rbr_lessons(ctx)

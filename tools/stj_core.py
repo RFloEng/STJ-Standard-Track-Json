@@ -515,8 +515,9 @@ class Terrain:
             if img.maxval != 65535:
                 raise StjLoadError(f"{path.name}: a png16 heightmap must be a 16-bit PNG")
             lo, hi = hm.get("height_min", 0.0), hm.get("height_max", 0.0)
-            # the first channel is the height (Blender saves 16-bit images as RGBA)
-            heights = [lo + v / 65535.0 * (hi - lo) for v in img.data[::img.channels]]
+            nodata = hm.get("nodata")
+            # the first channel is the height (Blender saves 16-bit images as RGBA); the nodata code is a void
+            heights = [float("nan") if v == nodata else lo + v / 65535.0 * (hi - lo) for v in img.data[::img.channels]]
             w, h = img.width, img.height
             self.height_channels = img.channels
         else:
@@ -524,9 +525,13 @@ class Terrain:
             if len(blob) != nx * ny * 4:
                 raise StjLoadError(f"{path.name}: {len(blob)} bytes, expected {nx * ny * 4} for {nx} x {ny} float32")
             heights, w, h = list(struct.unpack(f"<{nx * ny}f", blob)), nx, ny
+            nodata = hm.get("nodata")
+            if nodata is not None:
+                heights = [float("nan") if v == nodata else v for v in heights]
         if (w, h) != (nx, ny):
             raise StjLoadError(f"{path.name}: image is {w} x {h}, heightmap.size says {nx} x {ny}")
         self.heights = Raster(w, h, 1, 1.0, heights)
+        self.void_count = sum(1 for v in heights if v != v)      # cells with no measurement (NaN)
         self.holes = read_png(Path(base_dir) / terrain["holes"]["uri"]) if terrain.get("holes") else None
         self.layers = terrain.get("layers") or []
         self.weights = {}
@@ -538,7 +543,9 @@ class Terrain:
                                              0 if channel == "gray" else "rgba".index(channel))
 
     def height(self, x, y):
-        return self.heights.sample(self.extent, x, y)
+        """Terrain height at (x, y), or None outside the grid and over cells with no measurement."""
+        h = self.heights.sample(self.extent, x, y)
+        return None if h is None or h != h else h
 
     def is_hole(self, x, y):
         if self.holes is None:

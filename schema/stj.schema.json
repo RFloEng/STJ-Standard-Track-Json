@@ -141,6 +141,59 @@
         "notes": { "type": "string" }
       }
     },
+    "scan_source": {
+      "type": "object",
+      "description": "One survey a track was made from: a LiDAR flight, a mobile scan, a photogrammetry set (spec §5.2). The raw data is a source, not a part of the track.",
+      "required": ["id", "format"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "format": { "type": "string", "enum": ["las", "laz", "copc", "e57", "ept", "other"] },
+        "uri": { "$ref": "#/definitions/relative_uri", "description": "Only when the cloud ships with the track, which is rare." },
+        "reference": { "type": "string", "description": "Where it came from: a dataset name, tile id or address." },
+        "crs": { "type": "string", "description": "Horizontal coordinate system of the survey (an EPSG code or a PROJ string). The track's own projection is environment.geo_reference." },
+        "vertical_datum": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "point_density": { "type": "number", "exclusiveMinimum": 0, "description": "Mean points per m2 (ground points when the cloud is classified)." },
+        "accuracy": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "horizontal": { "type": "number", "minimum": 0, "description": "m." },
+            "vertical": { "type": "number", "minimum": 0, "description": "m." }
+          }
+        },
+        "classified": { "type": "boolean", "description": "The cloud carries ASPRS classification codes." },
+        "licence": { "$ref": "#/definitions/licence", "description": "Licence of the survey data. Recorded, not judged." }
+      }
+    },
+    "scan_derived": {
+      "type": "object",
+      "description": "How a product in this file was made from a scan (spec §5.2).",
+      "required": ["source", "product"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "source": { "$ref": "#/definitions/id", "description": "Id of a provenance.scan.sources[] entry." },
+        "product": {
+          "type": "string",
+          "enum": ["dtm", "dsm", "chm", "road_surface", "other"],
+          "description": "dtm: bare ground. dsm: top surface. chm: canopy height. road_surface: a high-density surface of the road."
+        },
+        "classes": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "ASPRS classification codes used (2 ground, 3-5 vegetation, 6 building, 9 water, 11 road surface, 17 bridge deck)."
+        },
+        "cell_size": { "type": "number", "exclusiveMinimum": 0, "description": "Grid spacing (m)." },
+        "method": { "type": "string", "description": "binning, idw, tin, kriging or free text." },
+        "void_fill": { "type": "string", "enum": ["none", "interpolated", "from_other_source", "flat"] }
+      }
+    },
     "provenance": {
       "type": "object",
       "required": ["type"],
@@ -162,7 +215,12 @@
             "method": { "type": "string", "enum": ["lidar", "photogrammetry", "gnss", "total_station", "other"] },
             "date": { "type": "string", "format": "date" },
             "accuracy": { "type": "number", "minimum": 0, "description": "Stated vertical accuracy of the surface (m)." },
-            "operator": { "type": "string" }
+            "operator": { "type": "string" },
+            "sources": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/scan_source" },
+              "description": "The surveys this track was made from (spec §5.2). The point clouds themselves usually stay outside the track."
+            }
           }
         },
         "converted_from": {
@@ -465,6 +523,7 @@
           "$ref": "#/definitions/id",
           "description": "Chunk or tile whose local origin this mesh uses (spec §7.6)."
         },
+        "derived": { "$ref": "#/definitions/scan_derived" },
         "reflective": {
           "type": "boolean",
           "default": false,
@@ -531,7 +590,8 @@
         "purpose": { "type": "string", "enum": ["elevation", "friction"], "default": "elevation" },
         "t_offset": { "type": "number", "default": 0 },
         "z_offset": { "type": "number", "default": 0 },
-        "z_scale": { "type": "number", "default": 1 }
+        "z_scale": { "type": "number", "default": 1 },
+        "derived": { "$ref": "#/definitions/scan_derived" }
       }
     },
     "surfaces": {
@@ -2125,6 +2185,7 @@
           "items": { "type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 5 }
         },
         "when": { "$ref": "#/definitions/condition", "description": "Instances exist while true." },
+        "derived": { "$ref": "#/definitions/scan_derived" },
         "usd": {
           "type": "object",
           "required": ["mesh_ref", "prim"],
@@ -2226,6 +2287,7 @@
         "scale_range": { "type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2 },
         "align_to_normal": { "type": "boolean", "default": false },
         "seed": { "type": "integer" },
+        "derived": { "$ref": "#/definitions/scan_derived" },
         "cull_distance": {
           "type": "number",
           "exclusiveMinimum": 0,
@@ -2374,7 +2436,12 @@
             },
             "extent": { "$ref": "#/definitions/extent" },
             "height_min": { "type": "number", "description": "m (png16)." },
-            "height_max": { "type": "number", "description": "m (png16)." }
+            "height_max": { "type": "number", "description": "m (png16)." },
+            "nodata": {
+              "type": "number",
+              "description": "Value that means 'no measurement here' (png16: the 16-bit integer code; raw_f32: a value, and NaN always counts too). Engines fill it from the surroundings (spec §7.4)."
+            },
+            "derived": { "$ref": "#/definitions/scan_derived" }
           },
           "patternProperties": { "^_": {} }
         },

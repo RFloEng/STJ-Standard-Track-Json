@@ -1,6 +1,6 @@
 # STJ proposal: LiDAR and other scan sources
 
-Status: **accepted** 2026-11-05 with the recommended answers of §7 (D1 to D6; D6 extended to include the helper tool), for STJ v0.4.
+Status: **accepted** 2026-11-05 with the recommended answers of §7 (D1 to D6; D6 extended to include the helper tool), **Implemented** 2026-11-05 in v0.3 (draft): spec §5.2 and §7.4, `tools/las_dtm.py`, the validator. The fictional example stages carry no scan record, because they were not made from a survey.
 
 Source: a design discussion. Many real tracks and stages start as an airborne or mobile LiDAR survey (national mapping agencies publish them as open data), and the same holds for photogrammetry and GNSS surveys. STJ has a label for this (`provenance.scan`) but nothing that connects a track to the survey it came from.
 

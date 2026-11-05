@@ -180,6 +180,7 @@ Other tools:
 | `tools/stj_core.py` | Loading, `$ref`, RFC 7396 merge patch, the reference line (chainage, Hermite), USD and PNG reading, terrain sampling. It also holds the reference implementations of conditions, line states, the water-film depth, the ground blend and the evolution laws. |
 | `tools/ribbon_usd.py` | A USD collision ribbon from a centerline and surface bands, one GeomSubset per surface |
 | `tools/ground_bake.py` | Layered ground baked into an image |
+| `tools/las_dtm.py` | Grids the ground points of a LiDAR tile into a heightmap, with no-data cells and the records of where it came from |
 | `tools/blender/` | Probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md): what Blender 5.2 keeps in a `.blend` and in its USD export |
 | `viewer/index.html` | A browser viewer for the document and its meshes. It reads text USD: a `.usda`, or a `.usdz` with `.usda` inside. |
 | `examples/make_examples.py` | Regenerates every example from one definition |

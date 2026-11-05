@@ -1,6 +1,8 @@
 """Tests for tools/validate.py and tools/stj_core.py. Run: python -m unittest discover tests"""
 
+import contextlib
 import copy
+import io
 import json
 import math
 import struct
@@ -1230,6 +1232,187 @@ class RbrGaps(unittest.TestCase):
         proto = next(iter(self.doc["scenery"]["prototypes"].values()))
         proto["wind"] = {"amplitude": 40, "frequency": 2}
         self.finding("WARN", "unit slip")
+
+
+
+def write_las(path, points, fmt=0, scale=0.01):
+    """A minimal uncompressed LAS 1.2 file; points are (x, y, z, classification)."""
+    rec = {0: 20, 1: 28}[fmt]
+    head = bytearray(227)
+    head[0:4] = b"LASF"
+    head[24], head[25] = 1, 2
+    struct.pack_into("<HI", head, 94, 227, 227)
+    struct.pack_into("<I", head, 100, 0)
+    head[104] = fmt
+    struct.pack_into("<HI", head, 105, rec, len(points))
+    struct.pack_into("<6d", head, 131, scale, scale, scale, 0.0, 0.0, 0.0)
+    body = bytearray()
+    for x, y, z, c in points:
+        r = bytearray(rec)
+        struct.pack_into("<3i", r, 0, round(x / scale), round(y / scale), round(z / scale))
+        r[15] = c
+        body += r
+    Path(path).write_bytes(bytes(head) + bytes(body))
+
+
+class LidarSupport(unittest.TestCase):
+    """LAS gridding, no-data cells and the scan records (spec §5.2, §7.4)."""
+
+    def setUp(self):
+        import las_dtm
+        self.las_dtm = las_dtm
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        # a 5 x 5 patch of ground, one point per vertex, z = x + 2y, plus a tree top (class 5) and a withheld-free noise point
+        self.ground = [(float(x), float(y), x + 2.0 * y, 2) for x in range(5) for y in range(5)]
+        self.pts = self.ground + [(2.0, 2.0, 30.0, 5)]
+        self.las = self.dir / "tile.las"
+        write_las(self.las, self.pts)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_reads_classes(self):
+        ground = list(self.las_dtm.read_points(self.las, [2]))
+        self.assertEqual(len(ground), 25)
+        self.assertEqual(len(list(self.las_dtm.read_points(self.las, None))), 26)
+        self.assertAlmostEqual(ground[7][2], ground[7][0] + 2 * ground[7][1], places=6)
+
+    def test_agrees_with_laspy(self):
+        try:
+            import laspy
+        except ImportError:
+            self.skipTest("laspy is not installed")
+        las = laspy.read(str(self.las))
+        mine = list(self.las_dtm.read_points(self.las, None))
+        self.assertEqual(len(las.x), len(mine))
+        self.assertAlmostEqual(float(las.z[7]), mine[7][2], places=6)
+        self.assertEqual(int(las.classification[25]), mine[25][3])
+
+    def test_not_a_las_file(self):
+        bad = self.dir / "bad.las"
+        bad.write_bytes(b"not a las file at all" * 20)
+        with self.assertRaises(self.las_dtm.LasError):
+            list(self.las_dtm.read_points(bad))
+
+    def test_grid_is_vertex_registered_north_first(self):
+        pts = list(self.las_dtm.read_points(self.las, [2]))
+        nx, ny, h, used = self.las_dtm.grid(pts, [0, 0, 4, 4], 1.0)
+        self.assertEqual((nx, ny, used), (5, 5, 25))
+        self.assertAlmostEqual(h[0], 0 + 2 * 4)          # row 0 is the north edge: x = 0, y = 4
+        self.assertAlmostEqual(h[4 * 5 + 4], 4 + 0)      # last row is the south edge: x = 4, y = 0
+
+    def test_voids_and_fill(self):
+        pts = [p for p in self.las_dtm.read_points(self.las, [2]) if (p[0], p[1]) != (2.0, 2.0)]
+        nx, ny, h, _ = self.las_dtm.grid(pts, [0, 0, 4, 4], 1.0)
+        self.assertIsNone(h[2 * 5 + 2])
+        filled = self.las_dtm.fill_voids(h, nx, ny, 2)
+        self.assertAlmostEqual(filled[2 * 5 + 2], 6.0, places=1)      # the plane's value at (2, 2): 2 + 4
+
+    def run_tool(self, *extra):
+        out = self.dir / "height"
+        records = self.dir / "records.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.las_dtm.main([str(self.las), "-o", str(out), "--cell", "1.0", "--source-id", "als",
+                               "--crs", "EPSG:25831", "--json", str(records), *extra])
+        return out, json.loads(records.read_text(encoding="utf-8"))
+
+    def terrain(self, block, out):
+        return core.Terrain({"heightmap": {**block, "uri": out.name}}, self.dir)
+
+    def test_tool_raw_f32_round_trip(self):
+        out, rec = self.run_tool("--format", "raw_f32")
+        block = rec["heightmap"]
+        self.assertEqual((block["format"], block["size"], block["nodata"]), ("raw_f32", [5, 5], -9999.0))
+        self.assertEqual(block["derived"], {"source": "als", "product": "dtm", "classes": [2], "cell_size": 1.0,
+                                            "method": "binning", "void_fill": "none"})
+        ter = self.terrain(block, out)
+        self.assertEqual(ter.void_count, 0)
+        self.assertAlmostEqual(ter.height(0.0, 0.0), 0.0, places=4)
+        self.assertAlmostEqual(ter.height(4.0, 4.0), 12.0, places=4)
+        self.assertEqual(rec["scan_source"]["crs"], "EPSG:25831")
+
+    def test_tool_png16_nodata_is_a_void(self):
+        # drop one ground point: the vertex has no measurement and takes the nodata code
+        write_las(self.las, [p for p in self.pts if (p[0], p[1]) != (3.0, 3.0)])
+        out, rec = self.run_tool("--format", "png16", "--extent", "0", "0", "4", "4")
+        block = rec["heightmap"]
+        self.assertEqual(block["nodata"], 0)
+        ter = self.terrain(block, out)
+        self.assertEqual(ter.void_count, 1)
+        self.assertIsNone(ter.height(3.0, 3.0))
+        self.assertAlmostEqual(ter.height(1.0, 1.0), 3.0, places=2)
+        self.assertEqual(block["derived"]["void_fill"], "none")
+
+    def test_tool_fill_records_the_method(self):
+        write_las(self.las, [p for p in self.pts if (p[0], p[1]) != (3.0, 3.0)])
+        out, rec = self.run_tool("--format", "raw_f32", "--extent", "0", "0", "4", "4", "--fill-radius", "2")
+        self.assertEqual(rec["heightmap"]["derived"]["void_fill"], "interpolated")
+        self.assertEqual(self.terrain(rec["heightmap"], out).void_count, 0)
+
+    def test_no_points_of_the_class(self):
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.las_dtm.main([str(self.las), "-o", str(self.dir / "h"), "--cell", "1", "--classes", "9"])
+
+
+class ScanRecords(unittest.TestCase):
+    """provenance.scan.sources and derived (spec §5.2)."""
+
+    def setUp(self):
+        self.doc = core.load_document(STAGE)
+        self.hm = self.doc["geometry"]["terrain"]["heightmap"]
+        self.md = self.doc["_metadata"]
+        self.md["provenance"] = {"type": "scanned", "scan": {"method": "lidar", "sources": [
+            {"id": "als", "format": "laz", "reference": "tile 0404", "crs": "EPSG:25831", "point_density": 8.0,
+             "classified": True}]}}
+
+    def finding(self, level, fragment):
+        found = messages(run(self.doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def test_unknown_source(self):
+        self.hm["derived"] = {"source": "nope", "product": "dtm"}
+        self.finding("ERROR", "unknown scan source 'nope'")
+
+    def test_source_without_crs(self):
+        del self.md["provenance"]["scan"]["sources"][0]["crs"]
+        self.hm["derived"] = {"source": "als", "product": "dtm", "cell_size": 1.0}
+        self.finding("WARN", "has no crs")
+
+    def test_cell_finer_than_the_density_allows(self):
+        # 8 points per m2: about 0.71 m between points, so a 0.2 m cell is interpolated
+        self.hm["derived"] = {"source": "als", "product": "dtm", "cell_size": 0.2}
+        self.finding("NOTE", "detail below that is interpolated")
+
+    def test_cell_the_density_supports_is_quiet(self):
+        self.hm["derived"] = {"source": "als", "product": "dtm", "cell_size": 2.0}
+        self.assertFalse(any("interpolated" in m for m in messages(run(self.doc), "NOTE")))
+
+    def test_classes_on_an_unclassified_source(self):
+        self.md["provenance"]["scan"]["sources"][0]["classified"] = False
+        self.hm["derived"] = {"source": "als", "product": "dtm", "classes": [2], "cell_size": 2.0}
+        self.finding("WARN", "is not classified")
+
+    def test_png16_nodata_must_be_a_code(self):
+        self.hm["format"] = "png16"
+        self.hm["nodata"] = -9999.5
+        self.finding("ERROR", "16-bit integer code")
+
+    def test_duplicate_source_ids(self):
+        self.md["provenance"]["scan"]["sources"].append({"id": "als", "format": "las"})
+        self.finding("ERROR", "duplicate scan source id 'als'")
+
+    def test_a_source_that_may_not_be_redistributed(self):
+        self.md["provenance"]["scan"]["sources"][0]["licence"] = {"redistributable": False}
+        self.hm["derived"] = {"source": "als", "product": "dtm", "cell_size": 2.0}
+        self.finding("NOTE", "is not redistributable")
+
+    def test_derived_on_instances_and_crg(self):
+        sc = self.doc.setdefault("scenery", {})
+        proto = next(iter(sc["prototypes"]))
+        sc["instances"] = [{"prototype": proto, "transforms": [[0, 0, 0, 0]], "derived": {"source": "ghost", "product": "chm"}}]
+        self.finding("ERROR", "scenery.instances[0].derived.source")
 
 
 if __name__ == "__main__":
