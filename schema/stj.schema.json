@@ -17,6 +17,8 @@
     "_metadata": { "$ref": "#/definitions/metadata" },
     "track_info": { "$ref": "#/definitions/track_info" },
     "reference": { "$ref": "#/definitions/reference" },
+    "roads": { "type": "array", "items": { "$ref": "#/definitions/road" }, "description": "Roads other than the reference line (spec §7.1)." },
+    "junctions": { "type": "array", "items": { "$ref": "#/definitions/junction" }, "description": "Where roads meet." },
     "geometry": { "$ref": "#/definitions/geometry" },
     "surfaces": { "$ref": "#/definitions/surfaces" },
     "timing": { "$ref": "#/definitions/timing" },
@@ -362,6 +364,138 @@
         }
       }
     },
+    "cross_section": {
+      "type": "object",
+      "description": "The road's profile across its width, and banking (spec §7.1). Templates are lateral profiles; sections say where each applies; bank tilts the whole profile about the centerline.",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "templates": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^([a-z0-9_]+|x_.*|_.*)$" },
+          "patternProperties": { "^[a-z0-9_]+$": {"$ref": "#/definitions/cross_section_template"} },
+          "additionalProperties": true
+        },
+        "sections": {
+          "type": "array",
+          "description": "Which template applies over which s range. In order, not overlapping.",
+          "items": {
+            "type": "object",
+            "required": ["s_start", "s_end", "template"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "s_start": { "$ref": "#/definitions/s" },
+              "s_end": { "$ref": "#/definitions/s" },
+              "template": { "$ref": "#/definitions/id" },
+              "blend": {
+                "type": "number",
+                "minimum": 0,
+                "default": 0,
+                "description": "Distance (m) from s_start over which the previous section's template changes into this one (linear, point by point). The two templates need the same number of points."
+              }
+            }
+          }
+        },
+        "bank": {
+          "type": "array",
+          "description": "[[s, angle], ...] in rad, s increasing, linear between entries: positive when the left side is higher (OpenDRIVE superelevation).",
+          "items": { "type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2 },
+          "minItems": 1
+        }
+      }
+    },
+    "cross_section_template": {
+      "type": "object",
+      "required": ["points"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "points": {
+          "type": "array",
+          "minItems": 2,
+          "description": "Lateral profile, t increasing (left positive).",
+          "items": {
+            "type": "object",
+            "required": ["t", "dz"],
+            "additionalProperties": false,
+            "patternProperties": { "^_": {} },
+            "properties": {
+              "t": { "type": "number", "description": "Lateral offset from the centerline (m)." },
+              "dz": { "type": "number", "description": "Height above the centerline at t (m), in the road's own frame, before banking." },
+              "surface": { "$ref": "#/definitions/id", "description": "Surface of the strip that ends at this point, starting at the previous one. Surface bands win where they overlap." }
+            }
+          }
+        }
+      }
+    },
+    "terrain_rule": {
+      "type": "object",
+      "description": "How the road and geometry.terrain relate (spec §7.1). free: no rule (the default); drape: the road follows the terrain; carve: the terrain is cut or filled to meet the road.",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "mode": { "type": "string", "enum": ["free", "drape", "carve"], "default": "free" },
+        "shoulder_blend": { "type": "number", "minimum": 0, "default": 0, "description": "Distance (m) beyond the road edge over which the terrain returns to its natural height." },
+        "falloff": { "type": "string", "enum": ["linear", "smooth"], "default": "smooth", "description": "smooth is a smoothstep." },
+        "sections": {
+          "type": "array",
+          "description": "Overrides over s ranges: a bridge or tunnel stays free, a cutting carves.",
+          "items": {
+            "type": "object",
+            "required": ["s_start", "s_end"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "s_start": { "$ref": "#/definitions/s" },
+              "s_end": { "$ref": "#/definitions/s" },
+              "mode": { "type": "string", "enum": ["free", "drape", "carve"] },
+              "shoulder_blend": { "type": "number", "minimum": 0 },
+              "falloff": { "type": "string", "enum": ["linear", "smooth"] }
+            }
+          }
+        }
+      }
+    },
+    "road": {
+      "type": "object",
+      "description": "A road other than the reference line (spec §7.1): a service road, a link, a side stage.",
+      "required": ["id", "centerline"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "centerline": { "$ref": "#/definitions/centerline" },
+        "drivable": { "type": "boolean", "default": true },
+        "surface": { "$ref": "#/definitions/id", "description": "Surface of the road where no band, binding or template strip says otherwise." }
+      }
+    },
+    "junction": {
+      "type": "object",
+      "description": "Where roads meet, by s on each (spec §7.1). Geometry at the crossing is not described.",
+      "required": ["id", "roads"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "roads": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["road", "s"],
+            "additionalProperties": false,
+            "patternProperties": { "^_": {} },
+            "properties": {
+              "road": { "type": "string", "description": "A roads[] id, or 'reference' for the reference line." },
+              "s": { "$ref": "#/definitions/s" }
+            }
+          }
+        }
+      }
+    },
     "centerline": {
       "type": "object",
       "required": ["points"],
@@ -391,6 +525,8 @@
           "items": { "type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3 },
           "minItems": 1
         },
+        "cross_section": { "$ref": "#/definitions/cross_section" },
+        "terrain": { "$ref": "#/definitions/terrain_rule" },
         "chainage": {
           "type": "array",
           "items": { "type": "number" },
@@ -524,6 +660,19 @@
           "description": "Chunk or tile whose local origin this mesh uses (spec §7.6)."
         },
         "derived": { "$ref": "#/definitions/scan_derived" },
+        "generated": {
+          "type": "object",
+          "required": ["rule"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "rule": { "type": "string", "description": "What made the mesh, such as 'reference.centerline.cross_section'." },
+            "tool": { "type": "string" },
+            "tool_version": { "type": "string" },
+            "inputs_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Hash of the rule's inputs (stj_core.rule_hash), so a tool can tell when the mesh is stale." }
+          },
+          "description": "This mesh is a cache of a rule in the document, not authored geometry (spec §7.2). A tool regenerates it when the inputs change."
+        },
         "reflective": {
           "type": "boolean",
           "default": false,
@@ -1113,7 +1262,8 @@
                 "type": "string",
                 "enum": ["none", "tape", "barrier", "hay_bales", "spectators", "marshal", "vehicle"]
               },
-              "cut_penalty": { "type": "number", "minimum": 0, "description": "Time penalty for using it (s)." }
+              "cut_penalty": { "type": "number", "minimum": 0, "description": "Time penalty for using it (s)." },
+              "junction": { "$ref": "#/definitions/id", "description": "The junctions[] entry where this side road leaves the route." }
             }
           }
         },
@@ -2185,6 +2335,12 @@
           "items": { "type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 5 }
         },
         "when": { "$ref": "#/definitions/condition", "description": "Instances exist while true." },
+        "source": {
+          "type": "string",
+          "enum": ["authored", "generated"],
+          "default": "authored",
+          "description": "authored: placed by hand, kept when a generator runs again. generated: made by a rule or a tool, replaced when it runs again (spec §8.2)."
+        },
         "derived": { "$ref": "#/definitions/scan_derived" },
         "usd": {
           "type": "object",
@@ -2287,6 +2443,20 @@
         "scale_range": { "type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2 },
         "align_to_normal": { "type": "boolean", "default": false },
         "seed": { "type": "integer" },
+        "exclude_zones": {
+          "type": "array",
+          "description": "Circles where this layer must not grow, for 'I removed that tree' (spec §8.2). A rule grows different plants in every engine, so single plants cannot be named.",
+          "items": {
+            "type": "object",
+            "required": ["center", "radius"],
+            "additionalProperties": false,
+            "patternProperties": { "^_": {} },
+            "properties": {
+              "center": { "type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2 },
+              "radius": { "type": "number", "exclusiveMinimum": 0, "description": "m." }
+            }
+          }
+        },
         "derived": { "$ref": "#/definitions/scan_derived" },
         "cull_distance": {
           "type": "number",

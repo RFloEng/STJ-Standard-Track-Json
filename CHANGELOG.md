@@ -40,6 +40,15 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - `prototypes[].wind` (§8.2); `water.bodies[].physical: false` (§7.5); `meshes[].reflective` and `baked` (§7.2)
   - validator checks for all of them; `stj_core.ReferenceLine` takes per-segment tangents
   - open: asset manifest with licences, and LOD ranges for prototypes
+- **Road cross-section and authoring model** (`proposals/stj_road_cross_section_proposal.md`; additive):
+  - `centerline.cross_section {templates, sections, bank}`: lateral profiles with strip surfaces, blended sections and banking (§7.1)
+  - `centerline.terrain {mode, shoulder_blend, falloff, sections}`: drape, carve or free (§7.1)
+  - `roads[]` and `junctions[]`: other roads and where they meet; `side_roads[].junction`
+  - `instances[].source` (authored or generated) and `scatter[].exclude_zones` (§8.2)
+  - `meshes[].generated`: a mesh as a cache of a rule, with `stj_core.rule_hash` (§7.2)
+  - reversed layouts map the profile, bank, sections and junctions
+  - validator checks; `stj_core` profile, terrain-rule and hash functions; `tools/ribbon_usd.py` follows the profile
+  - the gravel stage gains a crowned profile, a flat deck, a banked corner and a service road
 - **Scan sources** (`proposals/stj_lidar_proposal.md`; additive):
   - `provenance.scan.sources[]`: the survey a track came from (format, CRS, datum, density, accuracy, licence)
   - `derived {source, product, classes, cell_size, method, void_fill}` on the heightmap, OpenCRG, meshes, instances and scatter (§5.2)

@@ -105,7 +105,7 @@ Everything except `_metadata` is optional. Add what you have: meshes, timing, pa
 |---|---|
 | `_metadata` | Version, licence (SPDX, redistributable), provenance: original, scanned or converted, with what each conversion step lost; the authoring source file |
 | `track_info` | Name, layout, type, country, primary surface, length, short name, tags, media, minimap, records |
-| `reference` | OpenDRIVE route, or a centerline (polyline or Hermite spline) with widths and optional stored chainage. Defines `s` and `t`. |
+| `reference` | OpenDRIVE route, or a centerline (polyline or Hermite spline) with widths, an optional road profile and banking (`cross_section`), a road-terrain rule, and optional stored chainage. Other roads and junctions in `roads[]`. Defines `s` and `t`. |
 | `geometry` | USD meshes by role (visual, collision, LOD), OpenCRG grids, terrain heightfields with layers and macro maps; long stages and open areas cut into chunks or tiles with local origins (USD payloads) |
 | `surfaces` | <ul><li>A surface library relative to **STJ-REF** (dry, clean asphalt): Magic Formula scaling λ or absolute μ per tyre class, rolling resistance, roughness (ISO 8608, sinusoid, macrotexture), wet response, deformable loose ground (effective and terramechanics tiers), impact and visual effects</li><li>Where each surface applies: mesh materials, surface maps that blend inside a mesh with one map per state (new/worn, dry/wet), OpenDRIVE lanes, bands along the line</li><li>Rubber and swept-gravel line states</li><li>Season substitutions</li></ul> |
 | `ground` | Layered ground shading that a single material cannot express: detail layers, per-face layers with per-corner or image weights, a reference height blend, macro maps |
@@ -166,7 +166,7 @@ python -m unittest discover tests
 
 Other tools:
 - `python tools/stj_usd.py extract track.usdz -o track.stj.json` writes the document out as plain JSON.
-- `python tools/ribbon_usd.py <track> -o road.usda` builds a collision ribbon from a centerline and surface bands.
+- `python tools/ribbon_usd.py <track> -o road.usda` builds a collision ribbon from a centerline, surface bands and the road profile.
 - `python tools/ground_bake.py <track> -o ground.png` previews a layered ground with the reference blend.
 
 **Building a track?** Read [`docs/best_practices.md`](docs/best_practices.md): the polygon, texture, terrain and world-size limits that simulators publish, each with its source, and a portable baseline.
@@ -178,7 +178,7 @@ Other tools:
 | `tools/validate.py` | Schema validation of the document, plus the cross-reference checks a schema cannot express ([spec §12](spec/STJ_Spec.md#12-validation)). For example:<ul><li>ids, USD materials, prims and primvars exist</li><li>every `s` lies on the line</li><li>timing and pace notes are in order</li><li>signal values are valid</li><li>terrain stays below the road</li><li>inertias are physical</li><li>`.usdz` packages follow OpenUSD's rules</li><li>unit slips such as degrees for radians or km/h for m/s</li></ul>`--strict` fails on warnings. |
 | `tools/stj_usd.py` | STJ inside OpenUSD: embed the document in a layer, extract it as JSON, package a `.usdz` |
 | `tools/stj_core.py` | Loading, `$ref`, RFC 7396 merge patch, the reference line (chainage, Hermite), USD and PNG reading, terrain sampling. It also holds the reference implementations of conditions, line states, the water-film depth, the ground blend and the evolution laws. |
-| `tools/ribbon_usd.py` | A USD collision ribbon from a centerline and surface bands, one GeomSubset per surface |
+| `tools/ribbon_usd.py` | A USD collision ribbon from a centerline, surface bands and the road profile and banking, one GeomSubset per surface |
 | `tools/ground_bake.py` | Layered ground baked into an image |
 | `tools/las_dtm.py` | Grids the ground points of a LiDAR tile into a heightmap, with no-data cells and the records of where it came from |
 | `tools/blender/` | Probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md): what Blender 5.2 keeps in a `.blend` and in its USD export |

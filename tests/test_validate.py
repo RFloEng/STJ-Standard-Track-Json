@@ -1415,5 +1415,225 @@ class ScanRecords(unittest.TestCase):
         self.finding("ERROR", "scenery.instances[0].derived.source")
 
 
+
+def flat_line_doc(**centerline):
+    """A straight 100 m road with one surface band, for the profile tests."""
+    cl = {"points": [[0, 0, 0], [100, 0, 0]], "width": {"left": 4.0, "right": 4.0}, **centerline}
+    return {"_metadata": {"specification": "STJ", "version": "0.3", "coordinate_system": "OpenDRIVE", "units": "SI"},
+            "reference": {"centerline": cl},
+            "surfaces": {"default": "gravel", "library": {"gravel": {"class": "gravel"}, "grass": {"class": "grass"}},
+                         "bands": [{"s_start": 0, "s_end": 100, "t_min": -4.0, "t_max": 4.0, "surface": "gravel"}]}}
+
+
+CROWNED = {"points": [{"t": -5.0, "dz": -0.3}, {"t": 0.0, "dz": 0.05, "surface": "grass"}, {"t": 5.0, "dz": -0.3, "surface": "grass"}]}
+FLAT = {"points": [{"t": -5.0, "dz": 0.0}, {"t": 0.0, "dz": 0.0, "surface": "grass"}, {"t": 5.0, "dz": 0.0, "surface": "grass"}]}
+
+
+class RoadProfile(unittest.TestCase):
+    """Cross-sections, banking, the terrain rule, roads and junctions (spec §7.1)."""
+
+    def xs(self, **kw):
+        return {"templates": {"crowned": CROWNED, "flat": FLAT},
+                "sections": [{"s_start": 0, "s_end": 50, "template": "crowned"},
+                             {"s_start": 50, "s_end": 100, "template": "flat", "blend": 20}], **kw}
+
+    def finding(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    # -- core --
+    def test_template_blends_point_by_point(self):
+        cl = flat_line_doc(cross_section=self.xs())["reference"]["centerline"]
+        self.assertEqual(core.template_points(cl, 10)[1][1], 0.05)
+        mid = core.template_points(cl, 60)            # halfway through the 20 m blend into 'flat'
+        self.assertAlmostEqual(mid[1][1], 0.025)
+        self.assertAlmostEqual(mid[0][1], -0.15)
+        self.assertEqual(core.template_points(cl, 90)[1][1], 0.0)
+        self.assertIsNone(core.template_points({"points": []}, 10))
+
+    def test_bank_tilts_the_profile_about_the_centerline(self):
+        cl = flat_line_doc(cross_section={"templates": {"flat": FLAT}, "sections": [{"s_start": 0, "s_end": 100, "template": "flat"}],
+                                          "bank": [[0, 0.1]]})["reference"]["centerline"]
+        t, z = core.profile_point(cl, 10, 4.0)
+        self.assertAlmostEqual(t, 4.0 * math.cos(0.1))
+        self.assertAlmostEqual(z, 4.0 * math.sin(0.1))                  # the left side is higher
+        self.assertAlmostEqual(core.surface_height(cl, 10, -4.0), -4.0 * math.sin(0.1) / 1.0, places=2)
+
+    def test_surface_continues_at_the_bank_slope_beyond_the_template(self):
+        cl = flat_line_doc(cross_section={"templates": {"flat": FLAT}, "sections": [{"s_start": 0, "s_end": 100, "template": "flat"}],
+                                          "bank": [[0, 0.1]]})["reference"]["centerline"]
+        self.assertAlmostEqual(core.surface_height(cl, 10, 10.0), 10.0 * math.tan(0.1), places=2)
+
+    def test_strip_surface(self):
+        cl = flat_line_doc(cross_section=self.xs())["reference"]["centerline"]
+        self.assertEqual(core.strip_surface(cl, 10, 3.0), "grass")      # the strip ending at t = 5 is grass
+        self.assertIsNone(core.strip_surface(cl, 10, 5.5))
+
+    def test_terrain_rule_sections_override(self):
+        cl = {"terrain": {"mode": "carve", "shoulder_blend": 6, "sections": [{"s_start": 20, "s_end": 30, "mode": "free"}]}}
+        self.assertEqual(core.terrain_rule_at(cl, 10), ("carve", 6, "smooth"))
+        self.assertEqual(core.terrain_rule_at(cl, 25)[0], "free")
+        self.assertEqual(core.terrain_rule_at({}, 5), ("free", 0.0, "smooth"))
+
+    def test_carve_puts_the_terrain_on_the_road_and_blends_out(self):
+        doc = flat_line_doc(terrain={"mode": "carve", "shoulder_blend": 10.0})
+        line = core.reference_line(doc)
+        h, road = core.terrain_with_road(doc, line, 5.0, 50.0, 0.0)          # on the road: replaced by its surface
+        self.assertEqual((h, road), (0.0, 0.0))
+        h, _ = core.terrain_with_road(doc, line, 5.0, 50.0, 9.0)             # 5 m past the edge: half way, smoothstep = 0.5
+        self.assertAlmostEqual(h, 2.5)
+        h, _ = core.terrain_with_road(doc, line, 5.0, 50.0, 20.0)            # beyond the blend: natural
+        self.assertEqual(h, 5.0)
+
+    def test_free_and_drape_leave_the_terrain_alone(self):
+        for mode in ("free", "drape"):
+            doc = flat_line_doc(terrain={"mode": mode})
+            self.assertEqual(core.terrain_with_road(doc, core.reference_line(doc), 5.0, 50.0, 0.0)[0], 5.0)
+
+    def test_rule_hash_follows_its_inputs(self):
+        doc = flat_line_doc(cross_section=self.xs())
+        before = core.rule_hash(doc)
+        self.assertEqual(before, core.rule_hash(copy.deepcopy(doc)))
+        doc["surfaces"]["bands"][0]["t_max"] = 3.0
+        self.assertNotEqual(before, core.rule_hash(doc))
+
+    # -- reversing --
+    def test_reverse_flips_bank_sections_and_templates(self):
+        doc = flat_line_doc(cross_section=self.xs(bank=[[10, 0.05], [40, 0.0]]))
+        rev = core.reverse_reference(doc["reference"])["centerline"]["cross_section"]
+        self.assertEqual(rev["bank"], [[60.0, 0.0], [90.0, -0.05]])      # s' = L - s, and left becomes right
+        self.assertEqual([(x["s_start"], x["s_end"], x["template"]) for x in rev["sections"]],
+                         [(0.0, 50.0, "flat"), (50.0, 100.0, "crowned")])
+        pts = rev["templates"]["crowned"]["points"]
+        self.assertEqual([p["t"] for p in pts], [-5.0, 0.0, 5.0])
+        self.assertEqual([p.get("surface") for p in pts], [None, "grass", "grass"])
+
+    def test_reverse_twice_is_the_original(self):
+        doc = flat_line_doc(cross_section=self.xs(bank=[[10, 0.05], [40, 0.0]]))
+        twice = core.reverse_reference(core.reverse_reference(doc["reference"]))
+        self.assertEqual(twice["centerline"]["cross_section"], doc["reference"]["centerline"]["cross_section"])
+
+    def test_reverse_keeps_the_strip_surfaces_on_the_right_strips(self):
+        tpl = {"points": [{"t": -4, "dz": 0}, {"t": 0, "dz": 0, "surface": "grass"}, {"t": 4, "dz": 0, "surface": "gravel"}]}
+        doc = flat_line_doc(cross_section={"templates": {"a": tpl}, "sections": [{"s_start": 0, "s_end": 100, "template": "a"}]})
+        rev = core.reverse_reference(doc["reference"])
+        before = core.strip_surface(doc["reference"]["centerline"], 10, 2.0)       # right of the centre: gravel
+        after = core.strip_surface(rev["centerline"], 90, -2.0)                    # the same strip, driven the other way
+        self.assertEqual((before, after), ("gravel", "gravel"))
+
+    def test_reverse_layout_moves_junctions_on_the_reference(self):
+        doc = flat_line_doc()
+        doc["junctions"] = [{"id": "j", "roads": [{"road": "reference", "s": 30.0}, {"road": "other", "s": 0.0}]}]
+        doc["layouts"] = [{"id": "back", "direction": "reverse"}]
+        out = core.layout_document(doc, "back")
+        self.assertAlmostEqual(out["junctions"][0]["roads"][0]["s"], 70.0)
+
+    # -- ribbon --
+    def test_ribbon_follows_banking_and_adds_columns(self):
+        import ribbon_usd
+        doc = flat_line_doc(cross_section={"templates": {"flat": FLAT}, "sections": [{"s_start": 0, "s_end": 100, "template": "flat"}],
+                                           "bank": [[0, 0.1]]})
+        points, counts, indices, faces, _ = ribbon_usd.build(doc, step=50.0)
+        first = points[:5]                                               # t = -5, -4, 0, 4, 5 at s = 0
+        self.assertEqual(len(first), 5)
+        self.assertGreater(first[-1][2], first[0][2])                    # the left side (large t) is higher
+        self.assertAlmostEqual(first[-1][2] - first[0][2], 10.0 * math.sin(0.1), places=3)
+        self.assertEqual(set(faces), {"gravel", "grass"})                # grass from the template strips outside the band
+
+    def test_ribbon_without_a_profile_is_flat(self):
+        import ribbon_usd
+        points, *_ = ribbon_usd.build(flat_line_doc(), step=50.0)
+        self.assertEqual({round(p[2], 6) for p in points}, {0.0})
+
+    # -- validator --
+    def test_template_t_must_increase(self):
+        bad = {"points": [{"t": 1, "dz": 0}, {"t": 1, "dz": 0}]}
+        doc = flat_line_doc(cross_section={"templates": {"a": bad}, "sections": [{"s_start": 0, "s_end": 10, "template": "a"}]})
+        self.finding(doc, "ERROR", "t must increase")
+
+    def test_surface_on_the_first_point_has_no_strip(self):
+        tpl = {"points": [{"t": -1, "dz": 0, "surface": "grass"}, {"t": 1, "dz": 0}]}
+        doc = flat_line_doc(cross_section={"templates": {"a": tpl}, "sections": [{"s_start": 0, "s_end": 10, "template": "a"}]})
+        self.finding(doc, "WARN", "no strip ends at the first point")
+
+    def test_unknown_template_and_surface(self):
+        doc = flat_line_doc(cross_section={"templates": {"a": {"points": [{"t": -1, "dz": 0, "surface": "nope"}, {"t": 1, "dz": 0}]}},
+                                           "sections": [{"s_start": 0, "s_end": 10, "template": "b"}]})
+        self.finding(doc, "ERROR", "unknown template 'b'")
+        self.finding(doc, "ERROR", "unknown surface 'nope'")
+
+    def test_overlapping_sections(self):
+        xs = self.xs()
+        xs["sections"][1]["s_start"] = 40
+        self.finding(flat_line_doc(cross_section=xs), "ERROR", "overlaps the previous section")
+
+    def test_blend_needs_equal_point_counts(self):
+        xs = self.xs()
+        xs["templates"]["flat"] = {"points": FLAT["points"][:2]}
+        self.finding(flat_line_doc(cross_section=xs), "ERROR", "different number of points")
+
+    def test_bank_in_degrees_is_caught(self):
+        self.finding(flat_line_doc(cross_section=self.xs(bank=[[0, 12.0]])), "WARN", "angles are in radians")
+        self.finding(flat_line_doc(cross_section=self.xs(bank=[[10, 0.0], [5, 0.0]])), "ERROR", "s must increase")
+
+    def test_template_narrower_than_the_road(self):
+        narrow = {"points": [{"t": -2, "dz": 0}, {"t": 2, "dz": 0}]}
+        doc = flat_line_doc(cross_section={"templates": {"n": narrow}, "sections": [{"s_start": 0, "s_end": 10, "template": "n"}]})
+        self.finding(doc, "WARN", "narrower than the drivable width")
+
+    def test_terrain_rule_without_terrain(self):
+        self.finding(flat_line_doc(terrain={"mode": "carve", "shoulder_blend": 5}), "NOTE", "no geometry.terrain")
+        self.finding(flat_line_doc(terrain={"mode": "carve"}), "NOTE", "terrain steps up at the road edge")
+
+    def test_drape_warns_when_the_road_leaves_the_terrain(self):
+        doc = core.load_document(STAGE)
+        doc["reference"]["centerline"]["terrain"] = {"mode": "drape"}
+        self.finding(doc, "WARN", "drape: the road is meant to follow the terrain")
+
+    def test_roads_and_junctions(self):
+        doc = flat_line_doc()
+        doc["roads"] = [{"id": "link", "centerline": {"points": [[50, 0, 0], [50, 60, 0]]}}]
+        doc["junctions"] = [{"id": "j", "roads": [{"road": "reference", "s": 50.0}, {"road": "link", "s": 0.0}]}]
+        self.assertFalse([m for m in messages(run(doc), "ERROR") if "junction" in m or "road" in m])
+        doc["junctions"][0]["roads"][1]["road"] = "ghost"
+        self.finding(doc, "ERROR", "unknown road 'ghost'")
+        doc["junctions"][0]["roads"][1] = {"road": "link", "s": 0.0}
+        doc["junctions"][0]["roads"][0]["s"] = 10.0
+        self.finding(doc, "WARN", "apart at their junction points")
+        doc["junctions"][0]["roads"][1]["s"] = 500.0
+        self.finding(doc, "ERROR", "is beyond road 'link'")
+
+    def test_road_ids(self):
+        doc = flat_line_doc()
+        line = {"points": [[0, 10, 0], [50, 10, 0]]}
+        doc["roads"] = [{"id": "reference", "centerline": line}, {"id": "a", "centerline": line}, {"id": "a", "centerline": line}]
+        self.finding(doc, "ERROR", "the reference line's name")
+        self.finding(doc, "ERROR", "duplicate road id 'a'")
+
+    def test_side_road_names_a_junction(self):
+        doc = flat_line_doc()
+        doc["timing"] = {"side_roads": [{"s": 20.0, "side": "left", "junction": "nowhere"}]}
+        self.finding(doc, "ERROR", "unknown junction 'nowhere'")
+
+    def test_stale_generated_mesh(self):
+        doc = flat_line_doc(cross_section=self.xs())
+        doc["geometry"] = {"meshes": [{"id": "ribbon", "uri": "x.usda", "roles": ["collision"],
+                                       "generated": {"rule": "reference.centerline.cross_section", "inputs_sha256": core.rule_hash(doc)}}]}
+        self.assertFalse([m for m in messages(run(doc), "WARN") if "stale" in m])
+        doc["reference"]["centerline"]["cross_section"]["bank"] = [[0, 0.02]]
+        self.finding(doc, "WARN", "it is stale")
+
+    def test_example_ribbon_is_current(self):
+        doc = core.load_document(STAGE)
+        gen = doc["geometry"]["meshes"][0]["generated"]
+        self.assertEqual(gen["inputs_sha256"], core.rule_hash(doc))
+
+    def test_exclude_zone_radius(self):
+        doc = core.load_document(STAGE)
+        layer = doc["scenery"]["scatter"][0]
+        layer["exclude_zones"] = [{"center": [0, 0], "radius": 500}]
+        self.finding(doc, "WARN", "radii are in metres")
+
+
 if __name__ == "__main__":
     unittest.main()

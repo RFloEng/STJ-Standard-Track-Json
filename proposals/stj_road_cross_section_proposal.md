@@ -1,6 +1,6 @@
 # STJ proposal: road cross-section and the authoring model
 
-Status: **accepted** 2026-11-05 with the recommended answers of §11 (Q1 to Q7), for STJ v0.4. Nothing here is implemented yet.
+Status: **accepted** 2026-11-05 with the recommended answers of §11 (Q1 to Q7), for STJ v0.4. **Implemented** 2026-11-05 in v0.3 (draft): spec §7.1, §7.2 and §8.2, `stj_core`, the validator, `tools/ribbon_usd.py` and the gravel stage example. Interpretations: Q7's per-instance mark is per instance *set* (hand-placed objects go in their own sets), and the scatter exclusion is a list of zones, because a rule grows different plants in every engine.
 
 Source: a design discussion about STJ as a non-destructive working format. The part that several engines can regenerate, and that Blender expresses naturally, is the road profile along the reference line (sections 1 to 5). Section 6 onwards takes a track editor such as BeamNG's World Editor as an example of how a track is authored, and adds what STJ is missing to hold that model: how a road relates to the terrain, road networks, and keeping hand-placed objects through regeneration.
 

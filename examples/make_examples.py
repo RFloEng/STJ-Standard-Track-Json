@@ -771,6 +771,28 @@ def coll_de_prova():
 
     Lr = r(line.length)
     t_lo, t_hi = r(TARMAC[0] * k), r(TARMAC[1] * k)
+    # a road profile after the first ground section (spec §7.1): crowned gravel, a flat deck, one banked corner.
+    # The shoulders drop at most 0.25 m, so the terrain 0.5 m under the road stays under it.
+    crowned = {"points": [
+        {"t": -5.4, "dz": -0.25}, {"t": -3.6, "dz": -0.04, "surface": "verge_grass"},
+        {"t": 0.0, "dz": 0.04, "surface": "gravel_loose"}, {"t": 3.6, "dz": -0.04, "surface": "gravel_loose"},
+        {"t": 5.4, "dz": -0.25, "surface": "verge_grass"}]}
+    deck = {"points": [
+        {"t": -5.4, "dz": 0.0}, {"t": -3.6, "dz": 0.0, "surface": "gravel_hardpack"},
+        {"t": 0.0, "dz": 0.0, "surface": "gravel_hardpack"}, {"t": 3.6, "dz": 0.0, "surface": "gravel_hardpack"},
+        {"t": 5.4, "dz": 0.0, "surface": "gravel_hardpack"}]}
+    cross_section = {
+        "templates": {"crowned": crowned, "bridge_deck": deck},
+        "sections": [{"s_start": GROUND_SECTION, "s_end": 1500.0, "template": "crowned"},
+                     {"s_start": 1500.0, "s_end": 1560.0, "template": "bridge_deck", "blend": 20.0},
+                     {"s_start": 1560.0, "s_end": Lr, "template": "crowned", "blend": 20.0}],
+        "bank": [[0.0, 0.0], [1000.0, 0.0], [1040.0, 0.04], [1120.0, 0.04], [1160.0, 0.0]]}
+    # a service road leaving the stage to the left at the side road of s = 1310 (described, with no mesh)
+    jx, jy, jz, jh = line.frame(1310.0)
+    ang = jh + 1.4
+    service = {"id": "service", "name": "Service road", "drivable": True, "surface": "gravel_hardpack",
+               "centerline": {"width": {"left": 2.5, "right": 2.5},
+                              "points": [[r(jx + d * math.cos(ang)), r(jy + d * math.sin(ang)), r(jz)] for d in (0.0, 50.0, 100.0, 150.0)]}}
     doc = {
         "$schema": "../schema/stj.schema.json",
         "_metadata": {
@@ -785,7 +807,10 @@ def coll_de_prova():
                        "short_name": "Coll de Prova", "abbreviation": "CDP", "tags": ["gravel", "forest", "fictional"]},
         "reference": {"centerline": {"closed": False, "width": {"left": 3.6, "right": 3.6}, "points": points,
                                      "chainage": [r(v) for v in line.s],
+                                     "cross_section": cross_section,
                                      "_note": "Stored distance per point, as a driveline or a survey keeps it (here equal to the geometry)."}},
+        "roads": [service],
+        "junctions": [{"id": "service_junction", "roads": [{"road": "reference", "s": 1310.0}, {"road": "service", "s": 0.0}]}],
         "geometry": {"meshes": [{"id": "stage_collision", "uri": "meshes/coll_de_prova_collision.usda", "roles": ["collision"]},
                                 {"id": "stage_ground", "uri": "meshes/coll_de_prova_ground.usda", "roles": ["visual", "collision"],
                                  "_note": "5 cm under the collision ribbon, so the ribbon is touched on the road and the ground beyond it"}],
@@ -907,7 +932,7 @@ def coll_de_prova():
             ],
             "side_roads": [
                 {"s": 520.0, "side": "right", "heading_offset": -1.2, "blocked_by": "tape", "cut_penalty": 10.0},
-                {"s": 1310.0, "side": "left", "heading_offset": 1.4, "blocked_by": "barrier"}
+                {"s": 1310.0, "side": "left", "heading_offset": 1.4, "blocked_by": "barrier", "junction": "service_junction"}
             ]
         },
         "race": {
@@ -1345,6 +1370,9 @@ def main():
     write_override(night_override(), "test_ring_gp_night.usda", "test_ring_gp.usda")
     write_override(drying_override(), "test_ring_gp_drying.usda", "test_ring_gp.usda")
     stage = coll_de_prova()
+    # the collision ribbon is a cache of the cross-section: stamp it so a tool can tell when it is stale
+    stage["geometry"]["meshes"][0]["generated"] = {"rule": "reference.centerline.cross_section", "tool": "ribbon_usd.py",
+                                                   "inputs_sha256": core.rule_hash(stage)}
     ribbon_usd.write_ribbon(HERE / "meshes" / "coll_de_prova_collision.usda", stage, "stage_collision", 5.0)
     write_track(stage, "coll_de_prova_gravel.usda")
     write_override(wet_override(), "coll_de_prova_gravel_wet.usda", "coll_de_prova_gravel.usda")

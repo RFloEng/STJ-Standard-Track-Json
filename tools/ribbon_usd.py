@@ -4,15 +4,22 @@ Collision ribbon from a centerline and surface bands, as an OpenUSD mesh
 Makes a centerline-only STJ track drivable: one quad mesh along the reference line, a GeomSubset
 and a material per surface (spec §6.3, §7.2). Needs the pxr module: pip install usd-core.
 
+With a `cross_section` on the centerline (spec §7.1) the ribbon follows its profile and banking: the
+templates add columns, a template strip's surface fills where no surface band applies, and the heights
+come from `stj_core.profile_point`. Without one the ribbon is flat across, as before.
+
     python tools/ribbon_usd.py <track.usda | doc.stj.json> -o <ribbon.usda> [--mesh-id ID] [--step 5]
 
 --mesh-id   the geometry.meshes id the ribbon will have; materials bound to it in surfaces.bindings
             keep their names, other surfaces get materials named STJ__surface__<id>
---step      longitudinal spacing of cross-sections (m), default 5. Band boundaries and centerline
-            vertices are always included.
+--step      longitudinal spacing of cross-sections (m), default 5. Band boundaries, centerline
+            vertices and cross-section section and bank changes are always included.
+
+Prints the `generated` block to put on the mesh entry, so a tool can tell when the ribbon is stale.
 """
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
@@ -38,22 +45,39 @@ def build(doc, mesh_id=None, step=5.0):
         raise SystemExit("reference.centerline is required")
     surf = doc.get("surfaces") or {}
     bands = surf.get("bands") or []
-    if not bands:
-        raise SystemExit("surfaces.bands is required")
+    has_strips = any(q.get("surface") for tpl in (((doc.get("reference") or {}).get("centerline") or {})
+                                                  .get("cross_section") or {}).get("templates", {}).values()
+                     if isinstance(tpl, dict) for q in tpl["points"])
+    if not bands and not has_strips:
+        raise SystemExit("surfaces.bands (or cross_section template strips with surfaces) is required")
     names = {}
     for b in surf.get("bindings", []):
         if b.get("mesh_ref") == mesh_id and "material" in b:
             names.setdefault(b["surface"], b["material"])
+    cl = (doc.get("reference") or {}).get("centerline") or {}
+    xs = cl.get("cross_section") or {}
     stations = set(line.s[:-1] if line.closed else line.s)
     stations.update(i * step for i in range(int(line.length // step) + 1))
     for b in bands:
         stations.update((b["s_start"], b["s_end"]))
+    for sec in xs.get("sections", []):
+        stations.update((sec["s_start"], sec["s_end"], sec["s_start"] + sec.get("blend", 0)))
+    stations.update(row[0] for row in xs.get("bank", []))
     stations = sorted(s for s in stations if 0 <= s <= line.length)
     if line.closed and stations[-1] >= line.length - 1e-9:
         stations.pop()                      # a closed ribbon joins its last station to the first
-    ts = sorted({b["t_min"] for b in bands} | {b["t_max"] for b in bands})
+    ts = {b["t_min"] for b in bands} | {b["t_max"] for b in bands}
+    for tpl in (xs.get("templates") or {}).values():
+        if isinstance(tpl, dict):
+            ts.update(q["t"] for q in tpl["points"])
+    ts = sorted(ts)
     k = len(ts)
-    points = [line.point(s, t) for s in stations for t in ts]
+    points = []
+    for s in stations:
+        for t in ts:
+            lateral, dz = core.profile_point(cl, s, t)           # (t, 0) for a flat road
+            x, y, z = line.point(s, lateral)
+            points.append((x, y, z + dz))
     counts, indices, faces = [], [], {}
     n = len(stations)
     for i in range(n if line.closed else n - 1):
@@ -66,6 +90,8 @@ def build(doc, mesh_id=None, step=5.0):
             for b in bands:                  # later bands win (spec §6.3)
                 if _in_band(line, b, s_mid, t_mid):
                     sid = b["surface"]
+            if sid is None:                  # no band: the template strip's own surface, if it names one
+                sid = core.strip_surface(cl, s_mid, t_mid)
             if sid is None:
                 continue
             faces.setdefault(sid, []).append(len(counts))
@@ -122,6 +148,11 @@ def main(argv=None):
     doc, _chain = core.resolve(a.file)
     write_ribbon(a.out, doc, a.mesh_id, a.step)
     print(f"wrote {a.out}")
+    cl = (doc.get("reference") or {}).get("centerline") or {}
+    if cl.get("cross_section"):
+        stamp = {"rule": "reference.centerline.cross_section", "tool": "ribbon_usd.py",
+                 "inputs_sha256": core.rule_hash(doc)}
+        print("geometry.meshes[].generated:", json.dumps(stamp))
 
 
 if __name__ == "__main__":

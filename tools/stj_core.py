@@ -274,6 +274,160 @@ def half_widths(doc, s):
     return None
 
 
+# ── road profile, banking and the terrain rule (spec §7.1) ───────────────────
+
+def _table_at(table, s):
+    """Linear value of [[s, v], ...] at s, held flat beyond the ends."""
+    if s <= table[0][0]:
+        return table[0][1]
+    for a, b in zip(table, table[1:]):
+        if a[0] <= s <= b[0]:
+            u = 0.0 if b[0] == a[0] else (s - a[0]) / (b[0] - a[0])
+            return a[1] + u * (b[1] - a[1])
+    return table[-1][1]
+
+
+def bank_at(cl, s):
+    """Banking angle (rad) of a centerline dict at s; positive when the left side is higher."""
+    bank = ((cl or {}).get("cross_section") or {}).get("bank")
+    return _table_at(bank, s) if bank else 0.0
+
+
+def template_points(cl, s):
+    """The lateral profile at s as [(t, dz, surface)], or None where no section applies.
+
+    Inside the first `blend` metres of a section the previous section's template changes into this one,
+    point by point (linear in t and dz); the strip surfaces are those of the nearer template."""
+    cs = (cl or {}).get("cross_section") or {}
+    templates, secs = cs.get("templates") or {}, cs.get("sections") or []
+    for i, sec in enumerate(secs):
+        if sec["s_start"] <= s <= sec["s_end"]:
+            cur = (templates.get(sec["template"]) or {}).get("points")
+            if not cur:
+                return None
+            blend = sec.get("blend", 0)
+            if i > 0 and blend > 0 and s < sec["s_start"] + blend:
+                prev = (templates.get(secs[i - 1]["template"]) or {}).get("points")
+                if prev and len(prev) == len(cur):
+                    u = (s - sec["s_start"]) / blend
+                    return [(a["t"] + u * (b["t"] - a["t"]), a["dz"] + u * (b["dz"] - a["dz"]),
+                             (b if u >= 0.5 else a).get("surface")) for a, b in zip(prev, cur)]
+            return [(q["t"], q["dz"], q.get("surface")) for q in cur]
+    return None
+
+
+def profile_dz(points, t):
+    """Height above the centerline at lateral offset t on a template; the end heights hold beyond the ends."""
+    if not points:
+        return 0.0
+    if t <= points[0][0]:
+        return points[0][1]
+    for a, b in zip(points, points[1:]):
+        if a[0] <= t <= b[0]:
+            u = 0.0 if b[0] == a[0] else (t - a[0]) / (b[0] - a[0])
+            return a[1] + u * (b[1] - a[1])
+    return points[-1][1]
+
+
+def profile_point(cl, s, t):
+    """(lateral offset, height above the centerline) of the road surface at nominal offset t, bank applied.
+
+    The profile and the bank tilt the whole cross-section about the centerline: a point (t, dz) of the
+    template goes to (t cos b - dz sin b, t sin b + dz cos b)."""
+    dz = profile_dz(template_points(cl, s), t)
+    b = bank_at(cl, s)
+    return t * math.cos(b) - dz * math.sin(b), t * math.sin(b) + dz * math.cos(b)
+
+
+def surface_height(cl, s, t):
+    """Height above the centerline of the road surface at actual lateral offset t (bank applied).
+
+    Beyond the ends of the template the surface continues at the slope of the bank."""
+    pts = template_points(cl, s) or [(-1.0, 0.0, None), (1.0, 0.0, None)]
+    b = bank_at(cl, s)
+    c, sn = math.cos(b), math.sin(b)
+    rot = [(q[0] * c - q[1] * sn, q[0] * sn + q[1] * c) for q in pts]
+    slope = math.tan(b)
+    if t <= rot[0][0]:
+        return rot[0][1] + slope * (t - rot[0][0])
+    for a, bb in zip(rot, rot[1:]):
+        if a[0] <= t <= bb[0]:
+            u = 0.0 if bb[0] == a[0] else (t - a[0]) / (bb[0] - a[0])
+            return a[1] + u * (bb[1] - a[1])
+    return rot[-1][1] + slope * (t - rot[-1][0])
+
+
+def strip_surface(cl, s, t):
+    """Surface id of the template strip that covers nominal offset t at s, or None."""
+    pts = template_points(cl, s)
+    if not pts:
+        return None
+    for a, b in zip(pts, pts[1:]):
+        if a[0] <= t <= b[0]:
+            return b[2]
+    return None
+
+
+def terrain_rule_at(cl, s):
+    """(mode, shoulder_blend, falloff) of the road-terrain rule at s (spec §7.1)."""
+    rule = (cl or {}).get("terrain") or {}
+    mode, blend, falloff = rule.get("mode", "free"), rule.get("shoulder_blend", 0.0), rule.get("falloff", "smooth")
+    for sec in rule.get("sections", []):
+        if sec["s_start"] <= s <= sec["s_end"]:
+            return sec.get("mode", mode), sec.get("shoulder_blend", blend), sec.get("falloff", falloff)
+    return mode, blend, falloff
+
+
+def terrain_with_road(doc, line, terrain_height, x, y):
+    """(terrain height after the road rule, road surface height or None) at world (x, y).
+
+    terrain_height is the natural height there. free and drape leave it alone (drape says the road follows
+    it; the centerline z is checked by the validator). carve puts the terrain on the road surface across the
+    drivable width and returns it to its natural height over shoulder_blend metres beyond the edge."""
+    cl = (doc.get("reference") or {}).get("centerline") or {}
+    s, t = line.project(x, y)
+    mode, blend, falloff = terrain_rule_at(cl, s)
+    wl_wr = half_widths(doc, s)
+    if mode != "carve" or wl_wr is None or terrain_height is None:
+        return terrain_height, None
+    zc = line.frame(s)[2]
+    road = zc + surface_height(cl, s, t)
+    edge = wl_wr[0] if t >= 0 else wl_wr[1]
+    d = abs(t) - edge
+    if d <= 0:
+        return road, road
+    if blend <= 0 or d >= blend:
+        return terrain_height, road
+    u = d / blend
+    w = u * u * (3 - 2 * u) if falloff == "smooth" else u
+    edge_t = math.copysign(edge, t)
+    road_edge = zc + surface_height(cl, s, edge_t)
+    return road_edge + w * (terrain_height - road_edge), road
+
+
+def rule_hash(doc, rule="reference.centerline.cross_section"):
+    """SHA-256 of the inputs of a generating rule, so a cached mesh can be told stale (spec §7.2).
+
+    For the cross-section rule these are the centerline (every key) and the surface bands."""
+    import hashlib
+    if rule != "reference.centerline.cross_section":
+        raise ValueError(f"unknown rule '{rule}'")
+    inputs = {"centerline": (doc.get("reference") or {}).get("centerline"),
+              "bands": (doc.get("surfaces") or {}).get("bands")}
+    blob = json.dumps(inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def road_line(doc, road_id):
+    """ReferenceLine of 'reference' or of a roads[] entry, or None."""
+    if road_id == "reference":
+        return reference_line(doc)
+    for r in doc.get("roads", []):
+        if r.get("id") == road_id:
+            return reference_line({"reference": {"centerline": r["centerline"]}})
+    return None
+
+
 # ── layouts ──────────────────────────────────────────────────────────────────
 
 def reverse_reference(ref):
@@ -301,6 +455,32 @@ def reverse_reference(ref):
             cl["width"] = {"left": cl["width"]["right"], "right": cl["width"]["left"]}
         if "width_profile" in cl:
             cl["width_profile"] = [[length - s, right, left] for s, left, right in reversed(cl["width_profile"])]
+        xs = cl.get("cross_section")
+        if xs:
+            if "bank" in xs:           # left and right swap, so the tilt changes sign
+                xs["bank"] = [[length - s, -a] for s, a in reversed(xs["bank"])]
+            if "sections" in xs:
+                xs["sections"] = [{**sec, "s_start": length - sec["s_end"], "s_end": length - sec["s_start"]}
+                                  for sec in reversed(xs["sections"])]
+            for tpl in (xs.get("templates") or {}).values():
+                if not isinstance(tpl, dict) or "points" not in tpl:
+                    continue
+                old = tpl["points"]
+                n = len(old)
+                new = []
+                for k in range(n):
+                    p = old[n - 1 - k]
+                    q = {**p, "t": -p["t"]}
+                    q.pop("surface", None)
+                    # the strip between two points keeps its surface, now carried by the other end
+                    if k > 0 and "surface" in old[n - k]:
+                        q["surface"] = old[n - k]["surface"]
+                    new.append(q)
+                tpl["points"] = new
+        rule = cl.get("terrain")
+        if rule and rule.get("sections"):
+            rule["sections"] = [{**sec, "s_start": length - sec["s_end"], "s_end": length - sec["s_start"]}
+                                for sec in reversed(rule["sections"])]
     od = out.get("opendrive")
     if od and od.get("route"):
         flip = {"forward": "backward", "backward": "forward"}
@@ -324,6 +504,11 @@ def layout_document(doc, layout, merge_edges=True):
         out["reference"] = copy.deepcopy(layout["reference"])
     elif layout.get("direction") == "reverse":
         out["reference"] = reverse_reference(doc.get("reference"))
+        line = reference_line(doc)
+        for j in out.get("junctions", []):
+            for r in j["roads"]:
+                if r["road"] == "reference" and line is not None:
+                    r["s"] = line.length - r["s"]
     for key in ("timing", "race"):
         if key in layout:
             out[key] = copy.deepcopy(layout[key])

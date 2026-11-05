@@ -439,11 +439,46 @@ STJ fixes simple, first-order **reference laws**. An engine may run its own, bet
 - **`tangents_out` and `tangents_in`** (optional): per-segment tangents, for sources that store one tangent for each segment (a game's driveline). Segment `i` starts with `tangents_out[i]` and ends with `tangents_in[i + 1]`; `tangents_in` defaults to `tangents_out`, and giving `tangents_in` without `tangents_out` is an error. When present they win over `tangents`. With one tangent per point, two neighbouring segments of 5 m and 23 m cannot both be reproduced; with these they can. A reversed layout swaps the two lists (`stj_core.reverse_reference`).
 - **Within a segment, s maps linearly onto u.** With straight segments and no chainage this is exact arc length. Otherwise it is the stored-distance interpolation that drivelines use.
 
+**Road profile (`centerline.cross_section`).** Without it a road is flat across `t`, with only half-widths. With it the road has a crown or a camber, shoulders, ditches and banking (`proposals/stj_road_cross_section_proposal.md`):
+
+```json
+"cross_section": {
+  "templates": {
+    "crowned": { "points": [
+      { "t": -5.4, "dz": -0.25 },
+      { "t": -3.6, "dz": -0.04, "surface": "verge_grass" },
+      { "t":  0.0, "dz":  0.04, "surface": "gravel_loose" },
+      { "t":  3.6, "dz": -0.04, "surface": "gravel_loose" },
+      { "t":  5.4, "dz": -0.25, "surface": "verge_grass" } ] } },
+  "sections": [{ "s_start": 600, "s_end": 1500, "template": "crowned" },
+               { "s_start": 1500, "s_end": 1560, "template": "bridge_deck", "blend": 20 }],
+  "bank": [[1000, 0.0], [1040, 0.04], [1120, 0.04], [1160, 0.0]]
+}
+```
+
+- **Templates** are lateral profiles. `t` increases and is positive to the left, as everywhere. `dz` is the height above the centerline **in the road's own frame, before banking**, so the same profile reads the same on a flat and a banked stretch. A point's `surface` is that of the **strip that ends at it**, starting at the previous point (so the first point has none). Surface bands (§6.3) win where they overlap a strip.
+- **Sections** say where a template applies: in order, not overlapping, `s_end` greater than `s_start`. `blend` is the distance from `s_start` over which the previous section's template changes into this one, point by point, linearly in `t` and `dz`; the two templates need the same number of points. A road outside every section is flat across.
+- **`bank`** is `[[s, angle]]` in radians, linear between entries, positive when the left side is higher (OpenDRIVE `superelevation`). It tilts the whole profile about the centerline: a point `(t, dz)` goes to `(t cos b − dz sin b, t sin b + dz cos b)`. Beyond the ends of a template the surface continues at the bank's slope.
+- With `reference.opendrive` present, its lateral profile wins and `cross_section` is ignored (a NOTE).
+- **Reference implementation:** `stj_core.template_points`, `bank_at`, `profile_point` and `surface_height`. `tools/ribbon_usd.py` builds the collision ribbon from them: the templates add columns, a template strip's surface fills where no band applies, and the heights follow the profile and bank.
+- **The mesh is a cache.** The rule stays in the document and an exported mesh is a cache of it (§7.2, `generated`).
+- **Mapping.** `bank` is OpenDRIVE `<superelevation>`; template slopes become `<crossfall>` or `<shape>`, with a loss for arbitrary `dz` points that goes in `provenance.converted_from[].lost`. In Blender the natural form is a Geometry Nodes modifier turning the centerline curve into a mesh with the template as its profile curve and `bank` as the curve's tilt (`docs/blender_mapping.md`).
+
+**Road and terrain (`centerline.terrain`).** Editors and games disagree on which side wins where a road meets the ground, so the document says: `terrain {mode, shoulder_blend, falloff, sections[]}`.
+
+- `free` (the default): no rule. The validator warns where the terrain rises above the road (§7.4).
+- `drape`: the road follows the terrain. The centerline `z` is a result, and the validator warns where it differs from the terrain by more than 10 cm.
+- `carve`: the terrain is cut or filled to meet the road. Across the drivable width it takes the road surface, and over `shoulder_blend` metres beyond the edge it returns to its natural height, linearly or by smoothstep (`falloff`, default `smooth`). `stj_core.terrain_with_road` is the reference, and a converter to a mesh-only engine bakes it.
+- `sections[] {s_start, s_end, mode, shoulder_blend, falloff}` override over `s` ranges: a bridge or tunnel stays `free`, a cutting carves. Only the road knows where those are, which is why the rule is on the road and not on the terrain.
+
+**Roads and junctions.** A reference line is one road. `roads[]` adds others, each with its own `centerline` (so cross-sections and terrain rules apply to it) and optional `name`, `drivable`, `surface`. `junctions[] {id, roads[{road, s}]}` joins roads by `s` on each, with `road: "reference"` naming the reference line; the validator warns when the points are more than 5 m apart. A timing `side_roads[]` entry may name its `junction`. Timing, pacenotes and surface bands stay on the reference line. A reversed layout (§3.5) moves junction points on the reference line to `s' = L − s`; the geometry of the crossing itself is not described.
+
 ### 7.2 Geometry
 
 `geometry.meshes[]`: `{id, uri, roles: ["visual" | "collision" | "lod"], lod {of, level, switch_distance}}`. `geometry.terrain` (v0.2) is §7.4. A mesh may be visual and collision at once. USD prim and material names that STJ tools generate or recognise follow SVJ's convention with an STJ prefix: `STJ__<category>__<id>` (USD forbids `::` in names; `STJ::<category>::<id>` is accepted as the same), with categories `collision`, `surface` (material names), `reference`, `timing`, `grid`, `pit`, `spawn`, `light`, `scatter`, `instance`, `helper`, `lod`.
 
 **Mesh hints.**
+- `generated {rule, tool, tool_version, inputs_sha256}` says the mesh is a **cache of a rule** in the document (for example the collision ribbon of the cross-section, `rule: "reference.centerline.cross_section"`) and not authored geometry. `inputs_sha256` is `stj_core.rule_hash`, computed over the centerline and the surface bands, so the validator can warn when the mesh is stale and a tool can regenerate it. `tools/ribbon_usd.py` prints the block.
 - `reflective: true` marks a visual mesh that mirrors its surroundings: a mirror, glass or a decorative water face. It is not a driving surface, so the validator warns when it also has the `collision` role.
 - `baked {vertex_colour, shadow_map, specular_map}` says which lighting is stored in the mesh or beside it, so an engine can use it or leave it out instead of multiplying it blindly:
   - `vertex_colour {primvar, role}`: the vertex colour primvar (such as `displayColor`) and what it holds: `light` (baked illumination, the default), `occlusion` or `tint` (a colour variation that is not lighting).
@@ -605,6 +640,8 @@ Each engine has an optimised way to draw grass, trees, crowds and sky: GPU-insta
   - `mesh_attribute` (a per-vertex density primvar `stj_…` of a USD mesh)
 
 A scatter layer is a **rule**, not a list. Two engines given the same layer grow different individual plants; that is intended.
+
+**Authored and generated.** An instance set has `source`: `authored` (the default: placed by hand, kept when a generator runs again) or `generated` (made by a rule or a tool, replaced when it runs again). Put hand-placed objects in their own sets. A scatter layer is a rule and grows different plants in every engine, so single plants cannot be named; `exclude_zones[] {center [x, y], radius}` are circles where the layer must not grow, which is how "I removed that tree" survives.
 
 Since v0.2, instance sets and scatter layers take `when` (a condition, §11.1), and scatter layers take `density_by` (a binding). That is how leafless trees appear in winter or grass disappears under snow, without the variant repeating the scatter array.
 

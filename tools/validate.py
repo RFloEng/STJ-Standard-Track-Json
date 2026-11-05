@@ -1089,14 +1089,23 @@ def check_one_terrain(ctx, ter, p):
         rep.error(f"{p}.holes", f"mask is {terrain.holes.width} x {terrain.holes.height}, heightmap is {nx} x {ny}")
         return
     if ctx.line:
-        above = []
+        above, off = [], []
+        cl = (ctx.doc.get("reference") or {}).get("centerline") or {}
         s = 0.0
         while s <= ctx.line.length:
             x, y, z, _h = ctx.line.frame(s)
             h = terrain.height(x, y)
-            if h is not None and h > z + 0.02 and not terrain.is_hole(x, y):
+            mode = core.terrain_rule_at(cl, s)[0]
+            if mode == "drape":
+                if h is not None and abs(h - z) > 0.1:
+                    off.append((s, h - z))
+            elif mode == "free" and h is not None and h > z + 0.02 and not terrain.is_hole(x, y):
                 above.append((s, h - z))
             s += 2.0
+        if off:
+            worst = max(off, key=lambda a: abs(a[1]))
+            rep.warn(p, f"drape: the road is meant to follow the terrain, but its centerline differs from it at {len(off)} of the "
+                        f"sampled points, worst {worst[1]:+.2f} m at s = {worst[0]:.0f}")
         if above:
             worst = max(above, key=lambda a: a[1])
             rep.warn(p, f"terrain rises above the road at {len(above)} of the sampled points (2 m apart), "
@@ -2035,6 +2044,159 @@ def check_scan(ctx):
             rep.note(path, "no cell_size: the grid spacing of this product is not recorded")
 
 
+def _sections_ok(rep, path, secs, length):
+    """Section ranges in order, inside the line, not overlapping."""
+    prev_end = None
+    for i, sec in enumerate(secs):
+        sp = f"{path}[{i}]"
+        if sec["s_end"] <= sec["s_start"]:
+            rep.error(sp, "s_end must be greater than s_start")
+        if length is not None and sec["s_end"] > length + TOL:
+            rep.error(sp, f"s_end = {sec['s_end']:.1f} m is beyond the line ({length:.1f} m)")
+        if prev_end is not None and sec["s_start"] < prev_end - TOL:
+            rep.error(sp, "overlaps the previous section")
+        prev_end = sec["s_end"]
+
+
+def check_cross_section_of(ctx, cl, p, line):
+    """One centerline's cross_section and terrain rule (spec §7.1)."""
+    rep, doc = ctx.rep, ctx.doc
+    length = line.length if line is not None else None
+    xs = cl.get("cross_section")
+    if xs:
+        templates = {k: v for k, v in (xs.get("templates") or {}).items() if not k.startswith(("x_", "_"))}
+        for tid, tpl in templates.items():
+            tp = f"{p}.cross_section.templates.{tid}"
+            pts = tpl["points"]
+            for j, (a, b) in enumerate(zip(pts, pts[1:])):
+                if b["t"] <= a["t"]:
+                    rep.error(f"{tp}.points[{j + 1}]", "t must increase")
+                elif abs(b["dz"] - a["dz"]) > 1.0:
+                    rep.warn(f"{tp}.points[{j + 1}]", f"height jumps {abs(b['dz'] - a['dz']):.2f} m between neighbouring points: metres, not centimetres?")
+            if "surface" in pts[0]:
+                rep.warn(f"{tp}.points[0].surface", "no strip ends at the first point, so this surface is never used")
+            for j, q in enumerate(pts):
+                if "surface" in q:
+                    ctx.used_surfaces.add(q["surface"])
+                    if q["surface"] not in ctx.surface_ids:
+                        rep.error(f"{tp}.points[{j}].surface", f"unknown surface '{q['surface']}'")
+        secs = xs.get("sections") or []
+        _sections_ok(rep, f"{p}.cross_section.sections", secs, length)
+        for i, sec in enumerate(secs):
+            sp = f"{p}.cross_section.sections[{i}]"
+            if sec["template"] not in templates:
+                rep.error(f"{sp}.template", f"unknown template '{sec['template']}'")
+                continue
+            blend = sec.get("blend", 0)
+            if blend > 0:
+                if i == 0:
+                    rep.note(f"{sp}.blend", "the first section has nothing to blend from: ignored")
+                elif secs[i - 1]["template"] in templates and \
+                        len(templates[secs[i - 1]["template"]]["points"]) != len(templates[sec["template"]]["points"]):
+                    rep.error(f"{sp}.blend", "the two templates have a different number of points, so they cannot be blended")
+                if blend > sec["s_end"] - sec["s_start"] + TOL:
+                    rep.warn(f"{sp}.blend", f"{blend:g} m is longer than the section ({sec['s_end'] - sec['s_start']:g} m)")
+            hw = core.half_widths(doc, sec["s_start"]) if p == "reference.centerline" else None
+            if hw:
+                ts = [q["t"] for q in templates[sec["template"]]["points"]]
+                if min(ts) > -hw[1] + 1e-6 or max(ts) < hw[0] - 1e-6:
+                    rep.warn(sp, f"template '{sec['template']}' (t {min(ts):g} to {max(ts):g}) is narrower than the drivable width (-{hw[1]:g} to {hw[0]:g})")
+        bank = xs.get("bank") or []
+        for j, (a, b) in enumerate(zip(bank, bank[1:])):
+            if b[0] <= a[0]:
+                rep.error(f"{p}.cross_section.bank[{j + 1}]", "s must increase")
+        for j, row in enumerate(bank):
+            if abs(row[1]) > 0.6:
+                rep.warn(f"{p}.cross_section.bank[{j}]", f"{row[1]} rad is {math.degrees(row[1]):.0f} degrees: angles are in radians")
+            if length is not None and row[0] > length + TOL:
+                rep.error(f"{p}.cross_section.bank[{j}]", f"s = {row[0]:.1f} m is beyond the line ({length:.1f} m)")
+        if "bank" in xs and not templates:
+            rep.note(f"{p}.cross_section", "banking without templates: the road is flat across, tilted by the bank angle")
+    rule = cl.get("terrain")
+    if rule:
+        _sections_ok(rep, f"{p}.terrain.sections", rule.get("sections") or [], length)
+        modes = {rule.get("mode", "free")} | {sec.get("mode", rule.get("mode", "free")) for sec in rule.get("sections", [])}
+        geo = doc.get("geometry") or {}
+        if modes & {"drape", "carve"} and not (geo.get("terrain") or geo.get("terrains")):
+            rep.note(f"{p}.terrain", "drape or carve, but the track has no geometry.terrain: the rule has nothing to act on")
+        if "carve" in modes and (rule.get("shoulder_blend", 0) == 0 and not any(
+                sec.get("shoulder_blend") for sec in rule.get("sections", []))):
+            rep.note(f"{p}.terrain", "carve with no shoulder_blend: the terrain steps up at the road edge")
+
+
+def check_cross_section(ctx):
+    """Cross-sections, banking and terrain rules of the reference line and of roads[] (spec §7.1)."""
+    rep, doc = ctx.rep, ctx.doc
+    cl = (doc.get("reference") or {}).get("centerline")
+    if cl:
+        if (doc.get("reference") or {}).get("opendrive") and (cl.get("cross_section") or cl.get("terrain")):
+            rep.note("reference.centerline", "reference.opendrive is given: its lateral profile wins over cross_section and terrain")
+        check_cross_section_of(ctx, cl, "reference.centerline", ctx.line)
+    roads = doc.get("roads", [])
+    _dups(rep, "roads", roads, "road")
+    lines = {"reference": ctx.line}
+    for i, road in enumerate(roads):
+        p = f"roads[{i}]"
+        if road["id"] == "reference":
+            rep.error(f"{p}.id", "'reference' is the reference line's name")
+        line = core.road_line(doc, road["id"])
+        lines[road["id"]] = line
+        check_cross_section_of(ctx, road["centerline"], f"{p}.centerline", line)
+        if "surface" in road:
+            ctx.used_surfaces.add(road["surface"])
+            if road["surface"] not in ctx.surface_ids:
+                rep.error(f"{p}.surface", f"unknown surface '{road['surface']}'")
+    junctions = doc.get("junctions", [])
+    _dups(rep, "junctions", junctions, "junction")
+    for i, j in enumerate(junctions):
+        p = f"junctions[{i}]"
+        pts, seen = [], set()
+        for k, r in enumerate(j["roads"]):
+            rp = f"{p}.roads[{k}]"
+            if r["road"] in seen:
+                rep.warn(rp, f"road '{r['road']}' appears twice in one junction")
+            seen.add(r["road"])
+            if r["road"] not in lines:
+                rep.error(f"{rp}.road", f"unknown road '{r['road']}'")
+                continue
+            line = lines[r["road"]]
+            if line is None:
+                rep.error(f"{rp}.road", f"road '{r['road']}' has no usable centerline")
+                continue
+            if r["s"] > line.length + TOL:
+                rep.error(f"{rp}.s", f"s = {r['s']:.1f} m is beyond road '{r['road']}' ({line.length:.1f} m)")
+                continue
+            pts.append((r["road"], line.frame(r["s"])[:3]))
+        for (ra, pa), (rb, pb) in zip(pts, pts[1:]):
+            gap = math.dist(pa[:2], pb[:2])
+            if gap > 5.0:
+                rep.warn(p, f"roads '{ra}' and '{rb}' are {gap:.1f} m apart at their junction points")
+    ids = {j["id"] for j in junctions}
+    for i, sr in enumerate((doc.get("timing") or {}).get("side_roads", [])):
+        if "junction" in sr and sr["junction"] not in ids:
+            rep.error(f"timing.side_roads[{i}].junction", f"unknown junction '{sr['junction']}'")
+    # authored versus generated scenery, and the stamp on a generated road mesh
+    sc = doc.get("scenery") or {}
+    for i, layer in enumerate(sc.get("scatter", [])):
+        for k, z in enumerate(layer.get("exclude_zones", [])):
+            if z["radius"] > 100:
+                rep.warn(f"scenery.scatter[{i}].exclude_zones[{k}].radius", f"{z['radius']} m: radii are in metres")
+    current = None
+    for i, m in enumerate((doc.get("geometry") or {}).get("meshes", [])):
+        gen = m.get("generated")
+        if not gen:
+            continue
+        p = f"geometry.meshes[{i}].generated"
+        if gen["rule"] != "reference.centerline.cross_section":
+            rep.note(p, f"rule '{gen['rule']}' is not one STJ can check")
+        elif "inputs_sha256" not in gen:
+            rep.note(p, "no inputs_sha256: nothing says whether this mesh is stale")
+        else:
+            current = current or core.rule_hash(doc)
+            if gen["inputs_sha256"] != current:
+                rep.warn(p, "the centerline, cross-section or surface bands changed since this mesh was generated: it is stale")
+
+
 def check_unused_surfaces(ctx):
     sc = ctx.doc.get("scenery") or {}
     for layer in sc.get("scatter", []):
@@ -2134,6 +2296,7 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     check_ground(ctx)
     check_chainage(ctx)
     check_scan(ctx)
+    check_cross_section(ctx)
     check_surface_maps(ctx)
     check_mu(ctx)
     check_rbr_lessons(ctx)
