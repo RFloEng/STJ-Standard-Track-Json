@@ -27,6 +27,13 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - validator checks and the version check; `stj_core.apply_macro` and `tools/ground_bake.py` handle `colour`
   - the gravel stage's terrain gains a colour map
 
+- **Ground materials** (§8.7, from the visual-materials proposal; additive):
+  - `albedo.alpha` says what the alpha channel holds (`height`, `specular`, `roughness`, `gloss`, `none`); `height_in_alpha` stays valid and means `alpha: "height"`
+  - per-layer `roughness` and `occlusion` maps
+  - `blend.method: "mask"` with `blend.mask` and `softness`: a tiling blend mask for each layer after the first, provisional until fitted to an engine
+  - `macro` kind `wetness`: where the ground shows water, scaled by the `wetness` signal
+  - validator checks; `stj_core.ground_blend` (mask) and `wet_amount`; `tools/ground_bake.py` bakes the mask blend and skips wetness maps
+
 ## 0.2 (draft) — 2026-11-02
 
 Survey Tier 2 (`proposals/stj_tier2_proposal.md`, accepted). v0.1 files stay valid. The exception is the reserved `animated_objects` key, which is now an array.

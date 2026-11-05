@@ -654,8 +654,9 @@ glTF cannot express this, because a material has one base colour. Without `groun
 
 | Key | Meaning |
 |---|---|
-| `albedo {uri, height_in_alpha}` | Colour (sRGB). With `height_in_alpha`, the alpha channel is the layer's height. |
+| `albedo {uri, alpha, height_in_alpha}` | Colour (sRGB). `alpha` says what the alpha channel holds: `height`, `specular`, `roughness`, `gloss` or `none` (the default). `height_in_alpha: true` is the older spelling of `alpha: "height"`; if both are given they must agree. DR2 keeps specular in the alpha, other packs roughness or opacity. |
 | `normal {uri}`, `height {uri, channel}` | Optional |
+| `roughness {uri, channel, gloss}`, `occlusion {uri, channel}` | Optional linear maps. `gloss: true` means roughness = 1 − value. Occlusion is 1 where open, 0 where fully occluded. Not needed when the albedo alpha already holds the roughness. |
 | `tile` | Metres per texture repeat (DR2 `WorldUVScale` 0.125 = 8 m) |
 | `projection` | <ul><li>`world_xy`: top-down, u = x/tile, v = y/tile (the default)</li><li>`road`: along the reference line, u = t/tile, v = s/tile</li><li>`{texcoord, scale}`: a UV set of the primitive whose values times `scale` are metres, so u = uv·scale/tile. DR2's road UVs take scale 8.</li></ul> |
 | `height_contrast` | How strongly the height pushes in the blend (DR2 `Thickness`), default 1 |
@@ -682,9 +683,24 @@ detail  = Σ colour_i · m_i / Σ m_i
 
 - The defaults are `height_influence` 0.5 and `depth` 0.2.
 - `method: linear` gives `detail = Σ colour_i · w_i`.
+- `method: mask` blends through a tiling mask instead of heights (below).
 - Blend in linear colour.
 
-**Macro maps** `macro[] {kind: tint | occlusion | other, uri, texcoord | extent, encoding, strength}`. `grey_centred` maps are linear data where 0.5 changes nothing: `final = detail · 2 · map`. `multiply` maps give `final = detail · map`. `colour` maps are sRGB images of the **average colour of the ground**, a baked colour map such as a game's heightfield terrain often has. The detail layers keep their texture and the map replaces their average colour. In linear light, with the layers' weights `w_i` and mean colours `mean_i`:
+**Mask blend** (`blend {method: "mask", mask, softness}`). Many terrain shaders (DR2, Unreal, Unity) blend two layers through a tiling noise mask. `blend.mask` is one mask for two layers, or an array with one mask for each palette layer after the first: `{uri, channel, tile, projection}`, where `channel` is `r` by default, `tile` is metres per repeat and `projection` is `world_xy` (default) or `road`. Layer `j` is laid over the result of the layers before it:
+
+```
+share_j = w_j / (w_0 + … + w_j)
+t_j     = clamp((share_j − k_j) / softness + 0.5, 0, 1)
+result  = lerp(result, colour_j, t_j)           layers in palette order
+```
+
+- `k_j` is the mask value for layer `j` and `softness` is the width of the transition (default 0.15).
+- Only the layers present at the point take part, in palette order, each with its own mask (the mask of palette layer `j` is `mask[j − 1]`). The first layer present is the base and its mask is not used.
+- A weight equal to the mask value gives half and half. Where the share is higher than the mask, the layer shows.
+- **Provisional.** This is the common "lerp through a mask" form, as in Unreal's and Unity's blends. DR2's own formula is not public, so it is not fitted to any engine (§14), and the validator says so in a NOTE.
+- The reference implementation is `stj_core.ground_blend(…, method="mask", masks=[…], softness=…)`. The validator checks that there is one mask per layer after the first.
+
+**Macro maps** `macro[] {kind: tint | occlusion | wetness | other, uri, texcoord | extent, encoding, strength}`. `grey_centred` maps are linear data where 0.5 changes nothing: `final = detail · 2 · map`. `multiply` maps give `final = detail · map`. `colour` maps are sRGB images of the **average colour of the ground**, a baked colour map such as a game's heightfield terrain often has. The detail layers keep their texture and the map replaces their average colour. In linear light, with the layers' weights `w_i` and mean colours `mean_i`:
 
 ```
 base  = Σ w_i · mean_i                          the layers' own average colour
@@ -696,6 +712,8 @@ final = detail · (1 + strength · (ratio − 1))
 - Maps apply in order and the layers' average follows each one, so a later `colour` map re-targets the average instead of compounding with an earlier one: only the last `colour` map shows.
 - Without ground layers, `base` is the base colour.
 - Several `colour` maps apply one after the other; the validator warns about more than one.
+
+**Wetness maps** (`kind: wetness`). A linear 0..1 map of where the ground shows water when it is wet: puddles, darkening and shine collect where the value is high. The wet amount at a point is `clamp(map · strength · wetness, 0, 1)`, where `wetness` is the signal of that name (§11.1) and `strength` scales the map (default 1). `encoding` does not apply and the map never changes the colour by itself. What an engine draws for the wet amount is the engine's: STJ states where and how much, not how it looks (§14). `stj_core.wet_amount` is the reference. DR2: `TWetMask`.
 
 **Terrain.** `geometry.terrain.layers[].ground_layer` names a ground layer instead of `material` + `tile` (§7.4), and `geometry.terrain.macro[]` carries the terrain's macro maps (§7.4).
 

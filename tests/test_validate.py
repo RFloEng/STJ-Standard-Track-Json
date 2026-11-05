@@ -577,6 +577,68 @@ class Ground(unittest.TestCase):
         self.gm["weights"] = {"encoding": "image", "maps": [{"uri": "ground/sec01_tint.png", "channels": "rgb"}], "texcoord": "st"}
         self.assertFinding(self.stage, "ERROR", "3 channels for 4 palette layers")
 
+    def test_alpha_contradicts_height_flag(self):
+        self.stage["ground"]["layers"]["rock"]["albedo"].update({"alpha": "specular", "height_in_alpha": True})
+        self.assertFinding(self.stage, "ERROR", "contradicts height_in_alpha")
+
+    def test_alpha_height_equals_flag(self):
+        self.stage["ground"]["layers"]["rock"]["albedo"].update({"alpha": "height", "height_in_alpha": True})
+        self.assertNotIn("contradicts", " ".join(messages(run(self.stage), "ERROR")))
+
+    def test_roughness_and_occlusion_files_checked(self):
+        self.stage["ground"]["layers"]["rock"]["roughness"] = {"uri": "ground/missing_r.png"}
+        self.stage["ground"]["layers"]["rock"]["occlusion"] = {"uri": "ground/missing_o.png", "channel": "g"}
+        found = " ".join(messages(run(self.stage), "WARN"))
+        self.assertIn("missing_r.png", found)
+        self.assertIn("missing_o.png", found)
+
+    def test_mask_blend_needs_masks(self):
+        self.gm["blend"] = {"method": "mask"}
+        self.assertFinding(self.stage, "ERROR", "needs blend.mask")
+
+    def test_mask_blend_count(self):
+        self.gm["blend"] = {"method": "mask", "mask": {"uri": "ground/rock.png", "tile": 4.0}}
+        self.assertFinding(self.stage, "ERROR", "one per layer after the first")
+
+    def test_mask_blend_valid_is_provisional(self):
+        n = len(self.gm["palette"]) - 1
+        self.gm["blend"] = {"method": "mask", "mask": [{"uri": "ground/rock.png", "tile": 4.0}] * n}
+        report = run(self.stage)
+        self.assertFalse([m for m in messages(report, "ERROR") if "mask" in m])
+        self.assertTrue(any("provisional" in m for m in messages(report, "NOTE")))
+
+    def test_mask_blend_ignored_for_height(self):
+        self.gm["blend"] = {"method": "height", "mask": {"uri": "ground/rock.png", "tile": 4.0}}
+        self.assertFinding(self.stage, "NOTE", "only used by method 'mask'")
+
+    def test_wetness_macro_is_valid(self):
+        self.gm.setdefault("macro", []).append({"kind": "wetness", "uri": "ground/sec01_tint.png", "texcoord": "st"})
+        self.assertFalse([m for m in messages(run(self.stage), "ERROR") if "macro" in m])
+
+    def test_mask_blend_factors(self):
+        flat = [0.5, 0.5]
+        # layer 2's share is 0.7 against a mask of 0.5: fully layer 2; 0.3: fully layer 1
+        self.assertEqual(core.ground_blend([0.3, 0.7], flat, flat, [1, 1], "mask", masks=[0.5]), [0.0, 1.0])
+        self.assertEqual(core.ground_blend([0.7, 0.3], flat, flat, [1, 1], "mask", masks=[0.5]), [1.0, 0.0])
+        # inside the transition: share equals the mask, so half and half
+        f = core.ground_blend([0.5, 0.5], flat, flat, [1, 1], "mask", masks=[0.5])
+        self.assertAlmostEqual(f[0], 0.5)
+        self.assertAlmostEqual(f[1], 0.5)
+
+    def test_mask_blend_chain_sums_to_one(self):
+        f = core.ground_blend([0.4, 0.35, 0.25], [0] * 3, [0] * 3, [1] * 3, "mask", masks=[0.3, 0.5])
+        self.assertAlmostEqual(sum(f), 1.0)
+        self.assertTrue(all(x >= 0 for x in f))
+
+    def test_mask_blend_needs_enough_masks(self):
+        with self.assertRaises(ValueError):
+            core.ground_blend([0.5, 0.3, 0.2], [0] * 3, [0] * 3, [1] * 3, "mask", masks=[0.5])
+
+    def test_wet_amount(self):
+        self.assertEqual(core.wet_amount(0.5, 1.0), 0.5)
+        self.assertEqual(core.wet_amount(0.5, 0.0), 0.0)
+        self.assertEqual(core.wet_amount(1.0, 1.0, strength=2.0), 1.0)
+
     def test_terrain_ground_layer(self):
         self.stage["geometry"]["terrain"]["layers"][0]["ground_layer"] = "lichen"
         self.assertFinding(self.stage, "ERROR", "unknown ground layer 'lichen'")

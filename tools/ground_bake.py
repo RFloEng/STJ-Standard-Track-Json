@@ -7,7 +7,7 @@ fallback for engines that cannot rebuild the blend. Needs the pxr module: pip in
 
     python tools/ground_bake.py <track.usda | doc.stj.json> -o out.png [--material NAME] [--uv st] [--size 1024x128]
 
-Supports the vertex_top3 encoding (one int3 primvar or three int primvars), the world_xy, road and
+Supports the height, linear and mask blends, the vertex_top3 encoding (one int3 primvar or three int primvars), the world_xy, road and
 texcoord projections, and grey_centred, multiply or colour macro maps on the bake's own UV primvar.
 Standard library plus pxr; slow on big meshes by design.
 """
@@ -104,7 +104,10 @@ def bake(doc, base_dir, index=0, width=1024, height=128, uv="st"):
     tex = [Texture(base_dir / l["albedo"]["uri"]) for l in layers]
     blend = gm.get("blend") or {}
     macros = [(Texture(base_dir / m["uri"]), m.get("encoding", "grey_centred"), m.get("strength", 1.0))
-              for m in gm.get("macro", []) if m.get("texcoord", uv) == uv and "extent" not in m]
+              for m in gm.get("macro", []) if m.get("texcoord", uv) == uv and "extent" not in m and m["kind"] != "wetness"]
+    masks = blend.get("mask") if blend.get("method") == "mask" else None
+    masks = [masks] if isinstance(masks, dict) else (masks or [])
+    mask_tex = [(Texture(base_dir / mk["uri"]), mk) for mk in masks]
     out = [[(0, 0, 0)] * width for _ in range(height)]
     for mesh, faces in core.usd_material_meshes(stage, gm["material"]):
         pts = mesh.GetAttribute("points").Get()
@@ -115,7 +118,8 @@ def bake(doc, base_dir, index=0, width=1024, height=128, uv="st"):
         wts = Primvar(mesh, core.usd_attr_name(w.get("weights", "_STJ_SURF_WEIGHTS")))
         uvsets = {l["projection"]["texcoord"]: Primvar(mesh, l["projection"]["texcoord"])
                   for l in layers if isinstance(l.get("projection"), dict)}
-        needs_st = ref is not None and any(l.get("projection") == "road" for l in layers)
+        needs_st = ref is not None and (any(l.get("projection") == "road" for l in layers)
+                                        or any(mk.get("projection") == "road" for _t, mk in mask_tex))
         st_cache = {}
         wanted = None if faces is None else set(faces)
         corner = 0
@@ -129,11 +133,11 @@ def bake(doc, base_dir, index=0, width=1024, height=128, uv="st"):
             for k in range(1, n - 1):
                 tri = [ring[0], ring[k], ring[k + 1]]
                 _raster(out, width, height, tri, f, pts, bake_uv, wts, uvsets, layers, tex, lay, blend, macros,
-                        ref if needs_st else None, st_cache)
+                        ref if needs_st else None, st_cache, mask_tex)
     return out
 
 
-def _raster(out, width, height, tri, f, pts, bake_uv, wts, uvsets, layers, tex, lay, blend, macros, ref, st_cache):
+def _raster(out, width, height, tri, f, pts, bake_uv, wts, uvsets, layers, tex, lay, blend, macros, ref, st_cache, mask_tex=()):
     uvs = [bake_uv.at(f, c, v) for c, v in tri]
     pix = [(u[0] * (width - 1), (1.0 - u[1]) * (height - 1)) for u in uvs]       # USD v runs up, images down
     (x0, y0), (x1, y1), (x2, y2) = pix
@@ -176,11 +180,34 @@ def _raster(out, width, height, tri, f, pts, bake_uv, wts, uvsets, layers, tex, 
                     v = sc * sum(b * q.at(f, c, vv)[1] for b, (c, vv) in zip(bc, tri))
                 rgb, h = tex[li].sample(u, v)
                 cols.append(rgb)
-                hts.append(h if layer["albedo"].get("height_in_alpha") else tex[li].mean_alpha)
+                hts.append(h if layer["albedo"].get("height_in_alpha") or layer["albedo"].get("alpha") == "height" else tex[li].mean_alpha)
                 means.append(tex[li].mean_alpha)
                 cons.append(layer.get("height_contrast", 1.0))
-            fb = core.ground_blend(weights, hts, means, cons, blend.get("method", "height"),
-                                   blend.get("height_influence", 0.5), blend.get("depth", 0.2))
+            kvals = None
+            if blend.get("method") == "mask":
+                kvals = []
+                for mtex, mk in mask_tex:
+                    if mk.get("projection", "world_xy") == "road":
+                        mu_, mv_ = (sum(b * st_cache[vv][1] for b, (_c, vv) in zip(bc, tri)) / mk["tile"],
+                                    sum(b * st_cache[vv][0] for b, (_c, vv) in zip(bc, tri)) / mk["tile"])
+                    else:
+                        mu_, mv_ = x / mk["tile"], y / mk["tile"]
+                    mrgb, malpha = mtex.sample(mu_, mv_, data=True)
+                    ch = mk.get("channel", "r")
+                    kvals.append(malpha if ch == "a" else mrgb[{"r": 0, "g": 1, "b": 2, "gray": 0}[ch]])
+            if kvals is not None:
+                # the mask blend lays the layers present over each other in palette order; each takes its own mask
+                order = sorted(range(len(lay)), key=lambda i: lay[i])
+                part = core.ground_blend([weights[i] for i in order], [hts[i] for i in order],
+                                         [means[i] for i in order], [cons[i] for i in order], "mask",
+                                         masks=[kvals[lay[i] - 1] for i in order[1:]],
+                                         softness=blend.get("softness", core.MASK_DEFAULT_SOFTNESS))
+                fb = [0.0] * len(lay)
+                for i, share in zip(order, part):
+                    fb[i] += share
+            else:
+                fb = core.ground_blend(weights, hts, means, cons, blend.get("method", "height"),
+                                       blend.get("height_influence", 0.5), blend.get("depth", 0.2))
             colour = tuple(sum(fi * c[ch] for fi, c in zip(fb, cols)) for ch in range(3))
             mu, mv = px / (width - 1), 1.0 - py / (height - 1)
             # grey_centred and multiply maps are linear data (0.5 = unchanged for grey_centred); a colour map is

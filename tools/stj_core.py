@@ -612,12 +612,36 @@ def film_depth(doc, base_dir, surface, x, y, s, t, water_depth, ref, dry_line_of
 
 # ── layered ground (spec §8.7) ───────────────────────────────────────────────
 
-def ground_blend(weights, heights, means, contrasts, method="height", influence=0.5, depth=0.2):
+MASK_DEFAULT_SOFTNESS = 0.15
+
+
+def ground_blend(weights, heights, means, contrasts, method="height", influence=0.5, depth=0.2,
+                 masks=None, softness=MASK_DEFAULT_SOFTNESS):
     """Blend factors (summing to 1) of the layers present at a point.
 
     weights: interpolated layer weights; heights: each layer's sampled height (0..1);
     means: each layer texture's mean height; contrasts: height_contrast per layer.
+    method "mask": masks holds the sampled mask value (0..1) for each layer after the first. Layer j is laid
+    over the result of the layers before it with t_j = clamp((share_j - mask_j) / softness + 0.5, 0, 1), where
+    share_j = w_j / (w_0 + .. + w_j). Provisional: not fitted to any engine (spec §8.7).
     """
+    if method == "mask":
+        n = len(weights)
+        if masks is None or len(masks) != n - 1:
+            raise ValueError(f"method 'mask' needs {n - 1} mask values for {n} layers")
+        t = [0.0]
+        run = weights[0]
+        for j in range(1, n):
+            run += weights[j]
+            share = weights[j] / run if run > 0 else 0.0
+            t.append(min(max((share - masks[j - 1]) / softness + 0.5, 0.0), 1.0))
+        factors = [0.0] * n
+        keep = 1.0
+        for j in range(n - 1, 0, -1):
+            factors[j] = t[j] * keep
+            keep *= 1.0 - t[j]
+        factors[0] = keep
+        return factors
     if method == "linear":
         total = sum(weights)
         return [w / total for w in weights] if total > 0 else [1.0 / len(weights)] * len(weights)
@@ -626,6 +650,13 @@ def ground_blend(weights, heights, means, contrasts, method="height", influence=
     keep = [max(sc - (top - depth), 0.0) for sc in scores]
     total = sum(keep)
     return [k / total for k in keep]
+
+
+def wet_amount(map_value, wetness, strength=1.0):
+    """How wet the ground is at a point (0..1): the `wetness` macro map times the `wetness` signal (spec §8.7).
+
+    What the engine draws for it (darkening, shine, puddles) is the engine's; the reference stops here."""
+    return min(max(map_value * strength * wetness, 0.0), 1.0)
 
 
 MACRO_RATIO_RANGE = (0.25, 4.0)      # the `colour` encoding never scales a channel by more than this

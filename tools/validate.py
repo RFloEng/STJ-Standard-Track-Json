@@ -971,7 +971,10 @@ def check_terrain_macro(ctx, ter, p):
     for i, m in enumerate(maps):
         mp = f"{p}.macro[{i}]"
         enc = m.get("encoding", "grey_centred")
-        if "strength" in m and enc != "colour":
+        if m.get("kind") == "wetness":
+            if "encoding" in m:
+                rep.note(f"{mp}.encoding", "a wetness map is 0..1 data, not colour: encoding is ignored")
+        elif "strength" in m and enc != "colour":
             rep.note(f"{mp}.strength", f"only the colour encoding uses strength; ignored for {enc}")
         if enc == "colour" and m.get("kind") == "occlusion":
             rep.warn(f"{mp}.kind", "the colour encoding is an average colour, not occlusion: use kind 'tint'")
@@ -1345,9 +1348,16 @@ def check_ground(ctx):
     used = set()
     for lid, lay in layers.items():
         p = f"ground.layers.{lid}"
-        for k in ("albedo", "normal", "height"):
+        for k in ("albedo", "normal", "height", "roughness", "occlusion"):
             if k in lay and not ctx.file(lay[k]["uri"]).is_file():
                 rep.warn(f"{p}.{k}.uri", f"file not found: {lay[k]['uri']}")
+        alb = lay.get("albedo", {})
+        if "alpha" in alb and "height_in_alpha" in alb and (alb["alpha"] == "height") != alb["height_in_alpha"]:
+            rep.error(f"{p}.albedo", f"alpha '{alb['alpha']}' contradicts height_in_alpha {str(alb['height_in_alpha']).lower()}")
+        if alb.get("alpha") in ("roughness", "gloss") and "roughness" in lay:
+            rep.warn(f"{p}.roughness", f"the albedo alpha already holds {alb['alpha']}: one of the two is ignored")
+        if alb.get("alpha") == "height" and "height" in lay:
+            rep.warn(f"{p}.height", "the albedo alpha already holds the height: the height map is ignored")
         if not 0.05 <= lay["tile"] <= 1000:
             rep.warn(f"{p}.tile", f"{lay['tile']} m per repeat: tile is metres per repeat, not repeats per metre")
         if "surface" in lay:
@@ -1392,12 +1402,34 @@ def check_ground(ctx):
         if enc == "vertex_dense" and len(w.get("attributes", [])) * 4 < len(pal):
             rep.error(f"{p}.weights.attributes", f"{len(w.get('attributes', []))} VEC4 attributes cannot hold {len(pal)} layers")
         blend = gm.get("blend") or {}
-        if blend.get("method", "height") == "height" and not any(
-                layers.get(l, {}).get("height") or layers.get(l, {}).get("albedo", {}).get("height_in_alpha") for l in pal):
+        method = blend.get("method", "height")
+        if method == "height" and not any(
+                layers.get(l, {}).get("height") or layers.get(l, {}).get("albedo", {}).get("height_in_alpha")
+                or layers.get(l, {}).get("albedo", {}).get("alpha") == "height" for l in pal):
             rep.warn(f"{p}.blend", "height blend, but no palette layer has a height (albedo alpha or height map)")
+        if method == "mask":
+            masks = blend.get("mask")
+            masks = [masks] if isinstance(masks, dict) else (masks or [])
+            if not masks:
+                rep.error(f"{p}.blend", "method 'mask' needs blend.mask")
+            elif len(masks) != len(pal) - 1:
+                rep.error(f"{p}.blend.mask", f"{len(masks)} masks for {len(pal)} palette layers: one per layer after the first")
+            for j, mk in enumerate(masks):
+                if not ctx.file(mk["uri"]).is_file():
+                    rep.warn(f"{p}.blend.mask[{j}].uri", f"file not found: {mk['uri']}")
+                if mk.get("projection") == "road" and not ctx.line:
+                    rep.error(f"{p}.blend.mask[{j}].projection", "'road' projection needs a reference centerline")
+            if blend.get("softness", 0.15) > 0.5:
+                rep.warn(f"{p}.blend.softness", f"{blend['softness']}: a transition wider than half the weight range hides the mask")
+            rep.note(f"{p}.blend", "mask blend is provisional: the formula is not fitted to any engine (spec §8.7)")
+        elif "mask" in blend or "softness" in blend:
+            rep.note(f"{p}.blend", f"mask and softness are only used by method 'mask'; ignored for '{method}'")
         for j, mc in enumerate(gm.get("macro", [])):
             if not ctx.file(mc["uri"]).is_file():
                 rep.warn(f"{p}.macro[{j}].uri", f"file not found: {mc['uri']}")
+            if mc["kind"] == "wetness":
+                if "encoding" in mc:
+                    rep.note(f"{p}.macro[{j}].encoding", "a wetness map is 0..1 data, not colour: encoding is ignored")
         if gm["mesh_ref"] not in ctx.meshes:
             rep.error(f"{p}.mesh_ref", f"unknown mesh '{gm['mesh_ref']}'")
             continue
