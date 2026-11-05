@@ -1,6 +1,6 @@
 # STJ proposal: road cross-section and the authoring model
 
-Status: **draft** 2026-11-04, for STJ v0.4. Nothing here is implemented yet.
+Status: **accepted** 2026-11-05 with the recommended answers of §11 (Q1 to Q7), for STJ v0.4. Nothing here is implemented yet.
 
 Source: a design discussion about STJ as a non-destructive working format. The part that several engines can regenerate, and that Blender expresses naturally, is the road profile along the reference line (sections 1 to 5). Section 6 onwards takes a track editor such as BeamNG's World Editor as an example of how a track is authored, and adds what STJ is missing to hold that model: how a road relates to the terrain, road networks, and keeping hand-placed objects through regeneration.
 
@@ -161,7 +161,7 @@ In an editor, a painted forest can be regenerated from its seed, but a tree the 
 - Junction geometry and traffic rules.
 - Any editor's file format. STJ takes the authoring model, not the format.
 
-## 11. Questions for the author
+## 11. Decisions (accepted 2026-11-05: every recommended answer)
 
 - **Q1.** Should `dz` be relative to the centerline in the banked frame, or absolute heights from a datum? Recommended: relative, because a profile then reads the same on a flat and on a banked section.
 - **Q2.** Should templates be allowed to carry more than one surface strip per side, or only the strip ending at each point? Recommended: the latter. It matches how surface bands are already described.

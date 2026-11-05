@@ -8,7 +8,7 @@ Like SVJ, STJ is **a vocabulary, not an engine**. A converter to a given simulat
 
 **Use cases.** Running one game's physics on another game's tracks (for example RBR NGP physics via ReRBR on stages built for other games); keeping tracks of abandoned or second-tier games usable; authoring once (in Blender or from survey data) and shipping to several engines.
 
-**In scope (v0.1):** metadata and provenance, the reference line, glTF geometry, surfaces and their physics, timing, race data (grid, pits, racing lines, pacenotes), environment (location, sun, sky, lighting, default weather), and scenery (vegetation and objects as prototypes, instances and scatter layers).
+**In scope (v0.1):** metadata and provenance, the reference line, geometry (OpenUSD), surfaces and their physics, timing, race data (grid, pits, racing lines, pacenotes), environment (location, sun, sky, lighting, default weather), and scenery (vegetation and objects as prototypes, instances and scatter layers).
 
 **Added in v0.2:**
 - runtime state signals with declarative conditions
@@ -24,12 +24,12 @@ Like SVJ, STJ is **a vocabulary, not an engine**. A converter to a given simulat
 - evolution during an event, with reference laws
 - large worlds: chunks with local origins and tiles
 - reflection probes, screens, crowds and climate statistics
-- OpenUSD: USD meshes next to glTF, the STJ document inside a USD layer, `.usdz` single-file tracks
+- OpenUSD as the only mesh format: the STJ document inside a USD layer, `.usdz` single-file tracks
 
 **Non-goals.**
 
-- STJ is not a mesh format. Geometry is glTF 2.0, road layout is OpenDRIVE, high-resolution road profiles are OpenCRG. STJ references them; it does not re-specify them.
-- STJ is not a renderer description. Visual materials are whatever glTF carries. Shaders, post-processing and engine lighting rigs stay engine-specific (`x_<engine>`).
+- STJ is not a mesh format. Geometry is OpenUSD, road layout is OpenDRIVE, high-resolution road profiles are OpenCRG. STJ references them; it does not re-specify them.
+- STJ is not a renderer description. Visual materials are whatever USD carries (UsdPreviewSurface, MaterialX). Shaders, post-processing and engine lighting rigs stay engine-specific (`x_<engine>`).
 - STJ is not a game-logic format: no missions, scripts or scoring rules beyond timing and track limits.
 - **STJ is not an extraction tool.** Nothing in STJ is designed around getting assets out of games. Converters read files the user owns; they do not decrypt, unpack protected archives or bypass any protection. A file converted from a commercial game is marked `licence.redistributable: false` and stays with the user (§5.2).
 
@@ -59,21 +59,21 @@ Inherited from SVJ (SVJ_Spec §1):
 
 ### 3.1 Single file
 
-One `<name>.stj.json` with every section inline, plus the files it references (glTF, OpenDRIVE, OpenCRG, images) by **relative** URI. Absolute paths and URLs are not permitted (as SVJ §22.2).
+A track is one **OpenUSD stage** with the STJ document inside it (§7.8): a `.usda` while it is worked on, a `.usdz` to ship. The document is also valid on its own as plain text, `<name>.stj.json`, which is what `tools/stj_usd.py extract` writes and what is easiest to read and diff. Either way every section is inline, and the files it references (USD meshes, OpenDRIVE, OpenCRG, images) are named by **relative** URI. Absolute paths and URLs are not permitted (as SVJ §22.2).
 
 ### 3.2 Modular files (`$ref`)
 
-Any object may be `{"$ref": "relative/path.json"}`; the parser replaces it with that file's content. Resolution is relative to the file containing the `$ref`, nesting is allowed, circular references are an error. Identical to SVJ §3.2. Typical use: `scenery` or `race.pacenotes` in their own files.
+Any object may be `{"$ref": "relative/path.json"}`; the parser replaces it with that file's content. Resolution is relative to the file containing the `$ref`, nesting is allowed, circular references are an error. Identical to SVJ §3.2. Typical use: `scenery` or `race.pacenotes` in their own files. This applies to the plain-text form; a document stored inside a USD layer is read as one string.
 
 ### 3.3 Override files
 
-`<name>.stj-override.json` names a `base` and a `patch` applied with **RFC 7396 JSON Merge Patch**, exactly like SVJ §3.4: objects merge recursively, `null` deletes a key, arrays are replaced wholesale. The base may itself be an override; the chain is resolved base first. The merged result MUST validate against `stj.schema.json`. Relative URIs in the result are resolved against the **base** file's folder.
+An override is a document named `<name>.stj-override.json`, or a `.usda` layer that carries it (§7.8). It names a `base` and a `patch` applied with **RFC 7396 JSON Merge Patch**, exactly like SVJ §3.4: objects merge recursively, `null` deletes a key, arrays are replaced wholesale. The base may itself be an override; the chain is resolved base first. The merged result MUST validate against `stj.schema.json`. Relative URIs in the result are resolved against the **base** file's folder.
 
 `_metadata.variant` says what the override is: `weather` (wet), `time_of_day` (night), `layout`, `season`, `setup`, `other`.
 
 ```json
 {
-  "_metadata": { "specification": "STJ-OVERRIDE", "version": "0.1", "base": "./coll_de_prova_gravel.stj.json", "variant": "weather" },
+  "_metadata": { "specification": "STJ-OVERRIDE", "version": "0.1", "base": "./coll_de_prova_gravel.usda", "variant": "weather" },
   "patch": { "environment": { "default_weather": { "condition": "rain", "water_depth": 0.0015 } } }
 }
 ```
@@ -83,7 +83,7 @@ Because arrays are replaced wholesale, an override that changes one sector or on
 ### 3.4 Packaging and Blender
 
 **Delivery package** (what engines and converters read) is one of two forms:
-- **A folder**: the `.stj.json` plus its glTF or USD files, and optionally `.xodr`, `.crg`, mask images and HDRIs.
+- **A folder**: the root `.usda` (or a plain `.stj.json`) plus its USD files, and optionally `.xodr`, `.crg`, mask images and HDRIs.
 - **A single `.usdz`**: the STJ document inside the USD layer (§7.8).
 
 **Authoring package**: a single `.blend` file can hold the entire track. This was checked in Blender 5.2 (see `docs/blender_mapping.md`): the STJ JSON and an OpenDRIVE file as text blocks, surfaces as material custom properties, timing and grid as empties, the reference line as a curve, masks and HDRIs as packed images, instances as linked duplicates, scatter as geometry nodes. An exporter writes the delivery package from it. Engines do not read `.blend`; nothing in STJ requires Blender. `_metadata.authoring_source {uri, tool, tool_version}` names the file a package was made from, so a tool that edits the track can open it.
@@ -115,11 +115,11 @@ Selecting a layout with `layout_document` returns an ordinary STJ document, so c
 A variant is an override file (§3.3) whose `base` is this file. `variants[]` lists them so a tool opening the base knows they exist:
 
 ```json
-"variants": [{ "id": "night", "kind": "time_of_day", "override": "test_ring_gp_night.stj-override.json", "material_variant": "night" }]
+"variants": [{ "id": "night", "kind": "time_of_day", "override": "test_ring_gp_night.usda" }]
 ```
 
 - `kind` is one of `time_of_day`, `weather`, `season`, `event`, `other`. RBR's morning, noon, evening and overcast stage variants are four `time_of_day` / `weather` entries.
-- `material_variant` names a glTF `KHR_materials_variants` variant for texture swaps (wet asphalt, snow cover).
+- Texture swaps (wet asphalt, snow cover) are USD variant sets (`usd_variants`, below) or material changes in the override layer.
 - `usd_variants {set: variant}` selects USD variant sets with the variant (§7.8): the JSON patch changes the semantics, the USD variant changes what the stage shows. A variant may have an override, USD variants, or both.
 - The validator checks that each listed file is an override of this very file, applies it, and validates the result. It reports only the findings the variant adds.
 
@@ -129,7 +129,7 @@ A variant is an override file (§3.3) whose `base` is this file. `variants[]` li
 
 ### 4.1 Units
 
-SI, as SVJ §2: m, kg, N, s, Pa, rad, m/s; temperature in °C. Exceptions, stated where they occur: **latitude and longitude in degrees** (WGS 84); **water rates in mm/h** (`precipitation`, `drain_rate`, drain `capacity`; in m/s they would read 2.8·10⁻⁷ and nobody could check them); light units follow glTF `KHR_lights_punctual` (lux for the sun, candela for point and spot lights); colour temperature in K. Curves are `[[x, y], ...]` with x increasing.
+SI, as SVJ §2: m, kg, N, s, Pa, rad, m/s; temperature in °C. Exceptions, stated where they occur: **latitude and longitude in degrees** (WGS 84); **water rates in mm/h** (`precipitation`, `drain_rate`, drain `capacity`; in m/s they would read 2.8·10⁻⁷ and nobody could check them); light units follow UsdLux (lux for the sun, candela for point and spot lights); colour temperature in K. Curves are `[[x, y], ...]` with x increasing.
 
 ### 4.2 Track coordinates (s, t, h) and the reference line
 
@@ -145,7 +145,7 @@ Timing lines, sectors, splits, pit lane, track limits, pacenotes, surface bands 
 
 `_metadata.coordinate_system: "OpenDRIVE"`: right-handed, **Z up**, `x`/`y` horizontal in metres, heading counter-clockwise from +X (OpenDRIVE `hdg`). When the file is geo-referenced, +X is grid east and +Y grid north. The value is the one SVJ already lists in its `coordinate_system` enum.
 
-Why not SAE J670 (Z down), the frame of SVJ vehicles: every standard STJ references is Z-up (OpenDRIVE, OpenCRG, PROJ/GIS, Blender; glTF is Y-up but up is positive). With Z up, OpenDRIVE and OpenCRG data pass through unchanged and elevation reads as elevation. SVJ is a body frame and STJ a world frame; they meet in one fixed rotation (§4.6).
+Why not SAE J670 (Z down), the frame of SVJ vehicles: every standard STJ references is Z-up (OpenDRIVE, OpenCRG, PROJ/GIS, Blender; glTF is Y-up, but up is positive). With Z up, OpenDRIVE and OpenCRG data pass through unchanged and elevation reads as elevation. SVJ is a body frame and STJ a world frame; they meet in one fixed rotation (§4.6).
 
 **Geodesy, plainly:**
 
@@ -159,15 +159,17 @@ Why not SAE J670 (Z down), the frame of SVJ vehicles: every standard STJ referen
 
 JSON stores doubles, but engines mostly use float32. The resolution of float32 is about 2 mm between 16 and 32 km from the origin, coarse enough to make wheel contact jitter. Put the origin near the track's centroid and keep geometry within about 10 km. A converter that re-origins records the shift in `environment.origin_offset` (`x_original = x + origin_offset`). The validator warns beyond 10 km.
 
-### 4.5 glTF and Blender
+### 4.5 USD, Blender and glTF
 
-glTF 2.0 fixes its own frame (Y up, +Z front, metres), so STJ needs no axis declaration for glTF assets:
+A USD stage declares its own frame with `upAxis` and `metersPerUnit`, and STJ expects `Z` and `1`, which is also Blender's scene frame (§7.7). **Blender scene coordinates are STJ coordinates.**
+
+glTF is no longer an STJ mesh format, but converters still meet glTF assets (many games and tools export it). glTF 2.0 fixes its own frame (Y up, +Z front, metres), so they map with one fixed rotation:
 
 ```
 (x, y, z)_STJ = (x, −z, y)_glTF        (x, y, z)_glTF = (x, z, −y)_STJ
 ```
 
-This is a +90° rotation about X, exactly what Blender's glTF importer and exporter apply with "+Y up". **Blender scene coordinates are STJ coordinates.** This was checked by round-tripping a generated ribbon through Blender 5.2: a point at known (s, t) lands within 0.6 mm.
+This is a +90° rotation about X, exactly what Blender's glTF importer and exporter apply with "+Y up". This was checked by round-tripping a generated ribbon through Blender 5.2: a point at known (s, t) lands within 0.6 mm.
 
 ### 4.6 Placing an SVJ vehicle
 
@@ -272,12 +274,12 @@ When `reference.surface` is absent the tyre is taken to describe STJ-REF. Tyre c
 **Where a surface applies**, highest precedence first:
 
 0. **Surface maps** (`surfaces.maps[]`). The surface varies **inside** collision primitives, as on real ground, where gravel patches, swept wheel tracks and verges do not follow triangle edges.
-   - A map names a collision mesh's material, a `palette` of surface ids, and weights in one of the `ground` encodings (§8.7): `vertex_top3` with `_STJ_SURF_LAYERS` / `_STJ_SURF_WEIGHTS`, `vertex_dense`, `image` or `id_map`.
+   - A map names a collision mesh's material, a `palette` of surface ids, and weights in one of the `ground` encodings (§8.7): `vertex_top3` with the primvars `stj_surf_layers` / `stj_surf_weights` (§7.7), `vertex_dense`, `image` or `id_map`.
    - `contact: blend` (the default) makes the contact's parameters (scaling factors, rolling resistance, deformable values, μ) the weighted mean of the palette entries present. `contact: dominant` takes the largest weight.
    - A map may carry `when` (a condition, §11.1). **The first map whose condition holds is used**; a map without `when` always holds. Bindings and ground materials take `when` the same way.
    - A single file can therefore hold one surface map per state, for example new / normal / worn × dry / damp / wet, chosen by the `wear` and `wetness` signals at load or live.
 
-1. **Collision mesh materials.** For a glTF mesh with role `collision`, each primitive's material maps to a surface: either the material is named `STJ::surface::<id>`, or a `surfaces.bindings[]` entry `{mesh_ref, material | node, surface}` names it. The second form leaves imported meshes unrenamed. Every engine's mechanism reduces to this: AC mesh-name prefixes (`1ROAD`), RBR per-triangle material ids, BeamNG material `groundType`, ACR physical materials.
+1. **Collision mesh materials.** For a USD mesh with role `collision`, each UsdShade material maps to a surface (it covers its faces through GeomSubsets): either the material is named `STJ__surface__<id>` (`STJ::surface::<id>` is accepted as the same), or a `surfaces.bindings[]` entry `{mesh_ref, material | prim, surface}` names it. The second form leaves imported meshes unrenamed. Every engine's mechanism reduces to this: AC mesh-name prefixes (`1ROAD`), RBR per-triangle material ids, BeamNG material `groundType`, ACR physical materials.
 2. **OpenDRIVE lane materials**: `surfaces.opendrive_materials` maps `<material surface="…">` names to ids.
 3. **Bands**: `surfaces.bands[]` `{s_start, s_end, t_min, t_max, surface}` along the reference line. Later bands win where they overlap. On a closed line `s_end < s_start` crosses s = 0. Bands make a centerline-only file drivable; `tools/ribbon_usd.py` turns them into a collision mesh.
 4. `surfaces.default`.
@@ -421,7 +423,7 @@ STJ fixes simple, first-order **reference laws**. An engine may run its own, bet
 
 ### 7.2 Geometry
 
-`geometry.meshes[]`: `{id, uri, roles: ["visual" | "collision" | "lod"], lod {of, level, switch_distance}}`. `geometry.terrain` (v0.2) is §7.4. A mesh may be visual and collision at once. glTF node names that STJ tools generate or recognise follow SVJ's convention with an STJ prefix: `STJ::<category>::<id>`, with categories `collision`, `surface` (material names), `reference`, `timing`, `grid`, `pit`, `spawn`, `light`, `scatter`, `instance`, `helper`, `lod`.
+`geometry.meshes[]`: `{id, uri, roles: ["visual" | "collision" | "lod"], lod {of, level, switch_distance}}`. `geometry.terrain` (v0.2) is §7.4. A mesh may be visual and collision at once. USD prim and material names that STJ tools generate or recognise follow SVJ's convention with an STJ prefix: `STJ__<category>__<id>` (USD forbids `::` in names; `STJ::<category>::<id>` is accepted as the same), with categories `collision`, `surface` (material names), `reference`, `timing`, `grid`, `pit`, `spawn`, `light`, `scatter`, `instance`, `helper`, `lod`.
 
 **Mesh hints.**
 - `reflective: true` marks a visual mesh that mirrors its surroundings: a mirror, glass or a decorative water face. It is not a driving surface, so the validator warns when it also has the `collision` role.
@@ -479,7 +481,7 @@ Edges add meaning to the geometry. They do not replace collision meshes: a conve
 - The **first layer is the base**. Its weight is `1 − Σ(others)`, so it has no map.
 - Other layers carry a weight map (8-bit PNG, `channel` `gray`, `r`, `g`, `b` or `a`), sampled bilinearly.
 - A terrain contact takes the **dominant layer's** surface; blended friction is not portable.
-- `material` names a glTF material that draws the layer, and `tile` gives its world repeat. `ground_layer` names a layered-ground layer instead (§8.7).
+- `material` names a UsdShade material that draws the layer, and `tile` gives its world repeat. `ground_layer` names a layered-ground layer instead (§8.7).
 - Scatter attaches to the layer's surface through `area.surfaces`, like any other surface.
 
 **Macro maps.** `macro[]` puts low-resolution maps over the whole heightfield. The keys are those of §8.7's `ground.materials[].macro`, without `texcoord` (a heightfield has no UVs): `{kind: tint | occlusion | other, uri, extent, encoding, strength}`. The image covers `extent` (default: the heightmap's), is sampled bilinearly, and its row 0 is the +Y (north) edge, like every STJ raster. `encoding` is `grey_centred` (default), `multiply` or `colour` (§8.7). The maps apply to the terrain's detail colour after the layer blend; road meshes keep the macro maps of their own `ground.materials[]`.
@@ -524,12 +526,12 @@ What is streamed, when, and at what budget stays the engine's. STJ says how the 
 
 ### 7.7 OpenUSD geometry
 
-Meshes may be **OpenUSD** (`.usd`, `.usda`, `.usdc`, `.usdz`) as well as glTF (`proposals/stj_usd_proposal.md`).
+Meshes are **OpenUSD** (`.usd`, `.usda`, `.usdc`, `.usdz`), the only mesh format (`proposals/stj_usd_proposal.md`).
 
-- **glTF is the lean delivery form; USD is the rich one.** USD keeps what glTF drops: per-face data, curves, MaterialX, physics, audio, variants, payloads. Probe results are in `docs/blender_mapping.md` §4.
+- **USD is the only mesh format.** Earlier drafts also allowed glTF as a lean delivery form. USD keeps what glTF drops and STJ needs: per-face data, curves, MaterialX, physics, audio, variants, payloads. Probe results are in `docs/blender_mapping.md` §4.
 - **Frame.** The stage declares `upAxis = "Z"` and `metersPerUnit = 1`, which is the STJ world frame and Blender's default. Other values are allowed, but the validator warns and converters must apply them.
 
-**USD equivalents of the glTF rules:**
+**From glTF to USD.** The names and attributes below were first written for glTF, and a converter that reads a glTF asset maps them this way:
 
 | glTF | USD |
 |---|---|
@@ -546,7 +548,7 @@ Meshes may be **OpenUSD** (`.usd`, `.usda`, `.usdc`, `.usdz`) as well as glTF (`
 
 ### 7.8 STJ inside USD and single-file tracks
 
-- **The document in the layer.** An STJ document may live in a USD root layer's `customLayerData["stj"]` as a JSON string. Tools read it from there and validate it like any `.stj.json`.
+- **The document in the layer.** An STJ document may live in a USD root layer's `customLayerData["stj"]` as a JSON string. Tools read it from there and validate it like a plain `.stj.json`.
   - URIs are relative to the layer, and the document may name its own file as a mesh.
   - `tools/stj_usd.py embed` writes it into a layer and `extract` writes it back out.
 - **`.usdz` = one file per track** (answers Q12). `tools/stj_usd.py package` writes the root layer first, then every file the document and the USD layers reference. Members are stored uncompressed and aligned to 64 bytes, as the format requires, and the validator also runs OpenUSD's own package rules.
@@ -554,8 +556,8 @@ Meshes may be **OpenUSD** (`.usd`, `.usda`, `.usdc`, `.usdz`) as well as glTF (`
   - meshes are USD
   - terrain is PNG
   - override files are USD layers too (next point)
-  - glTF, OpenDRIVE, OpenCRG and raw terrain need a folder package instead
-- **Overrides as USD layers.** A variant's override can be a `.usda` layer that sublayers the track, sets the USD variant selections itself, and carries the STJ-OVERRIDE document in its own `customLayerData["stj"]`. Opened in any USD tool, it shows the variant. Opened by an STJ tool, it resolves like an `.stj-override.json`.
+  - OpenDRIVE, OpenCRG and raw terrain need a folder package instead
+- **Overrides as USD layers.** A variant's override can be a `.usda` layer that sublayers the track, sets the USD variant selections itself, and carries the STJ-OVERRIDE document in its own `customLayerData["stj"]`. Opened in any USD tool, it shows the variant. Opened by an STJ tool, it resolves like a plain `.stj-override.json`.
 - **Validation of USD is optional.** USD checks need the `pxr` module (`pip install usd-core`). Without it, USD meshes are reported as a NOTE ("not checked"), and STJ documents inside USD cannot be read.
 
 ---
@@ -568,24 +570,22 @@ Each engine has an optimised way to draw grass, trees, crowds and sky: GPU-insta
 
 - Converting **back to the same engine** (or a close relative): the `x_<engine>` block is used verbatim. Nothing is lost.
 - Converting **to another engine**: the semantic fields (class, species, height, density, area) select the target engine's nearest native asset or system.
-- Engines with neither: the optional generic `mesh` (glTF) is placed.
+- Engines with neither: the optional generic `mesh` (USD) is placed.
 
 `x_<engine>` blocks reference assets **by name** in the user's installed game (`"forest_item": "pine_tall"`). They never embed the game's files, so a scenery description is not a copy of anyone's assets.
 
 ### 8.2 `scenery`
 
-- `prototypes` (by id): `class` (`tree`, `bush`, `grass`, `groundcover`, `flowers`, `crop`, `rock`, `building`, `fence`, `barrier`, `tyre_wall`, `sign`, `pole`, `spectators`, `prop`, `other`), `species` (botanical name), `height`, `radius`, `collision` (`none`, `trunk`, `box`, `mesh`), `collision_radius`, `breakable`, `mesh {mesh_ref, node}`, `x_<engine>`.
+- `prototypes` (by id): `class` (`tree`, `bush`, `grass`, `groundcover`, `flowers`, `crop`, `rock`, `building`, `fence`, `barrier`, `tyre_wall`, `sign`, `pole`, `spectators`, `prop`, `other`), `species` (botanical name), `height`, `radius`, `collision` (`none`, `trunk`, `box`, `mesh`), `collision_radius`, `breakable`, `mesh {mesh_ref, prim}`, `x_<engine>`.
 - `prototypes[].wind {amplitude, frequency, weight_primvar, phase_primvar}`: wind-driven sway of trees, bushes and cards. `amplitude` (m) is the sway of the free end in a reference wind and `frequency` is in Hz; the engine scales both with the wind speed of the weather. The two primvars (names starting `stj_`) are float vertex primvars on the prototype's USD mesh: the sway weight per vertex (0 at the base, 1 at the free end) and a phase per vertex in turns, so the parts of one object do not move together. Games that store sway per vertex (billboards and trees in RBR) map to these. The alpha-test cutoff of such cards is a material property and stays in USD (`opacityThreshold`).
-- `instances[]`: `{prototype, transforms: [[x, y, z, heading, scale?], …]}`, upright in Z, or `{prototype, gltf {mesh_ref, node}}` for a node carrying `EXT_mesh_gpu_instancing`. Blender exports linked duplicates under one empty that way.
+- `instances[]`: `{prototype, transforms: [[x, y, z, heading, scale?], …]}`, upright in Z, or `{prototype, usd {mesh_ref, prim}}` for a PointInstancer (or a prim with native instances) in a USD mesh file.
 - `scatter[]`: `{id, prototypes [{prototype, weight}], density (per m²), area, exclude_surfaces, min_spacing, scale_range, align_to_normal, seed, cull_distance, x_<engine>}`. `area` is the intersection of the given keys:
   - `surfaces` (grow on these surfaces; how BeamNG groundcover, UE landscape grass and CSP grass attach)
   - `bands` (along the reference line)
   - `mask` (greyscale image + `extent`)
-  - `mesh_attribute` (a per-vertex `_`-prefixed glTF attribute, which Blender exports from point attributes)
+  - `mesh_attribute` (a per-vertex density primvar `stj_…` of a USD mesh)
 
 A scatter layer is a **rule**, not a list. Two engines given the same layer grow different individual plants; that is intended.
-
-**Foliage sway.** A glTF attribute `_SWAY` (VEC3: amplitude m, frequency Hz, phase rad) per vertex describes how foliage moves, scaled by the `wind_speed` signal. Engines rebuild it with their own vertex animation.
 
 Since v0.2, instance sets and scatter layers take `when` (a condition, §11.1), and scatter layers take `density_by` (a binding). That is how leafless trees appear in winter or grass disappears under snow, without the variant repeating the scatter array.
 
@@ -594,7 +594,7 @@ Since v0.2, instance sets and scatter layers take `when` (a condition, §11.1), 
 The sun, moon and stars follow from `geo_reference`, `north_heading`, `timezone` and the date and time. STJ does not store their positions.
 
 - `environment.sky`: `model` (`physical` = single or multiple scattering atmosphere, `preetham`, `hosek_wilkie`, `hdri`, `engine_default`), `turbidity`, `hdri {uri, rotation, intensity}`, `clouds {coverage, kind}`, `fog {visibility, height_falloff, color}`. The Blender 5.2 Sky Texture types map directly.
-- `environment.lighting`: `sun {illuminance, color_temperature, color, direction}`, `ambient {color, intensity}`, `lights[]` `{id, kind, type: point | spot, position, direction, intensity (cd), color_temperature, range, inner/outer_cone_angle, schedule: always | night | event}`, or `gltf_lights` naming a glTF mesh entry whose file carries `KHR_lights_punctual` (Blender exports its lights that way).
+- `environment.lighting`: `sun {illuminance, color_temperature, color, direction}`, `ambient {color, intensity}`, `lights[]` `{id, kind, type: point | spot, position, direction, intensity (cd), color_temperature, range, inner/outer_cone_angle, schedule: always | night | event}`, or `usd_lights` naming a mesh entry whose USD file carries UsdLux lights.
   - **A fixed lighting rig.** Some games store a sun direction and ambient and diffuse colours for each weather instead of computing the sun. `sun.direction` is a unit vector from the ground towards the sun, in STJ world axes. When it is present the sun is fixed there: date, time and place no longer move it, and the `sun_elevation` signal follows from the vector. `sun.color` (linear RGB) wins over `color_temperature`. `ambient.color` is linear RGB and `intensity` a multiplier. Without them the sky model supplies both.
   - Light that changes with the weather (fog colour, ambient, sun) goes in the weather's variant (§3.6, §11).
 - Since v0.2, lights also take `when` (on while true) and `intensity_by` (a multiplier).
@@ -619,7 +619,7 @@ Engine lighting rigs, exposure and post-processing stay in `x_<engine>`.
 
 `mode: bendable` (with `stiffness`, N·m/rad) makes saplings and posts bend under a car instead of stopping it.
 
-Values are for scale 1. A scaled physical instance is a WARN, because engines disagree whether mass scales with the cube of scale. v0.1 `breakable: true` without `physics` means `mode: breakable` with engine defaults. Blender's Rigid Body settings map directly (mass, friction, restitution, shape), but the glTF exporter drops them, so the STJ exporter writes them.
+Values are for scale 1. A scaled physical instance is a WARN, because engines disagree whether mass scales with the cube of scale. v0.1 `breakable: true` without `physics` means `mode: breakable` with engine defaults. Blender's Rigid Body settings map directly (mass, friction, restitution, shape), and the STJ exporter writes them into the document.
 
 ### 8.5 Animated objects (v0.2)
 
@@ -628,15 +628,15 @@ Values are for scale 1. A scaled physical instance is a WARN, because engines di
 | Key | Meaning |
 |---|---|
 | `id`, `kind` | `flag`, `clock`, `windmill`, `gate`, `barrier_arm`, `crowd`, `vehicle`, `aircraft`, `scoreboard`, `machinery`, `other`; lets an engine substitute its own system |
-| `target {mesh_ref, nodes[]}` | glTF nodes that move |
-| `animation` | Name of a **glTF animation** in that file (TRS and morph weights; skinning allowed). Engine files (AC `.ksanim`, rF2 `.ANIM`) stay in `x_<engine>`. |
+| `target {mesh_ref, nodes[]}` | USD prim paths that move |
+| `time_range` | `[start, end]` time codes of the animation authored on the prims in the stage. USD has no named clips. Engine files (AC `.ksanim`, rF2 `.ANIM`) stay in `x_<engine>`. |
 | `playback` | `loop`, `ping_pong`, `once`, `hold` |
 | `speed_by` | Binding: playback-rate multiplier (windmill speed from `wind_speed`) |
 | `time_by` | Binding: normalised animation time 0…1 instead of playback (a gate opened by `nearest_vehicle_distance`). Not together with `speed_by`. |
 | `when` | Condition: plays while true; otherwise rests at time 0 (`hold`: last frame) |
 | `collides` | The moving nodes are a kinematic collider |
 
-Blender actions export as glTF animations under their action name (verified in Blender 5.2).
+Blender actions export as USD time samples per frame; the action name is not kept (`docs/blender_mapping.md` §4).
 
 **Engine-driven objects.** Some games name an animated object (a start clock, a flag) and let their own script move it, with no keyframes stored. Such an object has a `kind` and a `target` but no `time_range`; the script name stays in `x_<engine>` (`x_rbr: {script: …}`), because it means nothing to another engine, while the `kind` is what another engine can act on. The validator warns when an object has neither a `time_range` nor an `x_<engine>` block, since nothing then says how it moves.
 
@@ -653,7 +653,7 @@ Top-level `audio`:
 - `ambience`: the preset outside every zone.
 - `reflections [[s, left_m, right_m], …]`: the distance to reflecting surfaces on each side along the road. Engines use it for engine echo in cuttings and villages.
 
-Sound files are WAV, Ogg Vorbis or FLAC, **made or licensed by the author**. FMOD and Wwise banks stay in `x_<engine>`, referenced by event name. Converters never extract a game's audio. Tyre and rolling sounds follow from the surface `class`; engine sound ids (AC `WAV`) stay in the surface's `x_<engine>`. Blender Speaker objects hold all emitter parameters and a packed sound, but the glTF exporter keeps only an empty node, so the STJ exporter writes `audio`.
+Sound files are WAV, Ogg Vorbis or FLAC, **made or licensed by the author**. FMOD and Wwise banks stay in `x_<engine>`, referenced by event name. Converters never extract a game's audio. Tyre and rolling sounds follow from the surface `class`; engine sound ids (AC `WAV`) stay in the surface's `x_<engine>`. Blender Speaker objects hold all emitter parameters and a packed sound, and the STJ exporter writes `audio`.
 
 ### 8.7 Layered ground (v0.2)
 
@@ -663,7 +663,7 @@ Terrains are drawn the same way almost everywhere:
 - a **height blend**, so stones show through grass before the grass fades
 - large, low-resolution **macro** maps on top
 
-glTF cannot express this, because a material has one base colour. Without `ground`, a converter can only bake the ground into images, which loses sharpness and the layers that BeamNG, UE, Unity and CSP rebuild natively. Rationale and the DR2 case: `proposals/stj_layered_ground_proposal.md`.
+A material cannot express this: it has one surface, and the blend weights are per-face data, not a material property. Without `ground`, a converter can only bake the ground into images, which loses sharpness and the layers that BeamNG, UE, Unity and CSP rebuild natively. Rationale and the DR2 case: `proposals/stj_layered_ground_proposal.md`.
 
 **`ground.layers`** (by id):
 
@@ -677,14 +677,14 @@ glTF cannot express this, because a material has one base colour. Without `groun
 | `height_contrast` | How strongly the height pushes in the blend (DR2 `Thickness`), default 1 |
 | `surface` | Physics surface; a contact takes the dominant layer's |
 
-**`ground.materials[]`**: `{mesh_ref, material, palette[], weights, blend, macro[]}`. These name a glTF material, which keeps a plain base colour as the fallback for viewers that ignore STJ. `palette` lists layer ids, and weights refer to them by index.
+**`ground.materials[]`**: `{mesh_ref, material, palette[], weights, blend, macro[]}`. These name a UsdShade material, which keeps a plain base colour as the fallback for viewers that ignore STJ. `palette` lists layer ids, and weights refer to them by index.
 
 **Weight encodings** (`weights.encoding`). Each source goes in losslessly, and converters translate between them: rasterise, keep the 3 strongest layers per triangle, or take the argmax.
 
 | Encoding | Storage | Lossless for |
 |---|---|---|
-| `vertex_top3` | glTF `_STJ_LAYERS` (VEC3: the triangle's 3 palette indices, equal on its 3 vertices) and `_STJ_WEIGHTS` (VEC2: wa, wb; wc = 1 − wa − wb). Triangles with different layer sets do not share vertices. | DR2 |
-| `vertex_dense` | `attributes`: VEC4 attributes, 4 palette entries each | vertex-painted meshes |
+| `vertex_top3` | `indices`: the face's 3 palette indices as uniform (per-face) int primvars, one `int3` primvar or three int primvars. `weights`: a `float2` primvar (vertex or faceVarying) with wa, wb; wc = 1 − wa − wb. No vertex is split where the layer set changes (§7.7). | DR2 |
+| `vertex_dense` | `attributes`: `float4` primvars, 4 palette entries each | vertex-painted meshes |
 | `image` | `maps[] {uri, channels}` on a `texcoord` or over an `extent`; channels map to palette entries in order | Unity splatmaps, UE weightmaps, CSP masks |
 | `id_map` | One map whose value is the palette index | BeamNG layer maps |
 
@@ -874,13 +874,13 @@ The consumers are:
 
 ## 12. Validation
 
-`python tools/validate.py file.stj.json [more files] [--strict]` runs:
+`python tools/validate.py file.usda | file.usdz | file.stj.json [more files] [--strict]` runs:
 
 1. `$ref` expansion and override resolution (§3.2, §3.3). An override is checked against `schema/stj-override.schema.json` first.
 2. JSON Schema validation of the resulting document.
 3. Cross-reference rules:
    - **Ids**: every surface id used (default, bindings, bands, OpenDRIVE map, `base_surface`, scatter areas) exists. Mesh, CRG and prototype references resolve. Ids are unique.
-   - **glTF**: bound materials and nodes exist in the file. `STJ::surface::<id>` names refer to real surfaces. Unbound collision materials are reported.
+   - **USD meshes**: bound materials and prims exist in the file (needs `pxr`, §7.8). `STJ__surface__<id>` names refer to real surfaces. Unbound collision materials are reported.
    - **Reference line**: OpenDRIVE roads in `route` exist; the centerline, OpenDRIVE and stated lengths agree within 1%; the track type matches `closed`; extent is within 10 km (§4.4).
    - **Along the line**: every `s` lies on the line. Start < splits < finish ≤ stop. Sectors are contiguous from start (or start/finish) to finish (or a full lap). Pacenotes are ordered. The grid is ordered from pole backwards. All of this is in lap distance on closed tracks.
    - **Race control**: DRS detection, activation and deactivation in order; control and service-area ids unique; side roads on the line; a weather schedule never goes back in time within a session.
@@ -892,7 +892,7 @@ The consumers are:
    - **Signals** (v0.2): known names; enum signals use `eq`, `ne` or `in` with valid values; numeric values in range (degrees given for `sun_elevation`?); curves for numbers and maps for enums; `start_lights_lit` within the light count.
    - **Terrain**: files readable, `size` matching the image, square cells, `2^n + 1` sizes, layer surfaces and materials, hole mask on the same grid, terrain no higher than 2 cm above the reference line.
    - **Water and surfaces**: body shapes per kind, positive widths and depths, bed surfaces, drivable and out-of-bounds not both; accumulation, drain and shelter bands on the line; `dry_line` and line states naming real racing lines; substitutions to existing surfaces with no chains; rubber not on loose surfaces, swept lines on deformable ones.
-   - **Props, animation, audio, UI**: inertia triangle inequality, tether for tethered props, unscaled physical instances; glTF nodes and animation names exist; `ref_distance` < `max_distance`, open audio formats; media and map files exist.
+   - **Props, animation, audio, UI**: inertia triangle inequality, tether for tethered props, unscaled physical instances; USD prims exist and animation ranges are ordered; `ref_distance` < `max_distance`, open audio formats; media and map files exist.
    - **Ground**:
      - palette ids exist
      - every attribute the encoding and projections need is on the primitives of the named material
@@ -937,7 +937,7 @@ ERROR fails a file; WARN fails it with `--strict`; NOTE never fails.
 | ASAM OpenDRIVE | Road layout and reference line (`reference.opendrive`), lane materials (§6.3), the world frame (§4.3), `s`/`t` and `<geoReference>`. STJ adds what OpenDRIVE does not carry: grip physics, race timing, racing data, scenery semantics. |
 | ASAM OpenCRG | High-resolution road elevation or friction grids (`geometry.crg`), placed like OpenDRIVE `<CRG>`. |
 | OpenUSD | Rich geometry and single-file tracks (§7.7, §7.8): primvars, GeomSubsets, UsdPhysics, UsdMedia, variant sets, payloads, `.usdz` packages. The STJ document may live in a layer's `customLayerData`. |
-| glTF 2.0 | Lean delivery meshes. `KHR_lights_punctual` for lights, `EXT_mesh_gpu_instancing` for instances, custom `_` attributes for scatter density, `extras` for per-node and per-material STJ data, animations for `animated_objects`. Audio parameter names follow the KHR_audio_emitter drafts. |
+| glTF 2.0 | Not an STJ mesh format. Converters that read glTF assets apply the fixed rotation of §4.5 and map `KHR_lights_punctual` to UsdLux, `EXT_mesh_gpu_instancing` to PointInstancer and animations to time samples (§7.7). Audio parameter names follow the KHR_audio_emitter drafts. |
 | PNG | Heightmaps (16-bit), weight, hole and accumulation maps, minimaps (§7.4) |
 | ISO 8608 / ISO 13473-1 | Road roughness PSD / macrotexture (§6.7). |
 | RFC 7396 | Override files (§3.3). |
