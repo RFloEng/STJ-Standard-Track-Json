@@ -40,6 +40,13 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - `prototypes[].wind` (§8.2); `water.bodies[].physical: false` (§7.5); `meshes[].reflective` and `baked` (§7.2)
   - validator checks for all of them; `stj_core.ReferenceLine` takes per-segment tangents
   - open: asset manifest with licences, and LOD ranges for prototypes
+- **Materials, decals, assets and prototype LODs** (`proposals/stj_visual_materials_proposal.md`, `proposals/stj_rbr_gaps_proposal.md`; additive):
+  - material profile for visual and decal meshes: a UsdPreviewSurface fallback and two-sided cards are errors, maps and colour spaces are warnings, a NOTE lists the maps each material carries (§7.7)
+  - mesh role `decal` with `decal {on, opacity_primvar, depth_offset}` (§7.2)
+  - top-level `materials[]`: material inputs that follow signals (§11.1)
+  - `assets[]`: file, hash and licence, cross-checked against the USD asset paths (§5.3)
+  - `prototypes[].lods[]` and `cull_distance` on prototypes and instance sets (§8.2)
+  - `stj_core.usd_material_report` and friends
 - **Road cross-section and authoring model** (`proposals/stj_road_cross_section_proposal.md`; additive):
   - `centerline.cross_section {templates, sections, bank}`: lateral profiles with strip surfaces, blended sections and banking (§7.1)
   - `centerline.terrain {mode, shoulder_blend, falloff, sections}`: drape, carve or free (§7.1)

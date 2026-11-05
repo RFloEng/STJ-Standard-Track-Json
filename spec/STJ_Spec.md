@@ -246,6 +246,20 @@ Pit count and length are not repeated: they follow from `race.pit_boxes` and the
 - `tools/las_dtm.py` is the converter step: it grids the ground points of a LAS tile (`.laz` and COPC with the optional `laspy`) into a heightmap, with `nodata`, and writes the `derived` and source records.
 - A GeoTIFF is not a heightmap format. STJ does not resample (§7.4), so a converter writes `png16` or `raw_f32` and records the original in `derived`.
 
+### 5.3 Assets
+
+USD lists its own textures and audio. What it cannot say is how much to trust a file: its hash and its licence. The optional top-level `assets[]` records that (`proposals/stj_rbr_gaps_proposal.md`, item 4):
+
+```json
+"assets": [{ "id": "road_albedo", "uri": "textures/road.png", "role": "texture", "sha256": "…",
+             "licence": { "spdx": "CC-BY-4.0", "holder": "A. Author" }, "source": "A pack, a game, an author" }]
+```
+
+- `role` is `texture`, `sound`, `mesh`, `script` or `other`. `sha256` is the hex digest of the file. `licence` has the shape of `_metadata.licence`. `source` says where the asset came from, and is never a download location for content the user may not share.
+- STJ **records** licences and does not judge them. The validator checks only what can be checked: the file exists, its hash matches, and an asset that may not be redistributed is not in a file that says it can be (WARN).
+- With the `pxr` module the manifest is **cross-checked against the USD files**: a texture a mesh names that is not listed, and a listed texture no mesh names, are NOTEs. Once `assets[]` is given it is expected to cover the textures, so a partial list shows up.
+- A tool that must strip restricted content can list `assets[]` by licence instead of walking every USD file.
+
 ---
 
 ## 6. Surfaces
@@ -475,7 +489,9 @@ STJ fixes simple, first-order **reference laws**. An engine may run its own, bet
 
 ### 7.2 Geometry
 
-`geometry.meshes[]`: `{id, uri, roles: ["visual" | "collision" | "lod"], lod {of, level, switch_distance}}`. `geometry.terrain` (v0.2) is §7.4. A mesh may be visual and collision at once. USD prim and material names that STJ tools generate or recognise follow SVJ's convention with an STJ prefix: `STJ__<category>__<id>` (USD forbids `::` in names; `STJ::<category>::<id>` is accepted as the same), with categories `collision`, `surface` (material names), `reference`, `timing`, `grid`, `pit`, `spawn`, `light`, `scatter`, `instance`, `helper`, `lod`.
+`geometry.meshes[]`: `{id, uri, roles: ["visual" | "collision" | "lod" | "decal"], lod {of, level, switch_distance}, decal {on, opacity_primvar, depth_offset}}`. `geometry.terrain` (v0.2) is §7.4. A mesh may be visual and collision at once. USD prim and material names that STJ tools generate or recognise follow SVJ's convention with an STJ prefix: `STJ__<category>__<id>` (USD forbids `::` in names; `STJ::<category>::<id>` is accepted as the same), with categories `collision`, `surface` (material names), `reference`, `timing`, `grid`, `pit`, `spawn`, `light`, `scatter`, `instance`, `helper`, `lod`.
+
+**Decals.** The role `decal` marks a visual mesh drawn on top of another: tyre marks, road paint, oil and dirt patches. An engine draws it after the opaque geometry, without casting shadows, with a small depth offset so it does not fight with the surface under it. `decal {on, opacity_primvar, depth_offset}`: `on` is what it lies on (a `geometry.meshes` id, or `terrain`), `opacity_primvar` a per-vertex float primvar multiplied with the material opacity (USD's own `displayOpacity` is the usual one; a MaterialX network multiplies it with the texture alpha, and readers without MaterialX use the texture alpha alone), and `depth_offset` is in metres (default 0.02). A decal is a visual layer: the validator warns when it also has the `collision` role. Spline-projected paint, as editors draw decal roads, is not described.
 
 **Mesh hints.**
 - `generated {rule, tool, tool_version, inputs_sha256}` says the mesh is a **cache of a rule** in the document (for example the collision ribbon of the cross-section, `rule: "reference.centerline.cross_section"`) and not authored geometry. `inputs_sha256` is `stj_core.rule_hash`, computed over the centerline and the surface bands, so the validator can warn when the mesh is stale and a tool can regenerate it. `tools/ribbon_usd.py` prints the block.
@@ -598,6 +614,26 @@ Meshes are **OpenUSD** (`.usd`, `.usda`, `.usdc`, `.usdz`), the only mesh format
 | A glTF animation by name | `time_range: [start, end]` in the stage's time codes. USD has no named clips. |
 | `KHR_lights_punctual`, `EXT_mesh_gpu_instancing`, `extras` | UsdLux lights; PointInstancer or native instances; typed attributes in the `stj:` namespace on prims |
 
+**Material profile.** USD already has UsdPreviewSurface and MaterialX, so STJ does not invent a material model. It says which features a track can rely on (`proposals/stj_visual_materials_proposal.md`). Every material bound to a `visual` or `decal` mesh:
+- **MUST** have a UsdPreviewSurface on its default `outputs:surface`, the one material model every USD reader shares (usdview, Omniverse, Unreal, Unity, Blender, Houdini). A material with none is an ERROR.
+- **MUST** have a card (a mesh whose material is a cutout: `opacityThreshold` above 0 — foliage, a flag, a billboard, a sign seen from both sides) set `doubleSided = true`. ERROR otherwise.
+- **SHOULD** connect every map the source has to the matching UsdPreviewSurface input, and declare the colour space of every texture (`sourceColorSpace` of `raw` or `sRGB`, or the `colorSpace` of the file attribute; `auto` is a guess and does not count). WARN otherwise:
+
+| Source map | UsdPreviewSurface |
+|---|---|
+| colour | `diffuseColor` (sRGB) |
+| tangent-space normal | `normal` through a UsdUVTexture with scale (2, 2, 2, 1), bias (−1, −1, −1, 0), raw colour space |
+| roughness (a gloss map becomes 1 − gloss) | `roughness` |
+| specular colour | `specularColor` with `useSpecularWorkflow = 1` |
+| metalness | `metallic` |
+| ambient occlusion | `occlusion` |
+| emissive | `emissiveColor` |
+| alpha | `opacity`; a cutout adds `opacityThreshold` (0.5 when the source gives none) |
+
+- A cutout whose opacity comes from a texture and has no `opacityThreshold` is a WARN (a decal blends and is exempt).
+- **MAY** add a MaterialX network on `outputs:mtlx:surface` for what UsdPreviewSurface cannot do: layer blends, primvar reads, vertex-alpha decals. `x_<engine>.shader` in the material's `customData` names the source shader, so a converter back to that engine can pick it again.
+- The validator adds a NOTE per material listing the maps it carries (`diffuseColor+normal+roughness`), so a reader sees at a glance what a converter dropped. The checks need the `pxr` module.
+
 **The STJ JSON is normative.** Prims may also carry UsdPhysics (rigid body, mass, collider, physics material) or UsdMedia SpatialAudio for USD tools. Where they disagree with the JSON (for example `prototype.physics.mass` against the prim's MassAPI), the JSON wins and the validator warns.
 
 ### 7.8 STJ inside USD and single-file tracks
@@ -632,6 +668,7 @@ Each engine has an optimised way to draw grass, trees, crowds and sky: GPU-insta
 
 - `prototypes` (by id): `class` (`tree`, `bush`, `grass`, `groundcover`, `flowers`, `crop`, `rock`, `building`, `fence`, `barrier`, `tyre_wall`, `sign`, `pole`, `spectators`, `prop`, `other`), `species` (botanical name), `height`, `radius`, `collision` (`none`, `trunk`, `box`, `mesh`), `collision_radius`, `breakable`, `mesh {mesh_ref, prim}`, `x_<engine>`.
 - `prototypes[].wind {amplitude, frequency, weight_primvar, phase_primvar}`: wind-driven sway of trees, bushes and cards. `amplitude` (m) is the sway of the free end in a reference wind and `frequency` is in Hz; the engine scales both with the wind speed of the weather. The two primvars (names starting `stj_`) are float vertex primvars on the prototype's USD mesh: the sway weight per vertex (0 at the base, 1 at the free end) and a phase per vertex in turns, so the parts of one object do not move together. Games that store sway per vertex (billboards and trees in RBR) map to these. The alpha-test cutoff of such cards is a material property and stays in USD (`opacityThreshold`).
+- `prototypes[].lods[] {prim, level, switch_distance}` and `cull_distance`: coarser versions of the prototype's mesh, in the shape of the mesh LODs of §7.2. `prim` is a USD prim path in the prototype's mesh file, `level` counts up from 1 and `switch_distance` is the camera distance (m) beyond which that level is used; it must increase with the level. `cull_distance` (m) is where the prototype stops being drawn, and an instance set's own `cull_distance` wins over it. Every engine draws large forests through LODs, and the validator checks the prims exist, the levels are unique and the distances ordered.
 - `instances[]`: `{prototype, transforms: [[x, y, z, heading, scale?], …]}`, upright in Z, or `{prototype, usd {mesh_ref, prim}}` for a PointInstancer (or a prim with native instances) in a USD mesh file.
 - `scatter[]`: `{id, prototypes [{prototype, weight}], density (per m²), area, exclude_surfaces, min_spacing, scale_range, align_to_normal, seed, cull_distance, x_<engine>}`. `area` is the intersection of the given keys:
   - `surfaces` (grow on these surfaces; how BeamNG groundcover, UE landscape grass and CSP grass attach)
@@ -923,8 +960,23 @@ The consumers are:
 - instance sets and scatter: `when`, `density_by`
 - audio emitters: `when`, `gain_by`
 - puddles: `fill`
+- materials: `materials[] {material, mesh_ref?, input, by}` drives a named interface input of a UsdShade material (below)
 
 `tools/stj_core.eval_condition` and `eval_curve` are the reference implementations.
+
+**Materials that follow signals.** `materials[] {material, mesh_ref, input, by}` sets an input of a USD material from a signal, the way lights follow signals: emissive windows and floodlight lenses at night, ground that darkens when wet, a road whose painted lines fade with `wear`.
+
+```json
+"materials": [
+  { "material": "Hut_windows", "input": "emissive_scale", "by": { "signal": "sun_elevation", "curve": [[-0.1, 1], [0.05, 0]] } },
+  { "material": "Terrain_Sec03", "input": "wet_amount", "by": { "signal": "wetness", "curve": [[0, 0], [1, 1]] } }
+]
+```
+
+- `input` names an **interface input** on the UsdShade.Material (`inputs:emissive_scale`) that the material's networks read. A USD tool can then change it by hand, and an engine without STJ still has the material at its default.
+- `by` is the binding above. `mesh_ref` is optional and says which mesh's file holds the material when its name is not unique.
+- Visual materials are not surfaces, so this is its own block and not part of the surface bindings.
+- The validator checks the bindings like any other, that the material exists in the USD meshes (ERROR) and that it has that input (WARN), and that no input is driven twice (ERROR). These need the `pxr` module.
 
 ---
 

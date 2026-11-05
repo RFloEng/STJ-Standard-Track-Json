@@ -1635,5 +1635,216 @@ class RoadProfile(unittest.TestCase):
         self.finding(doc, "WARN", "radii are in metres")
 
 
+
+def write_visual_mesh(path, *, surface=True, texture=None, opacity_map=False, threshold=None, two_sided=False,
+                      interface_input=None, material="Mat"):
+    """A one-quad USD mesh with one material. texture: None, or the sourceColorSpace token ('' for none)."""
+    from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, Vt
+    st = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(st, UsdGeom.Tokens.z)
+    root = UsdGeom.Xform.Define(st, "/m")
+    st.SetDefaultPrim(root.GetPrim())
+    mesh = UsdGeom.Mesh.Define(st, "/m/mesh")
+    mesh.CreatePointsAttr(Vt.Vec3fArray([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]))
+    mesh.CreateFaceVertexCountsAttr(Vt.IntArray([4]))
+    mesh.CreateFaceVertexIndicesAttr(Vt.IntArray([0, 1, 2, 3]))
+    mesh.CreateDoubleSidedAttr(two_sided)
+    mat = UsdShade.Material.Define(st, f"/m/materials/{material}")
+    if interface_input:
+        mat.CreateInput(interface_input, Sdf.ValueTypeNames.Float).Set(1.0)
+    if surface:
+        sh = UsdShade.Shader.Define(st, f"/m/materials/{material}/surface")
+        sh.CreateIdAttr("UsdPreviewSurface")
+        sh.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(0.5, 0.5, 0.5))
+        if threshold is not None:
+            sh.CreateInput("opacityThreshold", Sdf.ValueTypeNames.Float).Set(threshold)
+        if texture is not None:
+            tx = UsdShade.Shader.Define(st, f"/m/materials/{material}/tex")
+            tx.CreateIdAttr("UsdUVTexture")
+            tx.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath("tex.png"))
+            if texture:
+                tx.CreateInput("sourceColorSpace", Sdf.ValueTypeNames.Token).Set(texture)
+            tx.CreateOutput("rgb", Sdf.ValueTypeNames.Float3)
+            tx.CreateOutput("a", Sdf.ValueTypeNames.Float)
+            sh.GetInput("diffuseColor") or sh.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f)
+            sh.GetInput("diffuseColor").ConnectToSource(tx.ConnectableAPI(), "rgb")
+            if opacity_map:
+                sh.CreateInput("opacity", Sdf.ValueTypeNames.Float).ConnectToSource(tx.ConnectableAPI(), "a")
+        mat.CreateSurfaceOutput().ConnectToSource(sh.ConnectableAPI(), "surface")
+    UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(mat)
+    st.GetRootLayer().Save()
+
+
+class MaterialsAndAssets(unittest.TestCase):
+    """Material profile, decals, prototype LODs, assets[] and materials[] (spec §5.3, §7.2, §7.7, §8.2, §11.1)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.doc = {"_metadata": {"specification": "STJ", "version": "0.3", "coordinate_system": "OpenDRIVE", "units": "SI"},
+                    "geometry": {"meshes": [{"id": "vis", "uri": "vis.usda", "roles": ["visual"]}]}}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def mesh(self, **kw):
+        write_visual_mesh(self.dir / "vis.usda", **kw)
+
+    def run_doc(self):
+        return run(self.doc, self.dir)
+
+    def finding(self, level, fragment):
+        found = messages(self.run_doc(), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def absent(self, level, fragment):
+        found = messages(self.run_doc(), level)
+        self.assertFalse(any(fragment in m for m in found), f"unexpected {level} {fragment!r} in {found}")
+
+    # -- material profile --
+    def test_a_visual_material_needs_a_surface(self):
+        self.mesh(surface=False)
+        self.finding("ERROR", "has no outputs:surface")
+
+    def test_a_collision_mesh_is_exempt(self):
+        self.mesh(surface=False)
+        self.doc["geometry"]["meshes"][0]["roles"] = ["collision"]
+        self.absent("ERROR", "has no outputs:surface")
+
+    def test_texture_colour_space(self):
+        self.mesh(texture="")
+        self.finding("WARN", "declares no colour space")
+        self.mesh(texture="sRGB")
+        self.absent("WARN", "declares no colour space")
+        self.mesh(texture="auto")                     # auto is a guess, not a declaration
+        self.finding("WARN", "declares no colour space")
+
+    def test_cutout_opacity_needs_a_threshold(self):
+        self.mesh(texture="sRGB", opacity_map=True)
+        self.finding("WARN", "without opacityThreshold")
+        self.mesh(texture="sRGB", opacity_map=True, threshold=0.5, two_sided=True)
+        self.absent("WARN", "without opacityThreshold")
+
+    def test_a_card_must_be_two_sided(self):
+        self.mesh(texture="sRGB", opacity_map=True, threshold=0.5, two_sided=False)
+        self.finding("ERROR", "is not doubleSided")
+        self.mesh(texture="sRGB", opacity_map=True, threshold=0.5, two_sided=True)
+        self.absent("ERROR", "is not doubleSided")
+
+    def test_a_decal_may_blend_its_opacity(self):
+        self.mesh(texture="sRGB", opacity_map=True)
+        self.doc["geometry"]["meshes"][0]["roles"] = ["decal"]
+        self.absent("WARN", "without opacityThreshold")
+
+    def test_the_maps_a_material_carries_are_listed(self):
+        self.mesh(texture="sRGB", opacity_map=True, threshold=0.5, two_sided=True)
+        self.finding("NOTE", "carries: diffuseColor+opacity")
+        self.mesh()
+        self.finding("NOTE", "no texture maps (constants only)")
+
+    # -- decals --
+    def test_decal_checks(self):
+        self.mesh()
+        m = self.doc["geometry"]["meshes"]
+        m[0]["roles"] = ["decal", "collision"]
+        m[0]["decal"] = {"on": "ghost"}
+        self.finding("ERROR", "unknown mesh 'ghost'")
+        self.finding("WARN", "a decal is a visual layer")
+        m[0]["decal"] = {"on": "vis"}
+        self.finding("ERROR", "cannot lie on itself")
+        m[0]["decal"] = {"on": "terrain", "opacity_primvar": "displayOpacity"}
+        self.absent("ERROR", "decal.on")
+
+    def test_decal_block_without_the_role(self):
+        self.mesh()
+        self.doc["geometry"]["meshes"][0]["decal"] = {"on": "terrain"}
+        self.finding("WARN", "decal object on a mesh without the 'decal' role")
+
+    # -- assets --
+    def test_asset_hash_and_licence(self):
+        self.mesh()
+        (self.dir / "tex.png").write_bytes(b"not really a png")
+        self.doc["assets"] = [{"id": "tex", "uri": "tex.png", "role": "texture", "sha256": "0" * 64,
+                               "licence": {"redistributable": False}}]
+        self.finding("WARN", "does not match its hash")
+        self.finding("WARN", "may not be redistributed")
+        self.doc["_metadata"]["licence"] = {"redistributable": False}
+        self.absent("WARN", "may not be redistributed")
+
+    def test_asset_file_missing_and_duplicates(self):
+        self.mesh()
+        self.doc["assets"] = [{"id": "a", "uri": "gone.png"}, {"id": "a", "uri": "gone2.png"}]
+        self.finding("WARN", "file not found: gone.png")
+        self.finding("ERROR", "duplicate asset id 'a'")
+
+    def test_manifest_against_what_usd_names(self):
+        self.mesh(texture="sRGB")
+        (self.dir / "tex.png").write_bytes(b"x")
+        (self.dir / "other.png").write_bytes(b"y")
+        self.doc["assets"] = [{"id": "other", "uri": "other.png", "role": "texture"}]
+        self.finding("NOTE", "'tex.png' is used by a USD mesh but not listed")
+        self.finding("NOTE", "'other.png' is listed as a texture but no USD mesh names it")
+        self.doc["assets"] = [{"id": "tex", "uri": "tex.png", "role": "texture"}]
+        self.absent("NOTE", "used by a USD mesh but not listed")
+
+    # -- prototype LODs --
+    def proto_doc(self, lods, **extra):
+        self.mesh()
+        self.doc["scenery"] = {"prototypes": {"tree": {"class": "tree", "mesh": {"mesh_ref": "vis", "prim": "/m/mesh"},
+                                                       "lods": lods, **extra}}}
+
+    def test_lods_ok(self):
+        self.proto_doc([{"prim": "/m/mesh", "level": 1, "switch_distance": 50}, {"prim": "/m/mesh", "level": 2, "switch_distance": 150}],
+                       cull_distance=400)
+        self.assertEqual([m for m in messages(self.run_doc(), "ERROR") + messages(self.run_doc(), "WARN") if "lods" in m or "cull" in m], [])
+
+    def test_lod_prim_must_exist(self):
+        self.proto_doc([{"prim": "/m/nowhere", "level": 1, "switch_distance": 50}])
+        self.finding("ERROR", "scenery.prototypes.tree.lods")
+
+    def test_lod_levels_and_distances(self):
+        self.proto_doc([{"prim": "/m/mesh", "level": 1, "switch_distance": 50}, {"prim": "/m/mesh", "level": 1, "switch_distance": 80}])
+        self.finding("ERROR", "same level")
+        self.proto_doc([{"prim": "/m/mesh", "level": 1, "switch_distance": 90}, {"prim": "/m/mesh", "level": 2, "switch_distance": 60}])
+        self.finding("ERROR", "switch_distance must increase")
+        self.proto_doc([{"prim": "/m/mesh", "level": 1}])
+        self.finding("WARN", "without switch_distance")
+
+    def test_cull_distance_must_pass_the_last_lod(self):
+        self.proto_doc([{"prim": "/m/mesh", "level": 1, "switch_distance": 200}], cull_distance=100)
+        self.finding("WARN", "is not beyond the last LOD switch")
+
+    def test_lods_need_a_mesh(self):
+        self.mesh()
+        self.doc["scenery"] = {"prototypes": {"tree": {"class": "tree", "lods": [{"prim": "/m/mesh", "level": 1, "switch_distance": 10}]}}}
+        self.finding("ERROR", "LODs need the prototype's USD mesh")
+
+    # -- signal-driven materials --
+    def test_material_drive(self):
+        self.mesh(interface_input="emissive_scale")
+        drive = {"material": "Mat", "input": "emissive_scale",
+                 "by": {"signal": "sun_elevation", "curve": [[-0.1, 1.0], [0.05, 0.0]]}}
+        self.doc["materials"] = [drive]
+        self.assertEqual([m for m in messages(self.run_doc(), "ERROR") + messages(self.run_doc(), "WARN") if "materials[" in m], [])
+
+    def test_material_drive_problems(self):
+        self.mesh(interface_input="emissive_scale")
+        by = {"signal": "sun_elevation", "curve": [[-0.1, 1.0], [0.05, 0.0]]}
+        self.doc["materials"] = [{"material": "Ghost", "input": "emissive_scale", "by": by}]
+        self.finding("ERROR", "no material 'Ghost'")
+        self.doc["materials"] = [{"material": "Mat", "input": "wet_amount", "by": by}]
+        self.finding("WARN", "has no interface input 'wet_amount'")
+        self.doc["materials"] = [{"material": "Mat", "input": "emissive_scale", "by": by}] * 2
+        self.finding("ERROR", "is driven twice")
+        self.doc["materials"] = [{"material": "Mat", "mesh_ref": "ghost", "input": "emissive_scale", "by": by}]
+        self.finding("ERROR", "unknown mesh 'ghost'")
+
+    def test_material_drive_binding_is_checked_like_any_other(self):
+        self.mesh(interface_input="emissive_scale")
+        self.doc["materials"] = [{"material": "Mat", "input": "emissive_scale",
+                                  "by": {"signal": "no_such_signal", "curve": [[0, 0], [1, 1]]}}]
+        self.assertTrue(any("no_such_signal" in m for m in messages(self.run_doc(), "ERROR")))
+
+
 if __name__ == "__main__":
     unittest.main()

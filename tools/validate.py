@@ -25,8 +25,10 @@ Levels: ERROR fails the file; WARN fails it with --strict; NOTE never fails.
 """
 
 import copy
+import hashlib
 import json
 import math
+import os
 import struct
 import sys
 from pathlib import Path
@@ -228,6 +230,19 @@ def check_geometry(ctx):
                 rep.error(f"{p}.lod.of", f"unknown mesh '{m['lod']['of']}'")
             elif m["lod"]["of"] == m["id"]:
                 rep.error(f"{p}.lod.of", "a mesh cannot be a LOD of itself")
+        if "decal" in roles or "decal" in m:
+            if "decal" in m and "decal" not in roles:
+                rep.warn(p, "decal object on a mesh without the 'decal' role")
+            if "collision" in roles:
+                rep.warn(p, "a decal is a visual layer, not a driving surface: put the collision on its own mesh")
+            on = (m.get("decal") or {}).get("on")
+            if on is not None and on != "terrain":
+                if on not in ctx.meshes:
+                    rep.error(f"{p}.decal.on", f"unknown mesh '{on}'")
+                elif on == m["id"]:
+                    rep.error(f"{p}.decal.on", "a decal cannot lie on itself")
+            if on is None:
+                rep.note(p, "a decal without 'on': what it lies on is not stated")
         for k in ("shadow_map", "specular_map"):
             bk = (m.get("baked") or {}).get(k)
             if bk and not ctx.file(bk["uri"]).is_file():
@@ -820,6 +835,25 @@ def check_scenery(ctx):
             rep.note(f"scenery.prototypes.{pid}", "trunk collision without collision_radius")
         if pr.get("height", 0) > 150:
             rep.warn(f"scenery.prototypes.{pid}.height", f"{pr['height']} m: heights are in metres")
+        lods = pr.get("lods") or []
+        if lods:
+            lp = f"scenery.prototypes.{pid}.lods"
+            if "mesh" not in pr:
+                rep.error(lp, "LODs need the prototype's USD mesh")
+            else:
+                _mesh_has(ctx, rep, lp, pr["mesh"]["mesh_ref"], nodes=[l["prim"] for l in lods])
+            levels = [l["level"] for l in lods]
+            if len(set(levels)) != len(levels):
+                rep.error(lp, "two LODs have the same level")
+            ordered = sorted(lods, key=lambda l: l["level"])
+            dist = [l.get("switch_distance") for l in ordered]
+            if any(d is None for d in dist):
+                rep.warn(lp, "a LOD without switch_distance: the engine has no distance to switch at")
+            elif any(b <= a for a, b in zip(dist, dist[1:])):
+                rep.error(lp, "switch_distance must increase with the level")
+            far = pr.get("cull_distance")
+            if far and dist and dist[-1] is not None and far <= dist[-1]:
+                rep.warn(f"scenery.prototypes.{pid}.cull_distance", f"{far:g} m is not beyond the last LOD switch ({dist[-1]:g} m)")
         wind = pr.get("wind") or {}
         if wind.get("amplitude", 0) > 3 or wind.get("frequency", 0) > 10:
             rep.warn(f"scenery.prototypes.{pid}.wind", "amplitude is in metres and frequency in Hz: values this large look like a unit slip")
@@ -2197,6 +2231,116 @@ def check_cross_section(ctx):
                 rep.warn(p, "the centerline, cross-section or surface bands changed since this mesh was generated: it is stale")
 
 
+def check_assets(ctx):
+    """The asset manifest: files, hashes and licences, against what the USD files name (spec §5.3)."""
+    rep, doc = ctx.rep, ctx.doc
+    assets = doc.get("assets") or []
+    _dups(rep, "assets", assets, "asset")
+    listed = {}
+    for i, a in enumerate(assets):
+        p = f"assets[{i}]"
+        f = ctx.file(a["uri"])
+        listed[Path(os.path.normpath(a["uri"])).as_posix()] = a
+        if not f.is_file():
+            rep.warn(f"{p}.uri", f"file not found: {a['uri']}")
+        elif "sha256" in a and hashlib.sha256(f.read_bytes()).hexdigest() != a["sha256"]:
+            rep.warn(f"{p}.sha256", f"{a['uri']} does not match its hash: the file changed")
+    md_lic = (doc.get("_metadata") or {}).get("licence") or {}
+    blocked = [a["id"] for a in assets if (a.get("licence") or {}).get("redistributable") is False]
+    if blocked and md_lic.get("redistributable") is not False:
+        rep.warn("assets", f"{', '.join(blocked)} may not be redistributed, but _metadata.licence does not say the file is not")
+    if not assets or not core.have_pxr():
+        return
+    used = set()
+    for m in (doc.get("geometry") or {}).get("meshes", []):
+        f = ctx.file(m["uri"])
+        if not f.is_file() or f.suffix.lower() == ".usdz":
+            continue
+        try:
+            for ref in core.usd_asset_paths(f):
+                used.add(Path(os.path.normpath(Path(os.path.relpath((f.parent / ref).resolve(), ctx.base_dir.resolve()))))
+                         .as_posix())
+        except Exception:    # noqa: BLE001  (an unreadable mesh is reported by check_geometry)
+            continue
+    for ref in sorted(used - set(listed)):
+        rep.note("assets", f"'{ref}' is used by a USD mesh but not listed")
+    for ref in sorted(set(listed) - used):
+        if listed[ref].get("role", "texture") == "texture":
+            rep.note("assets", f"'{ref}' is listed as a texture but no USD mesh names it")
+
+
+def check_visual_materials(ctx):
+    """The material profile of visual and decal meshes (spec §7.7): a UsdPreviewSurface fallback, cards two-sided."""
+    rep = ctx.rep
+    if not core.have_pxr():
+        return
+    for i, m in enumerate((ctx.doc.get("geometry") or {}).get("meshes", [])):
+        if not set(m.get("roles", [])) & {"visual", "decal"} or m["id"] not in ctx.mesh_names:
+            continue
+        p = f"geometry.meshes[{i}]"
+        try:
+            stage = _usd_stage(ctx, m["id"])
+            pairs = core.usd_mesh_materials(stage)
+        except Exception:    # noqa: BLE001
+            continue
+        from pxr import UsdGeom
+        reports = {}
+        for mesh, mats in pairs:
+            two_sided = bool(UsdGeom.Mesh(mesh).GetDoubleSidedAttr().Get())
+            for mat in mats:
+                key = str(mat.GetPath())
+                if key not in reports:
+                    reports[key] = (mat.GetName(), core.usd_material_report(mat))
+                name, rp = reports[key]
+                if rp["opacity_threshold"] > 0 and not two_sided:
+                    rep.error(p, f"mesh '{mesh.GetPath()}' uses the cutout material '{name}' (a card) but is not doubleSided")
+        decal = "decal" in m.get("roles", [])
+        for name, rp in reports.values():
+            if rp["surface"] is None:
+                rep.error(p, f"material '{name}' has no outputs:surface: a visual material needs a UsdPreviewSurface fallback")
+                continue
+            if rp["surface"] != "UsdPreviewSurface":
+                rep.warn(p, f"material '{name}': the default surface is '{rp['surface']}', not UsdPreviewSurface")
+            for path, declared in rp["textures"]:
+                if not declared:
+                    rep.warn(p, f"texture {path} of '{name}' declares no colour space (sourceColorSpace raw or sRGB)")
+            if rp["opacity_map"] and rp["opacity_threshold"] <= 0 and not decal:
+                rep.warn(p, f"material '{name}': opacity comes from a texture without opacityThreshold; a cutout needs one (0.5 when the source gives none)")
+            rep.note(p, f"material '{name}' carries: " + ("+".join(rp["maps"]) if rp["maps"] else "no texture maps (constants only)"))
+
+
+def check_material_drives(ctx):
+    """Signal-driven material inputs (spec §11.1); the bindings themselves are checked with the other signals."""
+    rep, doc = ctx.rep, ctx.doc
+    seen = set()
+    for i, md in enumerate(doc.get("materials", [])):
+        p = f"materials[{i}]"
+        key = (md["material"], md["input"])
+        if key in seen:
+            rep.error(p, f"material '{md['material']}' input '{md['input']}' is driven twice")
+        seen.add(key)
+        if "mesh_ref" in md and md["mesh_ref"] not in ctx.meshes:
+            rep.error(f"{p}.mesh_ref", f"unknown mesh '{md['mesh_ref']}'")
+            continue
+        if not core.have_pxr():
+            continue
+        mids = [md["mesh_ref"]] if "mesh_ref" in md else [mid for mid in ctx.mesh_names]
+        found = []
+        for mid in mids:
+            if mid not in ctx.mesh_names:
+                continue
+            try:
+                found += core.usd_material_inputs(_usd_stage(ctx, mid), md["material"])
+            except Exception:    # noqa: BLE001
+                continue
+        if not mids or not ctx.mesh_names:
+            continue
+        if not found:
+            rep.error(f"{p}.material", f"no material '{md['material']}' in the USD meshes")
+        elif not any(md["input"] in inputs for inputs in found):
+            rep.warn(f"{p}.input", f"material '{md['material']}' has no interface input '{md['input']}' (inputs:{md['input']}): nothing reads it")
+
+
 def check_unused_surfaces(ctx):
     sc = ctx.doc.get("scenery") or {}
     for layer in sc.get("scatter", []):
@@ -2297,6 +2441,9 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     check_chainage(ctx)
     check_scan(ctx)
     check_cross_section(ctx)
+    check_assets(ctx)
+    check_visual_materials(ctx)
+    check_material_drives(ctx)
     check_surface_maps(ctx)
     check_mu(ctx)
     check_rbr_lessons(ctx)

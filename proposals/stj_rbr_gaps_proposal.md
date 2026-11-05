@@ -1,6 +1,6 @@
 # Proposal for STJ: what a Richard Burns Rally conversion could not store
 
-Status: **partly accepted** 2026-11-05, in v0.3 (draft). Items 1 to 3, 5, 6 and 8 to 10 are implemented as below. Items 4 and 7 were decided on 2026-11-05 and are not implemented yet. The original text of the proposal follows the decisions, unchanged.
+Status: **partly accepted** 2026-11-05, in v0.3 (draft). Items 1 to 3, 5, 6 and 8 to 10 are implemented as below. Items 4 and 7 were decided on 2026-11-05 and are implemented too (`assets[]`, spec §5.3; prototype `lods`, spec §8.2). The original text of the proposal follows the decisions, unchanged.
 
 ## Decisions
 
@@ -9,10 +9,10 @@ Status: **partly accepted** 2026-11-05, in v0.3 (draft). Items 1 to 3, 5, 6 and 
 | 1 | Per-weather sky, fog, lighting | Already expressible: `weather_options[].variant` points at a weather variant, which patches any part of the document. Added `variant` to `weather_schedule[]` entries, so weather that changes during a session can change the sky too. No inline environment block. |
 | 2 | Ambient light, sun direction | Done: `lighting.ambient {color, intensity}`, `lighting.sun.direction` (unit vector towards the sun; fixes the sun and drives `sun_elevation`) and `sun.color`. |
 | 3 | Tangents per segment | Done: `tangents_out` and `tangents_in` (spec §7.1). `tangents` stays valid. A reversed layout swaps the two. |
-| 4 | Asset manifest with licence per file | **Accepted 2026-11-05, not implemented:** an optional `assets[]` `{id, uri, role, sha256, licence?, source?}` for what USD cannot list, cross-checked against the USD asset paths. It records licences and never judges them. |
+| 4 | Asset manifest with licence per file | **Accepted and implemented 2026-11-05:** an optional `assets[]` `{id, uri, role, sha256, licence?, source?}` for what USD cannot list, cross-checked against the USD asset paths. It records licences and never judges them. |
 | 5 | Engine-scripted animated objects | Done, reshaped: an animated object may have a `kind` (new: `clock`) and no `time_range`; the script name stays in `x_<engine>`. The validator warns when neither a `time_range` nor an `x_<engine>` block is there. |
 | 6 | Sound events without files | Done: `sound` is optional when the emitter has an `x_<engine>` block naming the event; `max_distance` is the radius of the sphere. No new `shape.sphere`. |
-| 7 | Level of detail ranges | **Accepted 2026-11-05, not implemented:** reuse the mesh `lod` shape. Meshes keep `lod {of, level, switch_distance}`; prototypes get the same shape plus `cull_distance`; `rbr2stj` emits `lod` meshes instead of hidden `_far` prims. No `range` pair. |
+| 7 | Level of detail ranges | **Accepted and implemented 2026-11-05:** reuse the mesh `lod` shape. Meshes keep `lod {of, level, switch_distance}`; prototypes get the same shape plus `cull_distance`; `rbr2stj` emits `lod` meshes instead of hidden `_far` prims. No `range` pair. |
 | 8 | Wind sway, alpha-test | Sway done: `prototypes[].wind {amplitude, frequency, weight_primvar, phase_primvar}`. The alpha cutoff stays in USD (`opacityThreshold`). |
 | 9 | Visual-only water, mirrors | Done: `water.bodies[].physical: false` (needs a `mesh`) and `geometry.meshes[].reflective`. |
 | 10 | Baked lighting roles | Done: `geometry.meshes[].baked {vertex_colour {primvar, role}, shadow_map, specular_map}`. |

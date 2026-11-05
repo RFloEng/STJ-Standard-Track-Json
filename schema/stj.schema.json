@@ -19,6 +19,8 @@
     "reference": { "$ref": "#/definitions/reference" },
     "roads": { "type": "array", "items": { "$ref": "#/definitions/road" }, "description": "Roads other than the reference line (spec §7.1)." },
     "junctions": { "type": "array", "items": { "$ref": "#/definitions/junction" }, "description": "Where roads meet." },
+    "assets": { "type": "array", "items": { "$ref": "#/definitions/asset" }, "description": "Files the track uses that USD cannot list: their hash and licence (spec §5.3)." },
+    "materials": { "type": "array", "items": { "$ref": "#/definitions/material_drive" }, "description": "Material inputs that follow signals (spec §11.1)." },
     "geometry": { "$ref": "#/definitions/geometry" },
     "surfaces": { "$ref": "#/definitions/surfaces" },
     "timing": { "$ref": "#/definitions/timing" },
@@ -364,6 +366,38 @@
         }
       }
     },
+    "asset": {
+      "type": "object",
+      "description": "A file the track uses: what it is, its hash and its licence (spec §5.3). Recorded, never judged.",
+      "required": ["id", "uri"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "uri": { "$ref": "#/definitions/relative_uri" },
+        "role": { "type": "string", "enum": ["texture", "sound", "mesh", "script", "other"] },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "licence": { "$ref": "#/definitions/licence" },
+        "source": { "type": "string", "description": "Where it came from: a pack, a game, an author. Never a download location for content the user may not share." }
+      }
+    },
+    "material_drive": {
+      "type": "object",
+      "description": "Drives a named input of a USD material from a signal, as lights follow signals (spec §11.1).",
+      "required": ["material", "input", "by"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "material": { "type": "string", "description": "UsdShade material name." },
+        "mesh_ref": { "$ref": "#/definitions/id", "description": "The mesh whose USD file holds the material, when the name is not unique." },
+        "input": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "Name of an interface input on the UsdShade.Material (inputs:<name>) that its networks read, so a USD tool can also change it by hand."
+        },
+        "by": { "$ref": "#/definitions/binding", "description": "The signal and curve that set the input." }
+      }
+    },
     "cross_section": {
       "type": "object",
       "description": "The road's profile across its width, and banking (spec §7.1). Templates are lateral profiles; sections say where each applies; bank tilts the whole profile about the centerline.",
@@ -637,8 +671,19 @@
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "type": "string", "enum": ["visual", "collision", "lod"] },
-          "description": "visual = rendered; collision = the ground and walls vehicles touch (surfaces bind to its UsdShade materials); lod = a level-of-detail variant of another mesh."
+          "items": { "type": "string", "enum": ["visual", "collision", "lod", "decal"] },
+          "description": "visual = rendered; collision = the ground and walls vehicles touch (surfaces bind to its UsdShade materials); lod = a level-of-detail variant of another mesh; decal = a visual mesh drawn on top of another (spec §7.2)."
+        },
+        "decal": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "on": { "type": "string", "description": "What it lies on: a geometry.meshes id, or 'terrain'." },
+            "opacity_primvar": { "type": "string", "description": "Per-vertex float primvar multiplied with the material opacity, such as displayOpacity." },
+            "depth_offset": { "type": "number", "minimum": 0, "default": 0.02, "description": "Pulls the decal towards the viewer (m), so it does not fight with the surface under it." }
+          },
+          "description": "How a decal mesh is drawn: after opaque geometry, without casting shadows, with a small depth offset (spec §7.2)."
         },
         "lod": {
           "type": "object",
@@ -2225,6 +2270,22 @@
             "other"
           ]
         },
+        "lods": {
+          "type": "array",
+          "description": "Coarser versions of the prototype's mesh, in the shape of mesh LODs (spec §8.2).",
+          "items": {
+            "type": "object",
+            "required": ["prim", "level"],
+            "additionalProperties": false,
+            "patternProperties": { "^_": {} },
+            "properties": {
+              "prim": { "type": "string", "pattern": "^/", "description": "USD prim path in the prototype's mesh file." },
+              "level": { "type": "integer", "minimum": 1 },
+              "switch_distance": { "type": "number", "minimum": 0, "description": "Camera distance (m) beyond which this level is used." }
+            }
+          }
+        },
+        "cull_distance": { "type": "number", "exclusiveMinimum": 0, "description": "Distance (m) beyond which the prototype is not drawn." },
         "species": {
           "type": "string",
           "description": "Botanical name for vegetation (e.g. 'Pinus sylvestris'), so a target engine can pick its closest asset."
@@ -2335,6 +2396,7 @@
           "items": { "type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 5 }
         },
         "when": { "$ref": "#/definitions/condition", "description": "Instances exist while true." },
+        "cull_distance": { "type": "number", "exclusiveMinimum": 0, "description": "Distance (m) beyond which these instances are not drawn. Wins over the prototype's." },
         "source": {
           "type": "string",
           "enum": ["authored", "generated"],

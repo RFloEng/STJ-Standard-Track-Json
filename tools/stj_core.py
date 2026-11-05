@@ -1054,6 +1054,88 @@ def usd_material_meshes(stage, material):
     return out
 
 
+def usd_asset_paths(path):
+    """Files named by the asset-valued attributes of a USD file's prims (textures, audio), as authored."""
+    from pxr import Sdf
+    stage = usd_stage(path)
+    out = set()
+    for p in stage.Traverse():
+        for attr in p.GetAttributes():
+            if attr.GetTypeName() == Sdf.ValueTypeNames.Asset:
+                v = attr.Get()
+                if v is not None and v.path:
+                    out.add(v.path)
+            elif attr.GetTypeName() == Sdf.ValueTypeNames.AssetArray:
+                out.update(a.path for a in (attr.Get() or []) if a.path)
+    return out
+
+
+def usd_mesh_materials(stage):
+    """[(Mesh prim, [Material prims])]: the materials each mesh is drawn with, on the mesh and on its subsets."""
+    from pxr import UsdGeom, UsdShade
+    out = []
+    for p in stage.Traverse():
+        if not p.IsA(UsdGeom.Mesh):
+            continue
+        mats, seen = [], set()
+        candidates = [p] + [sub.GetPrim() for sub in UsdGeom.Subset.GetAllGeomSubsets(UsdGeom.Imageable(p))]
+        for prim in candidates:
+            mat = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()[0]
+            if mat and str(mat.GetPath()) not in seen:
+                seen.add(str(mat.GetPath()))
+                mats.append(mat.GetPrim())
+        out.append((p, mats))
+    return out
+
+
+PREVIEW_INPUTS = ("diffuseColor", "normal", "roughness", "specularColor", "metallic", "occlusion", "emissiveColor", "opacity")
+
+
+def usd_material_report(material_prim):
+    """What a UsdShade material carries (spec §7.7).
+
+    {surface: shader id of the default outputs:surface, or None; maps: UsdPreviewSurface inputs fed by a
+    texture; textures: [(texture shader path, colour space declared)]; opacity_threshold; opacity_map}."""
+    from pxr import UsdShade
+    mat = UsdShade.Material(material_prim)
+    shader = mat.ComputeSurfaceSource()[0]
+    report = {"surface": None, "maps": [], "textures": [], "opacity_threshold": 0.0, "opacity_map": False}
+    if not shader:
+        return report
+    sid = shader.GetIdAttr().Get()
+    report["surface"] = str(sid) if sid else ""
+    thr = shader.GetInput("opacityThreshold")
+    if thr and thr.Get() is not None:
+        report["opacity_threshold"] = float(thr.Get())
+    seen = set()
+    for name in PREVIEW_INPUTS:
+        inp = shader.GetInput(name)
+        if not inp or not inp.HasConnectedSource():
+            continue
+        source = inp.GetConnectedSource()
+        src = UsdShade.Shader(source[0].GetPrim()) if source and source[0] else None
+        if src and src.GetIdAttr().Get() == "UsdUVTexture":
+            report["maps"].append(name)
+            if name == "opacity":
+                report["opacity_map"] = True
+            if str(src.GetPath()) not in seen:
+                seen.add(str(src.GetPath()))
+                cs = src.GetInput("sourceColorSpace")
+                declared = bool(cs and cs.Get() in ("raw", "sRGB"))
+                f = src.GetInput("file")
+                if not declared and f is not None:
+                    declared = bool(f.GetAttr().GetColorSpace())
+                report["textures"].append((str(src.GetPath()), declared))
+    return report
+
+
+def usd_material_inputs(stage, name):
+    """[set of interface input names] for each UsdShade material called `name` in a stage."""
+    from pxr import UsdShade
+    return [{i.GetBaseName() for i in UsdShade.Material(p).GetInputs()}
+            for p in stage.Traverse() if p.IsA(UsdShade.Material) and p.GetName() == name]
+
+
 def usd_primvar(mesh, name):
     """(interpolation, values as tuples) of a primvar on a Mesh prim, or None."""
     from pxr import UsdGeom

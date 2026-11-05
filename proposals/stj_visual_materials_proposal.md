@@ -1,6 +1,6 @@
 # STJ proposal: visual materials, ground masks, decals and instancing
 
-Status: **accepted** 2026-11-05 with the recommended answers of §6. **Implemented:** the ground part of §3.2 (layer alpha meaning, per-layer roughness and occlusion, the mask blend, the wetness macro). **Accepted, not implemented:** §3.1, §3.3, §3.4, §3.5 and the editorial cleanup of §4.
+Status: **accepted** 2026-11-05 with the recommended answers of §6. **Implemented** 2026-11-05 in v0.3 (draft): all of it. §3.1 material profile (spec §7.7), §3.2 ground, §3.3 `decal` role (§7.2), §3.4 `materials[]` (§11.1), §3.5 prototype LODs and `cull_distance` (§8.2), and the editorial cleanup of §4. Instance primvars (`instance_set.usd.primvars[]`) were not added.
 
 Source: an audit of the Dirt2 Stage Importer 0.11.0 STJ export against what DiRT Rally 2.0 stores, what the Blender scene shows, and what OpenUSD can carry (a real stage, Australia `australia_rally_01_route_5`). This is a condensed record: the original text was written in the `blender_acr_exporter` repository and was not available when this copy was made, so it restates each section rather than quoting it.
 
