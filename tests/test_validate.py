@@ -605,6 +605,176 @@ class Ground(unittest.TestCase):
         self.assertNotEqual(centre, edge)                     # road gravel is not forest floor
 
 
+class TerrainMacro(unittest.TestCase):
+    """Macro maps over a heightfield terrain and the `colour` encoding (spec §7.4, §8.7)."""
+
+    def setUp(self):
+        self.stage = core.load_document(STAGE)
+        self.ter = self.stage["geometry"]["terrain"]
+        self.macro = self.ter["macro"][0]
+
+    def assertFinding(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def clean(self, doc, levels=("ERROR", "WARN")):
+        """Findings at these levels, without the variants' 'base is not this file' ones: run() writes the document
+        as a loose .stj.json, so the stage's variant layers point at another file."""
+        rep = run(doc)
+        return [m for lv in levels for m in messages(rep, lv) if not m.startswith("variants[")]
+
+    def temp_png(self, name, width, height, values, channels):
+        path = EX / "terrain" / name
+        core.write_png(path, width, height, values, channels)
+        self.addCleanup(path.unlink)
+        return f"terrain/{name}"
+
+    def test_example_carries_a_colour_macro(self):
+        self.assertEqual(self.macro["encoding"], "colour")
+        self.assertNotIn("extent", self.macro)                     # defaults to the heightmap's
+        self.assertEqual(self.clean(self.stage), [])
+
+    def test_schema_rejects_a_bad_encoding_and_strength(self):
+        self.macro["encoding"] = "bogus"
+        self.assertFinding(self.stage, "ERROR", "'bogus' is not one of")
+        self.macro["encoding"] = "colour"
+        self.macro["strength"] = 2
+        self.assertFinding(self.stage, "ERROR", "greater than the maximum of 1")
+
+    def test_schema_rejects_a_texcoord(self):
+        self.macro["texcoord"] = "st"                              # a heightfield has no UVs
+        self.assertFinding(self.stage, "ERROR", "texcoord")
+
+    def test_missing_file(self):
+        self.macro["uri"] = "terrain/none.png"
+        self.assertFinding(self.stage, "WARN", "file not found: terrain/none.png")
+
+    def test_not_a_png(self):
+        self.macro["uri"] = "meshes/coll_de_prova_collision.usda"
+        self.assertFinding(self.stage, "ERROR", "not a PNG file")
+
+    def test_extent_covering_the_terrain_is_fine_and_a_part_of_it_warns(self):
+        x0, y0, x1, y1 = self.ter["heightmap"]["extent"]
+        self.macro["extent"] = [x0, y0, x1, y1]
+        self.assertEqual(self.clean(self.stage), [])
+        self.macro["extent"] = [x0, y0, (x0 + x1) / 2, y1]
+        self.assertFinding(self.stage, "WARN", "covers 50 % of the terrain")
+        self.macro["extent"] = [x1, y1, x0, y0]
+        self.assertFinding(self.stage, "ERROR", "extent must be [x_min, y_min, x_max, y_max]")
+
+    def test_a_greyscale_colour_map_warns(self):
+        self.macro["uri"] = self.temp_png("_grey_macro.png", 4, 4, [100] * 16, 1)
+        self.assertFinding(self.stage, "WARN", "greyscale and has no hue")
+        self.macro["encoding"] = "grey_centred"                     # a grey map is what that encoding wants
+        self.assertEqual(self.clean(self.stage, ("WARN",)), [])
+
+    def test_two_colour_maps_warn(self):
+        self.ter["macro"].append(dict(self.macro))
+        self.assertFinding(self.stage, "WARN", "more than one colour map")
+
+    def test_an_occlusion_kind_with_the_colour_encoding_warns(self):
+        self.macro["kind"] = "occlusion"
+        self.assertFinding(self.stage, "WARN", "average colour, not occlusion")
+
+    def test_a_second_colour_map_retargets_instead_of_compounding(self):
+        a = core.apply_macro((0.2, 0.2, 0.2), [((0.4, 0.4, 0.4), "colour")])
+        twice = core.apply_macro((0.2, 0.2, 0.2), [((0.4, 0.4, 0.4), "colour"), ((0.4, 0.4, 0.4), "colour")])
+        self.assertEqual(a, twice)                                             # the same map twice changes nothing more
+        last = core.apply_macro((0.2, 0.2, 0.2), [((0.4, 0.4, 0.4), "colour"), ((0.3, 0.3, 0.3), "colour")])
+        self.assertAlmostEqual(last[0], 0.3)                                   # only the last map shows
+        mixed = core.apply_macro((0.2, 0.2, 0.2), [(0.5, "multiply"), ((0.2, 0.2, 0.2), "colour")], (0.2, 0.2, 0.2))
+        self.assertAlmostEqual(mixed[0], 0.2)                                  # a colour map after a multiply still lands on its value
+
+    def test_strength_is_ignored_outside_the_colour_encoding(self):
+        self.macro["encoding"] = "multiply"
+        self.macro["strength"] = 0.5
+        self.assertFinding(self.stage, "NOTE", "only the colour encoding uses strength")
+
+    def test_a_terrain_without_ground_layers_gets_a_note(self):
+        del self.ter["layers"][0]["ground_layer"]
+        self.assertFinding(self.stage, "NOTE", "no ground layers: the map acts on the base colour only")
+
+    def test_macro_on_several_terrains_is_checked_too(self):
+        t = json.loads(json.dumps(self.ter))
+        t["id"] = "second"
+        t["macro"][0]["uri"] = "terrain/none.png"
+        self.stage["geometry"]["terrains"] = [t]
+        self.assertFinding(self.stage, "WARN", "geometry.terrains[0].macro[0].uri: file not found")
+
+    def test_colour_is_accepted_on_a_ground_material_too(self):
+        gm = self.stage["ground"]["materials"][0]
+        gm["macro"][0]["encoding"] = "colour"
+        gm["macro"][0]["strength"] = 0.5
+        self.assertEqual(self.clean(self.stage, ("ERROR",)), [])
+
+    def test_version_check(self):
+        doc = json.loads(json.dumps(self.stage))
+        for key in ("marshals", "dynamic", "screens"):
+            doc.pop(key, None)
+        for key in ("probes", "climate"):
+            doc["environment"].pop(key, None)
+        doc.get("scenery", {}).pop("crowds", None)
+        doc["_metadata"]["version"] = "0.2"
+        self.assertFinding(doc, "WARN", "geometry.terrain.macro")
+        del doc["geometry"]["terrain"]["macro"]
+        doc["ground"]["materials"][0]["macro"][0]["encoding"] = "colour"
+        self.assertFinding(doc, "WARN", "ground macro encoding 'colour'")
+
+    def test_apply_macro_colour(self):
+        base = (0.4, 0.3, 0.2)
+        macro = (0.6, 0.3, 0.1)
+        # the detail is its layers' average: the result is the map
+        out = core.apply_macro(base, [(macro, "colour")], base)
+        self.assertEqual([round(c, 9) for c in out], list(macro))
+        # a brighter texel keeps its texture: it is scaled by the same ratio (1.5, 1.0, 0.5)
+        out = core.apply_macro((0.8, 0.6, 0.4), [(macro, "colour")], base)
+        self.assertEqual([round(c, 9) for c in out], [1.2, 0.6, 0.2])
+        # strength 0 leaves it alone, 0.5 goes half way
+        self.assertEqual(core.apply_macro((0.8, 0.6, 0.4), [(macro, "colour", 0.0)], base), (0.8, 0.6, 0.4))
+        half = core.apply_macro((0.8, 0.6, 0.4), [(macro, "colour", 0.5)], base)
+        self.assertEqual([round(c, 9) for c in half], [1.0, 0.6, 0.3])
+        # a macro far from the layers' colour is held to the ratio range
+        out = core.apply_macro((0.5, 0.5, 0.5), [((100.0, 0.0, 0.0), "colour")], (1.0, 1.0, 1.0))
+        self.assertEqual(out, (0.5 * 4.0, 0.5 * 0.25, 0.5 * 0.25))
+        # without a base, the colour is its own base
+        self.assertEqual([round(c, 9) for c in core.apply_macro(base, [(macro, "colour")])], list(macro))
+        # the other encodings are unchanged, with or without a strength in the tuple
+        self.assertAlmostEqual(core.apply_macro((0.4, 0.4, 0.4), [(0.75, "grey_centred", 0.1), (0.5, "multiply")])[0], 0.3)
+
+    def test_ground_mean_colour_and_srgb(self):
+        self.assertEqual(core.ground_mean_colour([1, 3], [(0.0, 0.0, 0.0), (0.4, 0.8, 0.2)]),
+                         (0.30000000000000004, 0.6000000000000001, 0.15000000000000002))
+        self.assertEqual(core.ground_mean_colour([0, 0], [(1, 1, 1), (1, 1, 1)]), (0.0, 0.0, 0.0))
+        self.assertEqual((core.srgb_to_linear(0.0), core.srgb_to_linear(1.0)), (0.0, 1.0))
+        self.assertAlmostEqual(core.srgb_to_linear(0.5), 0.21404, places=4)
+
+    def test_bake_replaces_the_layers_average_colour(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import ground_bake
+        gm = self.stage["ground"]["materials"][0]
+        flat = self.temp_png("_flat_macro.png", 4, 4, [130, 100, 70] * 16, 3)
+        target = [ground_bake.srgb_to_linear(c) for c in (130, 100, 70)]
+
+        def average(strength):
+            """Mean colour, in linear light, of the covered pixels of the bake."""
+            gm["macro"] = [] if strength is None else [{"kind": "tint", "uri": flat, "texcoord": "st",
+                                                         "encoding": "colour", "strength": strength}]
+            rows = ground_bake.bake(self.stage, EX, 0, 120, 24)
+            px = [p for row in rows for p in row if p != (0, 0, 0)]
+            self.assertGreater(len(px), 500)
+            return [sum(ground_bake.srgb_to_linear(p[c]) for p in px) / len(px) for c in range(3)]
+
+        plain, full, half = average(None), average(1.0), average(0.5)
+        for c in range(3):
+            # the macro moves the average to its own colour (the blend only roughly matches the weights' mean)
+            self.assertAlmostEqual(full[c], target[c], delta=0.12 * target[c])
+            self.assertLess(abs(full[c] - target[c]), abs(plain[c] - target[c]))
+            # strength 0.5 sits between the plain blend and the full replacement
+            self.assertTrue(min(plain[c], full[c]) <= half[c] <= max(plain[c], full[c]))
+        # strength 0 is the plain blend
+        self.assertEqual(average(0.0), plain)
+
+
 class LessonsFromRbr(unittest.TestCase):
     """Surface maps, states, absolute mu, chainage and the smaller additions."""
 

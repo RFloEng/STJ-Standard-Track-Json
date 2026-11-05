@@ -27,6 +27,7 @@ Levels: ERROR fails the file; WARN fails it with --strict; NOTE never fails.
 import copy
 import json
 import math
+import struct
 import sys
 from pathlib import Path
 
@@ -945,6 +946,60 @@ def _extent_ok(rep, path, e):
     return True
 
 
+PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+
+
+def _png_header(path):
+    """(width, height, channels) from a PNG's IHDR, without decoding the image."""
+    head = Path(path).read_bytes()[:33]
+    if head[:8] != core.PNG_MAGIC:
+        raise core.StjLoadError(f"{Path(path).name}: not a PNG file")
+    width, height, _depth, ctype = struct.unpack(">IIBB", head[16:26])
+    return width, height, PNG_CHANNELS.get(ctype, 1)
+
+
+def check_terrain_macro(ctx, ter, p):
+    """Macro maps over a heightfield (spec §7.4, §8.7)."""
+    rep = ctx.rep
+    maps = ter.get("macro") or []
+    if not maps:
+        return
+    hm_ext = ter["heightmap"]["extent"]
+    has_ground = any("ground_layer" in l for l in ter.get("layers", []))
+    if sum(1 for m in maps if m.get("encoding") == "colour") > 1:
+        rep.warn(f"{p}.macro", "more than one colour map: each replaces the layers' mean colour in turn, only the last shows")
+    for i, m in enumerate(maps):
+        mp = f"{p}.macro[{i}]"
+        enc = m.get("encoding", "grey_centred")
+        if "strength" in m and enc != "colour":
+            rep.note(f"{mp}.strength", f"only the colour encoding uses strength; ignored for {enc}")
+        if enc == "colour" and m.get("kind") == "occlusion":
+            rep.warn(f"{mp}.kind", "the colour encoding is an average colour, not occlusion: use kind 'tint'")
+        if enc in ("colour", "multiply") and not has_ground:
+            rep.note(mp, "the terrain has no ground layers: the map acts on the base colour only")
+        ext = m.get("extent", hm_ext)
+        if "extent" in m and _extent_ok(rep, f"{mp}.extent", ext):
+            ix = max(0.0, min(ext[2], hm_ext[2]) - max(ext[0], hm_ext[0]))
+            iy = max(0.0, min(ext[3], hm_ext[3]) - max(ext[1], hm_ext[1]))
+            area = (hm_ext[2] - hm_ext[0]) * (hm_ext[3] - hm_ext[1])
+            share = ix * iy / area if area > 0 else 0.0
+            if share < 0.9:
+                rep.warn(f"{mp}.extent", f"covers {share * 100:.0f} % of the terrain: the rest has no macro")
+        f = ctx.file(m["uri"])
+        if not f.is_file():
+            rep.warn(f"{mp}.uri", f"file not found: {m['uri']}")
+            continue
+        try:
+            w, h, ch = _png_header(f)
+        except (core.StjLoadError, OSError, struct.error) as e:
+            rep.error(f"{mp}.uri", str(e))
+            continue
+        if w < 2 or h < 2:
+            rep.error(f"{mp}.uri", f"image is {w} x {h}: a raster over an extent needs at least 2 x 2")
+        if enc == "colour" and ch < 3:
+            rep.warn(f"{mp}.uri", "a colour map is expected to be RGB or RGBA; this one is greyscale and has no hue")
+
+
 def check_terrain(ctx):
     """Grid rules, layers and terrain-above-road sampling (spec §7.4)."""
     ter = (ctx.doc.get("geometry") or {}).get("terrain")
@@ -980,6 +1035,7 @@ def check_one_terrain(ctx, ter, p):
             rep.warn(f"{lp}.weight.uri", f"file not found: {layer['weight']['uri']}")
         if "material" in layer:
             _mesh_has(ctx, rep, f"{lp}.material", layer["material"]["mesh_ref"], layer["material"]["material"])
+    check_terrain_macro(ctx, ter, p)
     files = [hm["uri"]] + ([ter["holes"]["uri"]] if "holes" in ter else [])
     missing = [u for u in files if not ctx.file(u).is_file()]
     for u in missing:
@@ -1711,6 +1767,11 @@ def check_version(ctx):
     found += [f"geometry.{k}" for k in ("chunks", "tiles", "terrains") if k in geo]
     found += [f"environment.{k}" for k in ("probes", "climate") if k in (doc.get("environment") or {})]
     found += ["scenery.crowds"] * ("crowds" in (doc.get("scenery") or {}))
+    terrains = ([geo["terrain"]] if geo.get("terrain") else []) + list(geo.get("terrains", []))
+    found += ["geometry.terrain.macro"] * any("macro" in t for t in terrains)
+    found += ["ground macro encoding 'colour'"] * any(
+        m.get("encoding") == "colour" for gm in (doc.get("ground") or {}).get("materials", [])
+        for m in gm.get("macro", []))
     if found:
         ctx.rep.warn("_metadata.version", f"declares {ver} but uses v0.3 features: {', '.join(found[:4])}")
 

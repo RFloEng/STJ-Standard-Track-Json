@@ -474,6 +474,8 @@ Edges add meaning to the geometry. They do not replace collision meshes: a conve
 - `material` names a glTF material that draws the layer, and `tile` gives its world repeat. `ground_layer` names a layered-ground layer instead (§8.7).
 - Scatter attaches to the layer's surface through `area.surfaces`, like any other surface.
 
+**Macro maps.** `macro[]` puts low-resolution maps over the whole heightfield. The keys are those of §8.7's `ground.materials[].macro`, without `texcoord` (a heightfield has no UVs): `{kind: tint | occlusion | other, uri, extent, encoding, strength}`. The image covers `extent` (default: the heightmap's), is sampled bilinearly, and its row 0 is the +Y (north) edge, like every STJ raster. `encoding` is `grey_centred` (default), `multiply` or `colour` (§8.7). The maps apply to the terrain's detail colour after the layer blend; road meshes keep the macro maps of their own `ground.materials[]`.
+
 **Terrain and meshes.** The higher surface is touched. Authors keep terrain at least a few centimetres under road meshes, or cut `holes` (8-bit mask on the heightmap grid, non-zero = no terrain). The validator samples the terrain every 2 m along the reference line and warns where it rises more than 2 cm above it.
 
 Tiles, streaming and terrain LOD are out of scope (open question Q14).
@@ -682,13 +684,24 @@ detail  = Σ colour_i · m_i / Σ m_i
 - `method: linear` gives `detail = Σ colour_i · w_i`.
 - Blend in linear colour.
 
-**Macro maps** `macro[] {kind: tint | occlusion | other, uri, texcoord | extent, encoding}`. `grey_centred` maps are linear data where 0.5 changes nothing: `final = detail · 2 · map`. `multiply` maps give `final = detail · map`.
+**Macro maps** `macro[] {kind: tint | occlusion | other, uri, texcoord | extent, encoding, strength}`. `grey_centred` maps are linear data where 0.5 changes nothing: `final = detail · 2 · map`. `multiply` maps give `final = detail · map`. `colour` maps are sRGB images of the **average colour of the ground**, a baked colour map such as a game's heightfield terrain often has. The detail layers keep their texture and the map replaces their average colour. In linear light, with the layers' weights `w_i` and mean colours `mean_i`:
 
-**Terrain.** `geometry.terrain.layers[].ground_layer` names a ground layer instead of `material` + `tile` (§7.4).
+```
+base  = Σ w_i · mean_i                          the layers' own average colour
+ratio = clamp(map / max(base, ε), 0.25, 4)       per channel
+final = detail · (1 + strength · (ratio − 1))
+```
+
+- `strength` runs from 0 (the detail is left alone) to 1 (the average colour of the result is the map's); the default is 1.
+- Maps apply in order and the layers' average follows each one, so a later `colour` map re-targets the average instead of compounding with an earlier one: only the last `colour` map shows.
+- Without ground layers, `base` is the base colour.
+- Several `colour` maps apply one after the other; the validator warns about more than one.
+
+**Terrain.** `geometry.terrain.layers[].ground_layer` names a ground layer instead of `material` + `tile` (§7.4), and `geometry.terrain.macro[]` carries the terrain's macro maps (§7.4).
 
 **Tools.**
-- `stj_core.ground_blend` and `apply_macro` are the reference implementations.
-- `tools/ground_bake.py` bakes a `vertex_top3` material into an image in any UV set. It is what a converter does for engines that cannot rebuild the blend (RBR, Speed Dreams).
+- `stj_core.ground_blend` and `apply_macro` are the reference implementations; `apply_macro` takes the layers' mean colour (`ground_mean_colour`) for the `colour` encoding.
+- `tools/ground_bake.py` bakes a `vertex_top3` material, with its `grey_centred`, `multiply` or `colour` macro maps, into an image in any UV set. It is what a converter does for engines that cannot rebuild the blend (RBR, Speed Dreams).
 
 DR2's own shader formula is not public; the reference blend was fitted to it by eye (§14).
 
@@ -928,6 +941,7 @@ STJ can carry these values, but cannot make them mean the same thing everywhere.
 22. **Crowd behaviour.** "Flee" or "cheer" is a request. How quickly and how plausibly spectators move is the engine's.
 23. **Reset rules.** The same rule on two engines with different collision meshes can still put a car in a different place.
 24. **USD support varies by tool.** USD can hold everything STJ needs, but each application's exporter writes a different subset. Blender 5.2 drops physics, audio, the sky, instancing and nested properties, and no racing game loads USD at runtime. The STJ JSON stays the part every consumer can rely on.
+25. **Macro colour.** How an engine combines a baked colour map with its detail layers differs, and a given game's formula is usually not public. The `colour` encoding is a definition STJ can state exactly: in the original the ground will look similar, not identical.
 
 ---
 
@@ -943,6 +957,6 @@ STJ can carry these values, but cannot make them mean the same thing everywhere.
 
 | Version | Changes |
 |---|---|
-| 0.3 | Survey Tier 3 (`proposals/stj_tier3_proposal.md`). <ul><li>race control: marshal sectors, posts, vehicles, restricted zones, reset (§10.1)</li><li>`dynamic`: reference evolution laws for line states, water, ruts, wear and track temperature (§6.10)</li><li>large worlds: chunks with local origins, tiles, several terrains (§7.6)</li><li>reflection probes, screens, crowds (§8.8); climate statistics (§11)</li><li>no reserved keys left</li><li>OpenUSD (`proposals/stj_usd_proposal.md`): USD meshes with per-face layer primvars and per-corner weights (§7.7); the STJ document inside a USD layer, USD override layers, `usd_variants`, chunk payloads, `.usdz` packages (§7.8); `authoring_source`</li></ul> |
+| 0.3 | Survey Tier 3 (`proposals/stj_tier3_proposal.md`). <ul><li>race control: marshal sectors, posts, vehicles, restricted zones, reset (§10.1)</li><li>`dynamic`: reference evolution laws for line states, water, ruts, wear and track temperature (§6.10)</li><li>large worlds: chunks with local origins, tiles, several terrains (§7.6)</li><li>reflection probes, screens, crowds (§8.8); climate statistics (§11)</li><li>no reserved keys left</li><li>OpenUSD (`proposals/stj_usd_proposal.md`): USD meshes with per-face layer primvars and per-corner weights (§7.7); the STJ document inside a USD layer, USD override layers, `usd_variants`, chunk payloads, `.usdz` packages (§7.8); `authoring_source`</li><li>macro maps on a heightfield terrain: `geometry.terrain.macro[]` and the `colour` encoding with `strength` (§7.4, §8.7; `proposals/stj_terrain_macro_proposal.md`)</li></ul> |
 | 0.2 | Survey Tier 2, all additive except that `animated_objects` became an array. <ul><li>signals, conditions and bindings (§11.1)</li><li>terrain heightfields (§7.4)</li><li>water bodies, plus wetting and drying with an effective film depth (§6.9, §7.5)</li><li>line states: rubber and swept gravel (§6.8)</li><li>seasons and surface substitutions (§6.3, §11)</li><li>physical props (§8.4), animated objects (§8.5), audio (§8.6)</li><li>UI and minimap fields in `track_info` (§5.1)</li><li>light, instance and scatter conditions; edge prototypes; `snow_bank`; `precipitation` in mm/h</li><li>layered ground: detail layers, four weight encodings, reference height blend, macro maps (§8.7)</li><li>from RBR stages (`proposals/stj_lessons_from_rbr_proposal.md`):<ul><li>surface maps inside primitives with blending, and states chosen by `wear` / `wetness` (§6.3)</li><li>absolute μ with `reference_mu` (§6.5)</li><li>centerline chainage and Hermite tangents (§7.1)</li><li>sinusoidal roughness, `base_offset`, surface `impact` and `effects`</li><li>invisible drag edges, tearable fences, conditional water, bendable props, foliage sway</li><li>`time_to_arrival` signal, stage sections, weather options, acoustic reflections</li><li>pace-note `call_adjust`; `distance_to_next` treated as derived</li></ul></li></ul> |
 | 0.1 | First draft. <ul><li>metadata, reference, geometry</li><li>surfaces: STJ-REF, MF scaling, per-tyre-class values, two-tier deformable model, bindings</li><li>timing: start/finish, sectors, splits, pit lane, track limits, DRS zones, rally controls, side roads</li><li>race: grid, pits, spawns, racing lines with AI purposes, AI corridor and hints, start procedure, service areas, pacenotes</li><li>edges (kerbs, verges, barriers), cameras</li><li>environment: geo-reference, sky, lighting, weather and weather schedule</li><li>scenery: prototypes, instances, scatter with engine-native blocks</li><li>layouts, variants, override files</li><li>validator</li></ul> |

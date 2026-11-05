@@ -621,6 +621,15 @@ def stage_terrain(line, extent, n=129):
     core.write_png(HERE / "terrain" / "coll_de_prova_height.png", n, n,
                    [round((h - lo) / (hi - lo) * 65535) for h in heights], 1, 16)
     core.write_png(HERE / "terrain" / "coll_de_prova_dirt.png", n, n, weights)
+    # a colour macro map over the whole terrain (spec §7.4, §8.7): warm earth with slow variation; no extent,
+    # so it covers the heightmap's. `colour` replaces the layers' average colour and keeps their texture.
+    m = 65
+    macro = []
+    for j in range(m):
+        for i in range(m):
+            d = math.sin(i / 9.0) * math.cos(j / 11.0)
+            macro += [round(138 + 22 * d), round(116 + 16 * d), round(88 + 10 * d)]
+    core.write_png(HERE / "terrain" / "coll_de_prova_macro.png", m, m, macro, 3)
     return {
         "heightmap": {"uri": "terrain/coll_de_prova_height.png", "format": "png16", "size": [n, n],
                       "extent": [r(c) for c in extent], "height_min": r(lo, 3), "height_max": r(hi, 3)},
@@ -629,6 +638,7 @@ def stage_terrain(line, extent, n=129):
             {"id": "track_dirt", "surface": "gravel_hardpack", "weight": {"uri": "terrain/coll_de_prova_dirt.png"},
              "material": {"mesh_ref": "stage_collision", "material": "GravelFine"}, "tile": 3.0}
         ],
+        "macro": [{"kind": "tint", "uri": "terrain/coll_de_prova_macro.png", "encoding": "colour", "strength": 0.8}],
         "collision": True,
         "_note": "129 x 129 samples at 9 m: coarse on purpose, to keep the example small."
     }

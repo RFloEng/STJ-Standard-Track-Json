@@ -2295,7 +2295,37 @@
           "description": "Material layers. A terrain contact takes the surface of the dominant layer."
         },
         "collision": { "type": "boolean", "default": true },
+        "macro": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/terrain_macro" },
+          "description": "Low-resolution maps over the whole heightfield: tint, occlusion or an absolute colour (spec §7.4, §8.7)."
+        },
         "id": { "$ref": "#/definitions/id" }
+      }
+    },
+    "terrain_macro": {
+      "type": "object",
+      "description": "A macro map over a heightfield terrain (spec §7.4). Same keys as ground.materials[].macro, without texcoord: a heightfield has no UVs.",
+      "required": ["kind", "uri"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "kind": { "type": "string", "enum": ["tint", "occlusion", "other"] },
+        "uri": { "$ref": "#/definitions/relative_uri", "description": "Image over the extent, sampled bilinearly; row 0 is the +Y (north) edge (spec §7.4)." },
+        "extent": { "$ref": "#/definitions/extent", "description": "[x_min, y_min, x_max, y_max] (m) the image covers. Default: the heightmap's extent." },
+        "encoding": {
+          "type": "string",
+          "enum": ["grey_centred", "multiply", "colour"],
+          "default": "grey_centred",
+          "description": "grey_centred: colour x 2 * map (0.5 = unchanged), read as linear data. multiply: colour x map. colour: an sRGB map of the average colour of the ground; the layers' mean colour is replaced by the map's, their texture is kept (spec §8.7)."
+        },
+        "strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1,
+          "description": "colour only: 0 leaves the detail alone, 1 makes the average colour of the result the map's."
+        }
       }
     },
     "line_state": {
@@ -2860,9 +2890,16 @@
               "extent": { "$ref": "#/definitions/extent" },
               "encoding": {
                 "type": "string",
-                "enum": ["grey_centred", "multiply"],
+                "enum": ["grey_centred", "multiply", "colour"],
                 "default": "grey_centred",
-                "description": "grey_centred: colour x 2 * map (0.5 = unchanged), read as linear data. multiply: colour x map."
+                "description": "grey_centred: colour x 2 * map (0.5 = unchanged), read as linear data. multiply: colour x map. colour: an sRGB map of the average colour of the ground; the layers' mean colour is replaced by the map's, their texture is kept (spec §8.7)."
+              },
+              "strength": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 1,
+                "description": "colour only: 0 leaves the detail alone, 1 makes the average colour of the result the map's."
               }
             }
           }

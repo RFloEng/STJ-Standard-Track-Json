@@ -84,7 +84,7 @@ Everything except `_metadata` is optional. Add what you have: meshes, timing, pa
 | `_metadata` | Version, licence (SPDX, redistributable), provenance: original, scanned or converted, with what each conversion step lost; the authoring source file |
 | `track_info` | Name, layout, type, country, primary surface, length, short name, tags, media, minimap, records |
 | `reference` | OpenDRIVE route, or a centerline (polyline or Hermite spline) with widths and optional stored chainage. Defines `s` and `t`. |
-| `geometry` | USD meshes by role (visual, collision, LOD), OpenCRG grids, terrain heightfields with layers; long stages and open areas cut into chunks or tiles with local origins (USD payloads) |
+| `geometry` | USD meshes by role (visual, collision, LOD), OpenCRG grids, terrain heightfields with layers and macro maps; long stages and open areas cut into chunks or tiles with local origins (USD payloads) |
 | `surfaces` | <ul><li>A surface library relative to **STJ-REF** (dry, clean asphalt): Magic Formula scaling λ or absolute μ per tyre class, rolling resistance, roughness (ISO 8608, sinusoid, macrotexture), wet response, deformable loose ground (effective and terramechanics tiers), impact and visual effects</li><li>Where each surface applies: mesh materials, surface maps that blend inside a mesh with one map per state (new/worn, dry/wet), OpenDRIVE lanes, bands along the line</li><li>Rubber and swept-gravel line states</li><li>Season substitutions</li></ul> |
 | `ground` | Layered ground shading that a single material cannot express: detail layers, per-face layers with per-corner or image weights, a reference height blend, macro maps |
 | `timing` | Start/finish, sectors, splits, stop, pit lane, track limits, DRS zones, rally controls, side roads |
@@ -119,12 +119,11 @@ New in STJ:
 
 **Coordinates.** Z up, right-handed, map-projected x/y in metres, heading counter-clockwise from +X: the OpenDRIVE inertial frame ([spec §4](spec/STJ_Spec.md#4-units-and-frames)). A track's USD stage declares `upAxis = "Z"` and `metersPerUnit = 1`, which is also Blender's scene frame, so Blender scene coordinates are STJ coordinates.
 
-## Files you own, and nothing else
+## Where the data comes from is your decision
 
-STJ is **not** for extracting or redistributing anyone's content.
-- Tools that read game data read files you own: your projects, or games you have installed.
-- They never decrypt, unpack protected archives or bypass protection.
-- A file made from a commercial game is marked `licence.redistributable: false`. It is for your own use; do not publish it.
+STJ is a format. It does not rip, decrypt or unpack anything, and it ships no game content.
+- Where the data for a track comes from, and whether you may use it that way, is for you to decide under the licence of the source. STJ takes no position and does not check.
+- A file can say so in `_metadata.licence`: `redistributable: false` marks a file that is for your own use.
 - Scenery and ground layers reference a game's assets **by name or local path**. They never embed them.
 
 ## Quick start

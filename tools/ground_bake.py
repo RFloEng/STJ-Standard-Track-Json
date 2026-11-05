@@ -8,7 +8,7 @@ fallback for engines that cannot rebuild the blend. Needs the pxr module: pip in
     python tools/ground_bake.py <track.usda | doc.stj.json> -o out.png [--material NAME] [--uv st] [--size 1024x128]
 
 Supports the vertex_top3 encoding (one int3 primvar or three int primvars), the world_xy, road and
-texcoord projections, and grey_centred or multiply macro maps on the bake's own UV primvar.
+texcoord projections, and grey_centred, multiply or colour macro maps on the bake's own UV primvar.
 Standard library plus pxr; slow on big meshes by design.
 """
 
@@ -36,6 +36,17 @@ class Texture:
         self.img = core.read_png(path)
         img = self.img
         self.mean_alpha = (sum(img.data[3::4]) / (img.width * img.height) / img.maxval) if img.channels == 4 else 0.5
+        self._mean_rgb = None
+
+    @property
+    def mean_rgb(self):
+        """The texture's average colour in linear light (what the `colour` macro encoding replaces)."""
+        if self._mean_rgb is None:
+            img, n = self.img, self.img.width * self.img.height
+            self._mean_rgb = tuple(
+                sum(srgb_to_linear(img.data[(k * img.channels) + min(c, img.channels - 1)] * 255.0 / img.maxval)
+                    for k in range(n)) / n for c in range(3))
+        return self._mean_rgb
 
     def sample(self, u, v, data=False):
         """Nearest texel with wrapping: ((r, g, b) linear, alpha 0..1). data=True reads the values as they are."""
@@ -92,8 +103,8 @@ def bake(doc, base_dir, index=0, width=1024, height=128, uv="st"):
     layers = [ground["layers"][lid] for lid in gm["palette"]]
     tex = [Texture(base_dir / l["albedo"]["uri"]) for l in layers]
     blend = gm.get("blend") or {}
-    macros = [(Texture(base_dir / m["uri"]), m.get("encoding", "grey_centred")) for m in gm.get("macro", [])
-              if m.get("texcoord", uv) == uv and "extent" not in m]
+    macros = [(Texture(base_dir / m["uri"]), m.get("encoding", "grey_centred"), m.get("strength", 1.0))
+              for m in gm.get("macro", []) if m.get("texcoord", uv) == uv and "extent" not in m]
     out = [[(0, 0, 0)] * width for _ in range(height)]
     for mesh, faces in core.usd_material_meshes(stage, gm["material"]):
         pts = mesh.GetAttribute("points").Get()
@@ -172,8 +183,12 @@ def _raster(out, width, height, tri, f, pts, bake_uv, wts, uvsets, layers, tex, 
                                    blend.get("height_influence", 0.5), blend.get("depth", 0.2))
             colour = tuple(sum(fi * c[ch] for fi, c in zip(fb, cols)) for ch in range(3))
             mu, mv = px / (width - 1), 1.0 - py / (height - 1)
-            # macro maps are linear data (0.5 = unchanged for grey_centred)
-            colour = core.apply_macro(colour, [(m.sample(mu, 1.0 - mv, data=True)[0], enc) for m, enc in macros])
+            # grey_centred and multiply maps are linear data (0.5 = unchanged for grey_centred); a colour map is
+            # sRGB, and replaces the layers' own average colour sum(w_i * mean_i)
+            base = core.ground_mean_colour(weights, [tex[li].mean_rgb for li in lay]) if any(
+                enc == "colour" for _m, enc, _st in macros) else None
+            colour = core.apply_macro(colour, [(m.sample(mu, 1.0 - mv, data=enc != "colour")[0], enc, st)
+                                               for m, enc, st in macros], base)
             out[py][px] = tuple(linear_to_srgb(c) for c in colour)
 
 

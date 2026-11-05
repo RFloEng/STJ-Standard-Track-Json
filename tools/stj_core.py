@@ -628,13 +628,52 @@ def ground_blend(weights, heights, means, contrasts, method="height", influence=
     return [k / total for k in keep]
 
 
-def apply_macro(colour, macro_values):
-    """colour (r, g, b) times each macro map value: [(value or (r, g, b), encoding), ...]."""
+MACRO_RATIO_RANGE = (0.25, 4.0)      # the `colour` encoding never scales a channel by more than this
+MACRO_EPSILON = 1e-4
+
+
+def srgb_to_linear(c):
+    """One sRGB channel in 0..1 to linear light. Colours are blended in linear light (§8.7)."""
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def ground_mean_colour(weights, colours):
+    """The layers' own average colour at a point: sum(w_i * mean colour_i), weights normalised.
+
+    weights: layer weights; colours: each layer texture's mean colour (r, g, b), linear."""
+    total = sum(weights)
+    if total <= 0:
+        return (0.0, 0.0, 0.0)
+    return tuple(sum(w * col[c] for w, col in zip(weights, colours)) / total for c in range(3))
+
+
+def apply_macro(colour, macro_values, base=None):
+    """The detail colour (r, g, b, linear) after each macro map, in order (spec §8.7, §7.4).
+
+    macro_values: [(value or (r, g, b), encoding[, strength]), ...], values linear.
+      grey_centred   colour * 2 * value (0.5 changes nothing)
+      multiply       colour * value
+      colour         value is the average colour the ground should have, `base` the layers' own average
+                     (ground_mean_colour; default: `colour` itself). Per channel,
+                     ratio = clamp(value / max(base, eps), 0.25, 4); colour *= 1 + strength * (ratio - 1).
+                     strength 0 leaves the detail alone, 1 makes its average the map's. Default 1.
+    The average (`base`) follows every map applied before, so a second colour map re-targets the average
+    instead of compounding: only the last colour map shows."""
     out = list(colour)
-    for value, encoding in macro_values:
+    ref = list(base if base is not None else colour)
+    lo, hi = MACRO_RATIO_RANGE
+    for item in macro_values:
+        value, encoding = item[0], item[1]
+        strength = item[2] if len(item) > 2 else 1.0
         vals = value if isinstance(value, (list, tuple)) else (value,) * 3
         for c in range(3):
-            out[c] *= 2.0 * vals[c] if encoding == "grey_centred" else vals[c]
+            if encoding == "colour":
+                ratio = min(max(vals[c] / max(ref[c], MACRO_EPSILON), lo), hi)
+                factor = 1.0 + strength * (ratio - 1.0)
+            else:
+                factor = 2.0 * vals[c] if encoding == "grey_centred" else vals[c]
+            out[c] *= factor
+            ref[c] *= factor
     return tuple(out)
 
 
