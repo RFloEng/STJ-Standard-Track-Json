@@ -1131,7 +1131,7 @@ def check_one_terrain(ctx, ter, p):
         while s <= ctx.line.length:
             x, y, z, _h = ctx.line.frame(s)
             h = terrain.height(x, y)
-            mode = core.terrain_rule_at(cl, s)[0]
+            mode = core.terrain_rule_at(cl, s, ctx.line.length if ctx.line.closed else None)[0]
             if mode == "drape":
                 if h is not None and abs(h - z) > 0.1:
                     off.append((s, h - z))
@@ -2088,24 +2088,40 @@ def check_scan(ctx):
             rep.note(path, "no cell_size: the grid spacing of this product is not recorded")
 
 
-def _sections_ok(rep, path, secs, length):
-    """Section ranges in order, inside the line, not overlapping."""
-    prev_end = None
+def _range_ok(rep, p, a, b, length, closed, what="s_end", where="the line"):
+    """One s range: on an open line s_end must be above s_start; on a closed line a range with s_end below
+    s_start crosses s = 0 (spec §7.1, as for surface bands). Returns whether it can be used."""
+    if abs(b - a) < 1e-9:
+        rep.error(p, f"{what} equals s_start" + (" (a full lap is s_start 0 and s_end = the lap length)" if closed else ""))
+        return False
+    if b < a and not closed:
+        rep.error(p, f"{what} must be greater than s_start (only a closed line may cross s = 0)")
+        return False
+    if length is not None and max(a, b) > length + TOL:
+        rep.error(p, f"{what} = {max(a, b):.1f} m is beyond {where} ({length:.1f} m)")
+        return False
+    return True
+
+
+def _sections_ok(rep, path, secs, length, closed=False):
+    """Section ranges inside the line and not overlapping, wrapping through s = 0 on a closed line."""
+    lap = length if closed else None
     for i, sec in enumerate(secs):
         sp = f"{path}[{i}]"
-        if sec["s_end"] <= sec["s_start"]:
-            rep.error(sp, "s_end must be greater than s_start")
-        if length is not None and sec["s_end"] > length + TOL:
-            rep.error(sp, f"s_end = {sec['s_end']:.1f} m is beyond the line ({length:.1f} m)")
-        if prev_end is not None and sec["s_start"] < prev_end - TOL:
-            rep.error(sp, "overlaps the previous section")
-        prev_end = sec["s_end"]
+        if not _range_ok(rep, sp, sec["s_start"], sec["s_end"], length, closed):
+            continue
+        for j in range(i):
+            o = secs[j]
+            if o["s_start"] != o["s_end"] and core.s_overlap((o["s_start"], o["s_end"]), (sec["s_start"], sec["s_end"]), lap, TOL):
+                rep.error(sp, "overlaps the previous section" if j == i - 1 else f"overlaps section {j}")
+                break
 
 
 def check_cross_section_of(ctx, cl, p, line):
     """One centerline's cross_section and terrain rule (spec §7.1)."""
     rep, doc = ctx.rep, ctx.doc
     length = line.length if line is not None else None
+    closed = bool(line is not None and line.closed)
     xs = cl.get("cross_section")
     if xs:
         templates = {k: v for k, v in (xs.get("templates") or {}).items() if not k.startswith(("x_", "_"))}
@@ -2125,7 +2141,7 @@ def check_cross_section_of(ctx, cl, p, line):
                     if q["surface"] not in ctx.surface_ids:
                         rep.error(f"{tp}.points[{j}].surface", f"unknown surface '{q['surface']}'")
         secs = xs.get("sections") or []
-        _sections_ok(rep, f"{p}.cross_section.sections", secs, length)
+        _sections_ok(rep, f"{p}.cross_section.sections", secs, length, closed)
         for i, sec in enumerate(secs):
             sp = f"{p}.cross_section.sections[{i}]"
             if sec["template"] not in templates:
@@ -2138,8 +2154,9 @@ def check_cross_section_of(ctx, cl, p, line):
                 elif secs[i - 1]["template"] in templates and \
                         len(templates[secs[i - 1]["template"]]["points"]) != len(templates[sec["template"]]["points"]):
                     rep.error(f"{sp}.blend", "the two templates have a different number of points, so they cannot be blended")
-                if blend > sec["s_end"] - sec["s_start"] + TOL:
-                    rep.warn(f"{sp}.blend", f"{blend:g} m is longer than the section ({sec['s_end'] - sec['s_start']:g} m)")
+                span = core.s_since(sec["s_end"], sec["s_start"], length if closed else None)
+                if blend > span + TOL:
+                    rep.warn(f"{sp}.blend", f"{blend:g} m is longer than the section ({span:g} m)")
             hw = core.half_widths(doc, sec["s_start"]) if p == "reference.centerline" else None
             if hw:
                 ts = [q["t"] for q in templates[sec["template"]]["points"]]
@@ -2158,7 +2175,7 @@ def check_cross_section_of(ctx, cl, p, line):
             rep.note(f"{p}.cross_section", "banking without templates: the road is flat across, tilted by the bank angle")
     rule = cl.get("terrain")
     if rule:
-        _sections_ok(rep, f"{p}.terrain.sections", rule.get("sections") or [], length)
+        _sections_ok(rep, f"{p}.terrain.sections", rule.get("sections") or [], length, closed)
         modes = {rule.get("mode", "free")} | {sec.get("mode", rule.get("mode", "free")) for sec in rule.get("sections", [])}
         geo = doc.get("geometry") or {}
         if modes & {"drape", "carve"} and not (geo.get("terrain") or geo.get("terrains")):
@@ -2367,10 +2384,11 @@ def check_structures(ctx):
             rep.error(f"{p}.road", f"unknown road '{road}'")
             continue
         line = roads[road]
-        if st["s_end"] <= st["s_start"]:
-            rep.error(p, "s_end must be greater than s_start")
-        if line is not None and st["s_end"] > line.length + TOL:
-            rep.error(p, f"s_end = {st['s_end']:.1f} m is beyond road '{road}' ({line.length:.1f} m)")
+        if road == "reference":              # an OpenDRIVE-only reference has no line object: use the checks' own view
+            closed, road_length = ctx.lapped(), ctx.length
+        else:
+            closed, road_length = bool(line is not None and line.closed), line.length if line is not None else None
+        _range_ok(rep, p, st["s_start"], st["s_end"], road_length, closed, where=f"road '{road}'")
         if st["kind"] in ("tunnel", "underpass", "gallery") and "clearance" not in st:
             rep.warn(p, f"a {st['kind']} without clearance: the free height above the road is not stated")
         if "mesh" in st:
@@ -2383,17 +2401,24 @@ def check_structures(ctx):
                 rep.error(f"{p}.carried_by", f"unknown structure '{st['carried_by']}'")
             elif st["kind"] != "underpass":
                 rep.warn(f"{p}.carried_by", f"only an underpass passes under a structure; this is a {st['kind']}")
+        lap = road_length if closed else None
         for j in range(i):
             o = structs[j]
-            if o.get("road", "reference") == road and _overlap_s(o, st) and "underpass" not in (o["kind"], st["kind"]):
+            if (o.get("road", "reference") == road and o["s_start"] != o["s_end"] and st["s_start"] != st["s_end"]
+                    and core.s_overlap((o["s_start"], o["s_end"]), (st["s_start"], st["s_end"]), lap)
+                    and "underpass" not in (o["kind"], st["kind"])):
                 rep.warn(p, f"overlaps structure '{o['id']}' on the same road")
-        if road == "reference" and cl and (st["kind"] != "other"):
-            mode = core.terrain_rule_at(cl, 0.5 * (st["s_start"] + st["s_end"]))[0]
+        if road == "reference" and cl and (st["kind"] != "other") and st["s_start"] != st["s_end"]:
+            a, b = st["s_start"], st["s_end"]
+            mid = 0.5 * (a + b) if a <= b else (a + 0.5 * (b + (lap or 0.0) - a)) % (lap or 1.0)
+            mode = core.terrain_rule_at(cl, mid, lap)[0]
             if mode != "free":
                 rep.warn(p, f"the terrain rule is '{mode}' under this {st['kind']}: a structure stands apart from the ground, so it should be free")
     for i, sh in enumerate((doc.get("water") or {}).get("shelter", [])):
         if sh.get("kind") in ("tunnel", "bridge") and "band" in sh:
-            if not any(st.get("road", "reference") == "reference" and st["s_start"] < sh["band"]["s_end"] and sh["band"]["s_start"] < st["s_end"]
+            if not any(st.get("road", "reference") == "reference"
+                       and core.s_overlap((st["s_start"], st["s_end"]), (sh["band"]["s_start"], sh["band"]["s_end"]),
+                                          ctx.length if ctx.lapped() else None)
                        for st in structs):
                 rep.note(f"water.shelter[{i}]", f"kind '{sh['kind']}', but no structure covers it: say so in structures[]")
     notes = ((doc.get("race") or {}).get("pacenotes") or {}).get("notes", [])
@@ -2429,10 +2454,6 @@ def check_instance_primvars(ctx, p, g):
             rep.warn(pp, f"the role 'tint' needs 3 components (or 4, the last ignored), but '{pv['name']}' is {kind}")
         elif pv["role"] in ("age", "scale_jitter", "phase") and kind not in ("float", "double"):
             rep.warn(pp, f"the role '{pv['role']}' is one number, but '{pv['name']}' is {kind}")
-
-
-def _overlap_s(a, b):
-    return a["s_start"] < b["s_end"] and b["s_start"] < a["s_end"]
 
 
 def check_unused_surfaces(ctx):

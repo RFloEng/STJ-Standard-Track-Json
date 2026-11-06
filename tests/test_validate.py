@@ -2113,5 +2113,180 @@ class GroundFallback(unittest.TestCase):
             self.assertEqual((stamp["uri"], stamp["texcoord"]), ("bake.png", "st"))
 
 
+
+class ClosedLoops(unittest.TestCase):
+    """Ranges, profiles and banking across s = 0 on a closed (lapped) line (spec §7.1)."""
+
+    TPL = {"points": [{"t": -6, "dz": -0.2}, {"t": 0, "dz": 0.04, "surface": "asphalt"}, {"t": 6, "dz": -0.2, "surface": "asphalt"}]}
+    FLAT = {"points": [{"t": -6, "dz": 0.0}, {"t": 0, "dz": 0.0, "surface": "asphalt"}, {"t": 6, "dz": 0.0, "surface": "asphalt"}]}
+
+    def setUp(self):
+        self.ring = core.load_document(EX / "test_ring_minimal.usda")
+        self.L = core.reference_line(self.ring).length
+
+    def doc(self, **xs):
+        d = copy.deepcopy(self.ring)
+        d["reference"]["centerline"]["cross_section"] = {"templates": {"a": self.TPL, "b": self.FLAT}, **xs}
+        return d
+
+    def finding(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def clean(self, doc):
+        return [m for m in messages(run(doc), "ERROR") + messages(run(doc), "WARN")]
+
+    # -- the helpers --
+    def test_range_helpers(self):
+        L = 1000.0
+        self.assertTrue(core.s_in_range(50, 900, 100, L))
+        self.assertTrue(core.s_in_range(950, 900, 100, L))
+        self.assertFalse(core.s_in_range(500, 900, 100, L))
+        self.assertFalse(core.s_in_range(50, 900, 100))                    # an open line does not wrap
+        self.assertEqual(core.s_since(50, 900, L), 150)
+        self.assertEqual(core.s_since(950, 900, L), 50)
+        self.assertEqual(core.s_segments(900, 100, L), [(900, 1000.0), (0.0, 100)])
+        self.assertTrue(core.s_overlap((900, 100), (50, 300), L))
+        self.assertFalse(core.s_overlap((900, 100), (200, 800), L))
+        self.assertFalse(core.s_overlap((100, 300), (300, 500), L))        # touching is not overlapping
+
+    # -- the profile --
+    def test_a_section_crosses_the_start_line(self):
+        L = self.L
+        cl = self.doc(sections=[{"s_start": L - 100, "s_end": 100, "template": "a"}])["reference"]["centerline"]
+        for s in (L - 50, 0.0, 20.0, 100.0):
+            self.assertIsNotNone(core.template_points(cl, s, L), s)
+        self.assertIsNone(core.template_points(cl, 500.0, L))
+        self.assertIsNone(core.template_points(cl, 20.0), "an open line does not wrap")
+
+    def test_blend_counts_from_the_start_across_the_wrap(self):
+        L = self.L
+        cl = self.doc(sections=[{"s_start": 200, "s_end": 400, "template": "a"},
+                                {"s_start": L - 100, "s_end": 100, "template": "b", "blend": 40}])["reference"]["centerline"]
+        half = core.template_points(cl, L - 80, L)          # 20 m into the 40 m blend: halfway from 'a' to 'b'
+        self.assertAlmostEqual(half[1][1], 0.02)
+        self.assertEqual(core.template_points(cl, 10.0, L)[1][1], 0.0)     # 110 m in: pure 'b', after the wrap
+
+    def test_bank_wraps_across_the_start_line(self):
+        L = self.L
+        cl = self.doc(bank=[[20, 0.0], [L - 20, 0.0], [L - 5, 0.04]])["reference"]["centerline"]
+        self.assertAlmostEqual(core.bank_at(cl, L - 5, L), 0.04)
+        self.assertAlmostEqual(core.bank_at(cl, 0.0, L), 0.04 * (1 - 5.0 / 25.0))        # 5 of 25 m back to 0 over the line
+        self.assertAlmostEqual(core.bank_at(cl, 10.0, L), 0.04 * (1 - 15.0 / 25.0))
+        self.assertEqual(core.bank_at(cl, 10.0), 0.0, "without the lap length the table is held flat")
+
+    def test_terrain_rule_section_crosses_the_start_line(self):
+        L = self.L
+        cl = {"terrain": {"mode": "carve", "sections": [{"s_start": L - 50, "s_end": 50, "mode": "free"}]}}
+        self.assertEqual(core.terrain_rule_at(cl, 10.0, L)[0], "free")
+        self.assertEqual(core.terrain_rule_at(cl, L - 10, L)[0], "free")
+        self.assertEqual(core.terrain_rule_at(cl, 300.0, L)[0], "carve")
+
+    def test_reversing_keeps_a_wrapping_section_and_flips_the_bank(self):
+        L = self.L
+        ref = self.doc(sections=[{"s_start": L - 100, "s_end": 100, "template": "a"}], bank=[[20, 0.0], [L - 20, 0.0], [L - 5, 0.04]])["reference"]
+        rev = core.reverse_reference(ref)["centerline"]["cross_section"]
+        self.assertEqual((round(rev["sections"][0]["s_start"], 6), round(rev["sections"][0]["s_end"], 6)), (round(L - 100, 6), 100.0))
+        self.assertEqual(rev["bank"][0][1], -0.04)
+        twice = core.reverse_reference({"centerline": {**ref["centerline"], "cross_section": rev}})["centerline"]["cross_section"]
+        for got, want in zip(twice["bank"], ref["centerline"]["cross_section"]["bank"]):
+            self.assertAlmostEqual(got[0], want[0], places=6)
+            self.assertAlmostEqual(got[1], want[1], places=9)
+
+    def test_the_ribbon_follows_the_profile_across_the_start_line(self):
+        import ribbon_usd
+        d = self.doc(sections=[{"s_start": self.L - 100, "s_end": 100, "template": "a"}])
+        d["surfaces"]["bands"] = d["surfaces"].get("bands") or [{"s_start": 0, "s_end": self.L, "t_min": -6, "t_max": 6, "surface": "asphalt"}]
+        points, _c, _i, faces, _m = ribbon_usd.build(d, step=20.0)
+        crown = [p for p in points if abs(p[2] - 0.04) < 1e-6]
+        self.assertTrue(crown, "the crown of the profile appears in the ribbon")
+        self.assertTrue(faces)
+
+    # -- structures --
+    def test_a_structure_crosses_the_start_line(self):
+        d = copy.deepcopy(self.ring)
+        d["structures"] = [{"id": "t", "kind": "tunnel", "s_start": self.L - 30, "s_end": 30, "clearance": 5}]
+        self.assertEqual(self.clean(d), [])
+        self.assertEqual(core.structure_at(d, 10.0)["id"], "t")
+        self.assertEqual(core.structure_at(d, self.L - 10)["id"], "t")
+        self.assertIsNone(core.structure_at(d, 500.0))
+        self.assertEqual(core.structure_at(d, self.L - 50, slack=30)["id"], "t")
+
+    def test_the_defaults_of_a_wrapping_structure(self):
+        d = copy.deepcopy(self.ring)
+        d["structures"] = [{"id": "t", "kind": "tunnel", "s_start": self.L - 30, "s_end": 30, "clearance": 5}]
+        out = core.structure_defaults(d)
+        band = out["shelter"][0]["band"]
+        self.assertEqual((band["s_start"], band["s_end"]), (self.L - 30, 30))      # a band may cross s = 0 on a closed line
+        self.assertEqual(out["terrain_sections"][0]["s_start"], self.L - 30)
+
+    def test_overlaps_are_found_across_the_start_line(self):
+        d = copy.deepcopy(self.ring)
+        d["structures"] = [{"id": "t", "kind": "tunnel", "s_start": self.L - 30, "s_end": 30, "clearance": 5},
+                           {"id": "b", "kind": "bridge", "s_start": 10, "s_end": 60}]
+        self.finding(d, "WARN", "overlaps structure 't'")
+
+    # -- the validator --
+    def test_a_section_may_cross_s_zero_on_a_closed_line(self):
+        d = self.doc(sections=[{"s_start": self.L - 100, "s_end": 100, "template": "a"}])
+        self.assertEqual([m for m in self.clean(d) if "sections" in m], [])
+
+    def test_sections_overlapping_across_s_zero(self):
+        d = self.doc(sections=[{"s_start": self.L - 100, "s_end": 100, "template": "a"}, {"s_start": 50, "s_end": 300, "template": "a"}])
+        self.finding(d, "ERROR", "overlaps the previous section")
+
+    def test_an_empty_range_is_not_a_lap(self):
+        d = self.doc(sections=[{"s_start": 10, "s_end": 10, "template": "a"}])
+        self.finding(d, "ERROR", "equals s_start (a full lap is s_start 0")
+
+    def test_the_whole_lap_is_s_start_zero_to_the_length(self):
+        d = self.doc(sections=[{"s_start": 0, "s_end": self.L, "template": "a"}])
+        self.assertEqual([m for m in self.clean(d) if "sections" in m], [])
+
+    def test_terrain_rule_section_may_cross_s_zero(self):
+        d = copy.deepcopy(self.ring)
+        d["reference"]["centerline"]["terrain"] = {"mode": "free", "sections": [{"s_start": self.L - 50, "s_end": 50, "mode": "free"}]}
+        self.assertEqual([m for m in self.clean(d) if "terrain" in m], [])
+
+    def test_an_open_line_still_rejects_a_range_that_wraps(self):
+        d = copy.deepcopy(self.ring)
+        d["reference"]["centerline"]["closed"] = False
+        d["track_info"]["type"] = "point_to_point"
+        d["structures"] = [{"id": "t", "kind": "tunnel", "s_start": 900, "s_end": 30, "clearance": 5}]
+        self.finding(d, "ERROR", "only a closed line may cross s = 0")
+
+    # -- an OpenDRIVE-only circuit has no centerline object, but it is still a loop --
+    def opendrive_ring(self, typ="circuit"):
+        return {"_metadata": {"specification": "STJ", "version": "0.3", "coordinate_system": "OpenDRIVE", "units": "SI"},
+                "track_info": {"name": "OD ring", "type": typ},
+                "reference": {"opendrive": {"uri": "ring.xodr"}, "length": 1000.0},
+                "surfaces": {"default": "asphalt", "library": {"asphalt": {"class": "asphalt"}},
+                             "bands": [{"s_start": 950, "s_end": 50, "t_min": -4, "t_max": 4, "surface": "asphalt"}]},
+                "timing": {"start_finish": {"s": 0.0}},
+                "structures": [{"id": "t", "kind": "tunnel", "s_start": 960, "s_end": 30, "clearance": 5}]}
+
+    def test_an_opendrive_only_circuit_takes_its_lap_from_the_type_and_length(self):
+        d = self.opendrive_ring()
+        self.assertEqual(core.reference_lap(d), 1000.0)
+        bad = [m for m in messages(run(d), "ERROR") + messages(run(d), "WARN") if "xodr" not in m]
+        self.assertEqual(bad, [])
+        self.assertEqual(core.structure_at(d, 10.0)["id"], "t")
+        self.assertEqual(core.structure_at(d, 980.0)["id"], "t")
+        band = core.structure_defaults(d)["shelter"][0]["band"]
+        self.assertEqual((band["s_start"], band["s_end"]), (960, 30))
+
+    def test_the_same_reference_declared_open_has_no_lap(self):
+        d = self.opendrive_ring("point_to_point")
+        self.assertIsNone(core.reference_lap(d))
+        self.assertIsNone(core.structure_at(d, 10.0))
+
+    def test_a_closed_centerline_gives_its_length_as_the_lap(self):
+        self.assertAlmostEqual(core.reference_lap(self.ring), self.L)
+
+    def test_the_bank_beyond_the_lap_is_an_error(self):
+        d = self.doc(bank=[[0, 0.0], [self.L + 50, 0.02]])
+        self.finding(d, "ERROR", "is beyond the line")
+
+
 if __name__ == "__main__":
     unittest.main()

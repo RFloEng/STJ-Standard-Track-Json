@@ -276,8 +276,42 @@ def half_widths(doc, s):
 
 # ── road profile, banking and the terrain rule (spec §7.1) ───────────────────
 
-def _table_at(table, s):
-    """Linear value of [[s, v], ...] at s, held flat beyond the ends."""
+def s_in_range(s, a, b, length=None):
+    """Whether s lies in [a, b] along the line. With `length` (a closed line) a range with b < a crosses s = 0:
+    it is [a, length] and [0, b] (spec §7.1, as for surface bands)."""
+    if a <= b:
+        return a <= s <= b
+    return length is not None and (s >= a or s <= b)
+
+
+def s_since(s, a, length=None):
+    """The distance from a to s along the line; on a closed line (`length`) it wraps through s = 0."""
+    d = s - a
+    return d % length if length and d < 0 else d
+
+
+def s_segments(a, b, length=None):
+    """A range as plain intervals: one, or two when it crosses s = 0 on a closed line."""
+    return [(a, b)] if a <= b or not length else [(a, length), (0.0, b)]
+
+
+def s_overlap(r1, r2, length=None, tol=0.0):
+    """Whether two ranges (a, b) overlap by more than `tol`, wrapping on a closed line."""
+    return any(p[0] < q[1] - tol and q[0] < p[1] - tol
+               for p in s_segments(r1[0], r1[1], length) for q in s_segments(r2[0], r2[1], length))
+
+
+def _table_at(table, s, period=None):
+    """Linear value of [[s, v], ...] at s, held flat beyond the ends. With `period` (a closed line's length)
+    the table wraps: between the last row and the first row, across s = 0, the value is interpolated."""
+    if period:
+        s %= period
+        if s < table[0][0] or s > table[-1][0]:
+            a, b = table[-1], table[0]
+            a_s, b_s = a[0], b[0] + period
+            x = s if s >= a_s else s + period
+            u = 0.0 if b_s == a_s else (x - a_s) / (b_s - a_s)
+            return a[1] + u * (b[1] - a[1])
     if s <= table[0][0]:
         return table[0][1]
     for a, b in zip(table, table[1:]):
@@ -287,29 +321,33 @@ def _table_at(table, s):
     return table[-1][1]
 
 
-def bank_at(cl, s):
-    """Banking angle (rad) of a centerline dict at s; positive when the left side is higher."""
+def bank_at(cl, s, length=None):
+    """Banking angle (rad) of a centerline dict at s; positive when the left side is higher.
+
+    `length` is the lap length of a closed line: the table then wraps across s = 0."""
     bank = ((cl or {}).get("cross_section") or {}).get("bank")
-    return _table_at(bank, s) if bank else 0.0
+    return _table_at(bank, s, length) if bank else 0.0
 
 
-def template_points(cl, s):
+def template_points(cl, s, length=None):
     """The lateral profile at s as [(t, dz, surface)], or None where no section applies.
 
     Inside the first `blend` metres of a section the previous section's template changes into this one,
-    point by point (linear in t and dz); the strip surfaces are those of the nearer template."""
+    point by point (linear in t and dz); the strip surfaces are those of the nearer template. `length` is the
+    lap length of a closed line, where a section may cross s = 0."""
     cs = (cl or {}).get("cross_section") or {}
     templates, secs = cs.get("templates") or {}, cs.get("sections") or []
     for i, sec in enumerate(secs):
-        if sec["s_start"] <= s <= sec["s_end"]:
+        if s_in_range(s, sec["s_start"], sec["s_end"], length):
             cur = (templates.get(sec["template"]) or {}).get("points")
             if not cur:
                 return None
             blend = sec.get("blend", 0)
-            if i > 0 and blend > 0 and s < sec["s_start"] + blend:
+            d = s_since(s, sec["s_start"], length)
+            if i > 0 and blend > 0 and d < blend:
                 prev = (templates.get(secs[i - 1]["template"]) or {}).get("points")
                 if prev and len(prev) == len(cur):
-                    u = (s - sec["s_start"]) / blend
+                    u = d / blend
                     return [(a["t"] + u * (b["t"] - a["t"]), a["dz"] + u * (b["dz"] - a["dz"]),
                              (b if u >= 0.5 else a).get("surface")) for a, b in zip(prev, cur)]
             return [(q["t"], q["dz"], q.get("surface")) for q in cur]
@@ -329,22 +367,22 @@ def profile_dz(points, t):
     return points[-1][1]
 
 
-def profile_point(cl, s, t):
+def profile_point(cl, s, t, length=None):
     """(lateral offset, height above the centerline) of the road surface at nominal offset t, bank applied.
 
     The profile and the bank tilt the whole cross-section about the centerline: a point (t, dz) of the
     template goes to (t cos b - dz sin b, t sin b + dz cos b)."""
-    dz = profile_dz(template_points(cl, s), t)
-    b = bank_at(cl, s)
+    dz = profile_dz(template_points(cl, s, length), t)
+    b = bank_at(cl, s, length)
     return t * math.cos(b) - dz * math.sin(b), t * math.sin(b) + dz * math.cos(b)
 
 
-def surface_height(cl, s, t):
+def surface_height(cl, s, t, length=None):
     """Height above the centerline of the road surface at actual lateral offset t (bank applied).
 
     Beyond the ends of the template the surface continues at the slope of the bank."""
-    pts = template_points(cl, s) or [(-1.0, 0.0, None), (1.0, 0.0, None)]
-    b = bank_at(cl, s)
+    pts = template_points(cl, s, length) or [(-1.0, 0.0, None), (1.0, 0.0, None)]
+    b = bank_at(cl, s, length)
     c, sn = math.cos(b), math.sin(b)
     rot = [(q[0] * c - q[1] * sn, q[0] * sn + q[1] * c) for q in pts]
     slope = math.tan(b)
@@ -357,9 +395,9 @@ def surface_height(cl, s, t):
     return rot[-1][1] + slope * (t - rot[-1][0])
 
 
-def strip_surface(cl, s, t):
+def strip_surface(cl, s, t, length=None):
     """Surface id of the template strip that covers nominal offset t at s, or None."""
-    pts = template_points(cl, s)
+    pts = template_points(cl, s, length)
     if not pts:
         return None
     for a, b in zip(pts, pts[1:]):
@@ -368,12 +406,12 @@ def strip_surface(cl, s, t):
     return None
 
 
-def terrain_rule_at(cl, s):
-    """(mode, shoulder_blend, falloff) of the road-terrain rule at s (spec §7.1)."""
+def terrain_rule_at(cl, s, length=None):
+    """(mode, shoulder_blend, falloff) of the road-terrain rule at s (spec §7.1); `length` as for template_points."""
     rule = (cl or {}).get("terrain") or {}
     mode, blend, falloff = rule.get("mode", "free"), rule.get("shoulder_blend", 0.0), rule.get("falloff", "smooth")
     for sec in rule.get("sections", []):
-        if sec["s_start"] <= s <= sec["s_end"]:
+        if s_in_range(s, sec["s_start"], sec["s_end"], length):
             return sec.get("mode", mode), sec.get("shoulder_blend", blend), sec.get("falloff", falloff)
     return mode, blend, falloff
 
@@ -386,12 +424,13 @@ def terrain_with_road(doc, line, terrain_height, x, y):
     drivable width and returns it to its natural height over shoulder_blend metres beyond the edge."""
     cl = (doc.get("reference") or {}).get("centerline") or {}
     s, t = line.project(x, y)
-    mode, blend, falloff = terrain_rule_at(cl, s)
+    lap = line.length if line.closed else None
+    mode, blend, falloff = terrain_rule_at(cl, s, lap)
     wl_wr = half_widths(doc, s)
     if mode != "carve" or wl_wr is None or terrain_height is None:
         return terrain_height, None
     zc = line.frame(s)[2]
-    road = zc + surface_height(cl, s, t)
+    road = zc + surface_height(cl, s, t, lap)
     edge = wl_wr[0] if t >= 0 else wl_wr[1]
     d = abs(t) - edge
     if d <= 0:
@@ -401,7 +440,7 @@ def terrain_with_road(doc, line, terrain_height, x, y):
     u = d / blend
     w = u * u * (3 - 2 * u) if falloff == "smooth" else u
     edge_t = math.copysign(edge, t)
-    road_edge = zc + surface_height(cl, s, edge_t)
+    road_edge = zc + surface_height(cl, s, edge_t, lap)
     return road_edge + w * (terrain_height - road_edge), road
 
 
@@ -432,8 +471,16 @@ STRUCTURE_SHELTER = {"tunnel": 1.0, "underpass": 1.0, "gallery": 0.7}
 STRUCTURE_REVERB = {"tunnel": "tunnel", "underpass": "underpass", "gallery": "underpass"}
 
 
-def _overlaps(a0, a1, b0, b1):
-    return a0 < b1 and b0 < a1
+def reference_lap(doc):
+    """The lap length of the reference line when it closes on itself, else None.
+
+    A closed centerline gives it; an OpenDRIVE-only reference is a loop when track_info.type is lapped
+    (circuit, oval, rallycross) and `reference.length` is given."""
+    line = reference_line(doc)
+    if line is not None:
+        return line.length if line.closed else None
+    length = (doc.get("reference") or {}).get("length")
+    return length if length and (doc.get("track_info") or {}).get("type") in LAPPED_TYPES else None
 
 
 def structure_defaults(doc):
@@ -442,9 +489,11 @@ def structure_defaults(doc):
     A tunnel or underpass keeps rain off (1), a gallery partly (0.7), a bridge not at all; tunnels, underpasses
     and galleries have a reverb zone; every structure leaves the terrain `free` over its span. An entry is left
     out where the file already has an explicit one over that range. Structures on other roads are skipped:
-    shelter and audio bands lie along the base reference line."""
+    shelter and audio bands lie along the base reference line. On a closed line a structure may cross s = 0
+    (s_end < s_start), and so may the entries made from it."""
     out = {"shelter": [], "audio_zones": [], "terrain_sections": []}
     cl = (doc.get("reference") or {}).get("centerline") or {}
+    lap = reference_lap(doc)
     explicit_shelter = [(b["band"]["s_start"], b["band"]["s_end"]) for b in (doc.get("water") or {}).get("shelter", []) if "band" in b]
     explicit_zones = [(z["shape"]["band"]["s_start"], z["shape"]["band"]["s_end"])
                       for z in (doc.get("audio") or {}).get("zones", []) if "band" in z.get("shape", {})]
@@ -453,24 +502,34 @@ def structure_defaults(doc):
         if st.get("road", "reference") != "reference":
             continue
         a, b = st["s_start"], st["s_end"]
-        wl_wr = half_widths(doc, 0.5 * (a + b)) or (10.0, 10.0)
+        mid = 0.5 * (a + b) if a <= b else (a + 0.5 * (b + (lap or 0) - a)) % (lap or 1.0)
+        wl_wr = half_widths(doc, mid) or (10.0, 10.0)
         band = {"s_start": a, "s_end": b, "t_min": -wl_wr[1] - 1.0, "t_max": wl_wr[0] + 1.0}
         factor = STRUCTURE_SHELTER.get(st["kind"])
-        if factor is not None and not any(_overlaps(a, b, *e) for e in explicit_shelter):
+        if factor is not None and not any(s_overlap((a, b), e, lap) for e in explicit_shelter):
             out["shelter"].append({"id": f"{st['id']}_shelter", "kind": "tunnel" if st["kind"] != "gallery" else "roof",
                                    "band": band, "factor": factor})
         reverb = STRUCTURE_REVERB.get(st["kind"])
-        if reverb and not any(_overlaps(a, b, *e) for e in explicit_zones):
+        if reverb and not any(s_overlap((a, b), e, lap) for e in explicit_zones):
             out["audio_zones"].append({"id": f"{st['id']}_reverb", "shape": {"band": band}, "reverb": reverb})
-        if not any(_overlaps(a, b, *e) for e in explicit_terrain):
+        if not any(s_overlap((a, b), e, lap) for e in explicit_terrain):
             out["terrain_sections"].append({"s_start": a, "s_end": b, "mode": "free"})
     return out
 
 
 def structure_at(doc, s, road="reference", slack=0.0):
-    """The structure of `road` covering s (within `slack` metres before its start), or None."""
+    """The structure of `road` covering s (within `slack` metres before its start), or None.
+
+    On a closed road a structure may cross s = 0, and the slack before its start wraps too."""
+    if road == "reference":
+        lap = reference_lap(doc)
+    else:
+        line = road_line(doc, road)
+        lap = line.length if line is not None and line.closed else None
     for st in doc.get("structures", []):
-        if st.get("road", "reference") == road and st["s_start"] - slack <= s <= st["s_end"]:
+        if st.get("road", "reference") == road and s_in_range(s, st["s_start"] - slack, st["s_end"], lap):
+            return st
+        if lap and st.get("road", "reference") == road and s_in_range(s, st["s_start"] - slack + lap, st["s_end"] + lap, None):
             return st
     return None
 

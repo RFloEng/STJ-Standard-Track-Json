@@ -56,6 +56,7 @@ def build(doc, mesh_id=None, step=5.0):
             names.setdefault(b["surface"], b["material"])
     cl = (doc.get("reference") or {}).get("centerline") or {}
     xs = cl.get("cross_section") or {}
+    lap = line.length if line.closed else None
     stations = set(line.s[:-1] if line.closed else line.s)
     stations.update(i * step for i in range(int(line.length // step) + 1))
     for b in bands:
@@ -75,7 +76,7 @@ def build(doc, mesh_id=None, step=5.0):
     points = []
     for s in stations:
         for t in ts:
-            lateral, dz = core.profile_point(cl, s, t)           # (t, 0) for a flat road
+            lateral, dz = core.profile_point(cl, s, t, lap)      # (t, 0) for a flat road
             x, y, z = line.point(s, lateral)
             points.append((x, y, z + dz))
     counts, indices, faces = [], [], {}
@@ -91,7 +92,7 @@ def build(doc, mesh_id=None, step=5.0):
                 if _in_band(line, b, s_mid, t_mid):
                     sid = b["surface"]
             if sid is None:                  # no band: the template strip's own surface, if it names one
-                sid = core.strip_surface(cl, s_mid, t_mid)
+                sid = core.strip_surface(cl, s_mid, t_mid, lap)
             if sid is None:
                 continue
             faces.setdefault(sid, []).append(len(counts))
