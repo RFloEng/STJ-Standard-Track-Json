@@ -2575,9 +2575,15 @@ class DataSourcesAndLicences(unittest.TestCase):
         self.finding("WARN", "true, but source 'glo' is not redistributable")
         self.assertFalse(core.licence_summary(self.doc)["redistributable"])
 
+    def test_unknown_is_not_a_blocker(self):
+        self.assertIsNone(core.licence_summary({})["redistributable"])
+        self.assertIsNone(core.licence_summary({"_metadata": {"provenance": {"sources": [{"id": "o", "kind": "osm"}]}}})["redistributable"])
+        ok = {"id": "o", "kind": "osm", "licence": {"redistributable": True}}
+        self.assertTrue(core.licence_summary({"_metadata": {"provenance": {"sources": [ok]}}})["redistributable"])
+
     def test_the_summary_collects_attribution_and_share_alike(self):
         summary = core.licence_summary(self.doc)
-        self.assertTrue(summary["redistributable"])
+        self.assertIsNone(summary["redistributable"])                   # nothing says it is not, and not everything says it is
         self.assertEqual(summary["share_alike"], ["osm"])
         self.assertEqual(summary["attribution"], ["(c) OpenStreetMap contributors", "Global DEM team"])
 

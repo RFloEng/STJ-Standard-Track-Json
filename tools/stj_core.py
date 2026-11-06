@@ -565,9 +565,10 @@ def needs_attribution(licence):
 
 def licence_summary(doc):
     """What the licences of the sources mean for the file: {redistributable, not_redistributable, share_alike,
-    non_commercial, attribution, missing_attribution}. The lists hold source ids; `redistributable` is false when
-    any source is not redistributable. The file's own licence is not changed: this says what it should allow."""
-    out = {"redistributable": True, "not_redistributable": [], "share_alike": [], "non_commercial": [],
+    non_commercial, attribution, missing_attribution}. The lists hold source ids. `redistributable` is False when any
+    source says it is not, True only when every source says it is, and None when that is not known: a source with no
+    licence, or no source at all, is unknown and never a blocker. The file's own licence is not changed."""
+    out = {"redistributable": None, "not_redistributable": [], "share_alike": [], "non_commercial": [],
            "attribution": [], "missing_attribution": []}
     for _path, src in data_sources(doc):
         lic = src.get("licence") or {}
@@ -581,7 +582,13 @@ def licence_summary(doc):
             out["attribution"].append(lic["attribution"])
         elif needs_attribution(lic):
             out["missing_attribution"].append(src["id"])
-    out["redistributable"] = not out["not_redistributable"]
+    sources = data_sources(doc)
+    if out["not_redistributable"]:
+        out["redistributable"] = False
+    elif sources and all((src.get("licence") or {}).get("redistributable") is True for _p, src in sources):
+        out["redistributable"] = True
+    else:
+        out["redistributable"] = None          # unknown: no source says it is not, and not every one says it is
     return out
 
 

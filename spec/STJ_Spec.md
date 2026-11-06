@@ -256,7 +256,7 @@ Pit count and length are not repeated: they follow from `race.pit_boxes` and the
 - `share_alike`: products made from the data must carry the same terms (ODbL, CC-BY-SA);
 - `commercial_use`: `false` when the licence forbids commercial use.
 
-STJ records and never judges, but `stj_core.licence_summary(doc)` collects what the sources mean for the file: whether any source is not redistributable, which are share-alike or non-commercial, the credit lines to print, and the sources whose licence asks for a credit line and has none. The validator warns when the file says it is redistributable and a source is not, and when a licence that asks for attribution (CC-BY, ODbL, ODC-By, OGL, Etalab) has none; it notes share-alike and non-commercial sources, because their terms pass on to what is made from them.
+STJ records and never judges, but `stj_core.licence_summary(doc)` collects what the sources mean for the file: whether any source is not redistributable (`false`), every source is (`true`) or it is not known (`null`: a missing licence or source is unknown, never a blocker), which are share-alike or non-commercial, the credit lines to print, and the sources whose licence asks for a credit line and has none. The validator warns when the file says it is redistributable and a source is not, and when a licence that asks for attribution (CC-BY, ODbL, ODC-By, OGL, Etalab) has none; it notes share-alike and non-commercial sources, because their terms pass on to what is made from them.
 
 ### 5.3 Assets
 
