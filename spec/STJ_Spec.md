@@ -666,7 +666,7 @@ Meshes are **OpenUSD** (`.usd`, `.usda`, `.usdc`, `.usdz`), the only mesh format
 
 - **The document in the layer.** An STJ document may live in a USD root layer's `customLayerData["stj"]` as a JSON string. Tools read it from there and validate it like a plain `.stj.json`.
   - URIs are relative to the layer, and the document may name its own file as a mesh.
-  - `tools/stj_usd.py embed` writes it into a layer and `extract` writes it back out.
+  - `tools/stj_usd.py embed` writes it into a layer (creating an empty track stage, Z up and in metres, when the file does not exist) and `extract` writes it back out.
 - **`.usdz` = one file per track** (answers Q12). `tools/stj_usd.py package` writes the root layer first, then every file the document and the USD layers reference. Members are stored uncompressed and aligned to 64 bytes, as the format requires, and the validator also runs OpenUSD's own package rules.
 - **Only USD layers, images (PNG, JPEG, EXR, AVIF) and audio (WAV, MP3, M4A) may go inside a `.usdz`.** So in a packaged track:
   - meshes are USD

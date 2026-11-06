@@ -57,7 +57,7 @@ In STJ this is a mesh with role `collision` and surfaces bound to its materials 
 
 ## 3. Visual meshes, draw calls and LODs
 
-- **Per-mesh vertex limit.** AC meshes must stay under ~65k; some modders split at 55k [community](https://assettocorsamods.net/goto/post?id=7530). That is the 16-bit index limit. glTF allows 32-bit indices, but must not use the type's maximum value [official](https://raw.githubusercontent.com/KhronosGroup/glTF/main/specification/2.0/Specification.adoc).
+- **Per-mesh vertex limit.** AC meshes must stay under ~65k; some modders split at 55k [community](https://assettocorsamods.net/goto/post?id=7530). That is the 16-bit index limit. USD stores 32-bit face indices, so the limit belongs to the engine's mesh and not to STJ: a converter to AC splits meshes at the engine's limit.
 - **Whole-track triangle counts.** No engine publishes a budget. Reference points: AC Monza ~400k triangles, AC Nordschleife ~730k [community](https://assettocorsamods.net/goto/post?id=23322).
 - **Draw calls.**
   - BeamNG: each material on a mesh is a draw call; 100 props cost ~100 calls without instancing and ~1 with it; each decal costs ~1 [official](https://docs.beamng.com/modding/levels/level_creation/section8/).
@@ -82,10 +82,10 @@ In STJ this is a mesh with role `collision` and surfaces bound to its materials 
 | D3D11 hardware | BC1–BC7 (BC1–3 = DXT1–5, BC4 one channel, BC5 two channels, BC6H HDR, BC7 high-quality RGBA) | 16384 maximum for 2D textures at feature level 11_0 | [official](https://learn.microsoft.com/en-gb/windows/win32/direct3d11/overviews-direct3d-11-resources-limits) |
 
 **STJ recommendation:**
-- Keep lossless masters (PNG) next to the glTF.
+- Keep lossless masters (PNG) next to the USD file.
 - Every texture is a power of two, ≤ 4096, with mipmaps.
 - Converters compress per target: BC7/BC5 for rF2, DXT1/DXT5 for AC and RBR.
-- Mark normal and data maps as linear and albedo as sRGB; glTF already distinguishes them.
+- Mark normal and data maps as linear and albedo as sRGB. STJ requires every texture to declare its colour space (`sourceColorSpace` of `raw` or `sRGB`, spec §7.7), and the validator warns when one does not.
 
 ---
 

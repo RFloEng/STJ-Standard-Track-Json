@@ -8,7 +8,8 @@ Puts an STJ document inside a USD layer, takes it out again, and packages a trac
     python tools/stj_usd.py extract <track.usda | track.usdz> [-o out.stj.json]
     python tools/stj_usd.py package <track.usda> -o <track.usdz>
 
-`embed` writes the document into the root layer's customLayerData["stj"].
+`embed` writes the document into the root layer's customLayerData["stj"]. If the stage does not exist it is
+created: an empty track, Z up and in metres.
 `extract` writes it out as plain JSON, so it is never hidden inside the package.
 `package` writes a .usdz: the root layer first, then every file the STJ document and the USD
 layers reference, stored uncompressed and 64-byte aligned as the USDZ format requires.

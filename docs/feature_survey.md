@@ -1,5 +1,7 @@
 # Survey: what track-creation tools define that STJ v0.1 does not
 
+> **Note (2026-11-06).** This is the survey that produced the proposals. Where it describes shapes as they were first sketched (glTF meshes, `.stj.json` files, `material_variant`), the spec is the authority: STJ geometry is OpenUSD only since v0.3 (spec §7.7). The two lines that named glTF mechanisms for variants and animation were updated; the rest is kept as the record of what each engine does.
+
 Status: research notes, 2026-11-02. Two independent web surveys were merged here. Claims marked *(m)* come from memory or forum posts and were not verified against documentation. AMS2/Project CARS, iRacing, DiRT Rally 2.0, EA WRC and Assetto Corsa Rally have **no public track tooling**, so only feature-level information exists for them.
 
 ## 1. Feature × tool overview
@@ -51,7 +53,7 @@ These were adopted with some changes: see spec §3.5 (layouts), §3.6 (variants)
 1. **`layouts[]`**: one set of models, several track variants. Universal (AC, rF2, LFS, RBR reverse stages). A layout selects meshes and scenery and owns its reference line, timing, grid, pits, AI lines and pacenotes.
    `{id, name, direction: forward|reverse, reference, timing, race, include_meshes[], exclude_meshes[]}`. The per-layout blocks use the same shapes as the top-level ones. A layout-only override file (§3.3) already works today but repeats everything.
 2. **`variants[]` index of conditions**: time of day, weather, season. RBR M/N/E/O variants, rF2 `.wet` schedules, OpenSCENARIO Weather, CARLA.
-   `{id, kind: time_of_day|weather|season, override: "file.stj-override.json", material_variant}`. The base file lists its own override files. Texture swaps use glTF `KHR_materials_variants`. Also add a `weather_schedule[]` for sessions. Fully portable except the rendering.
+   `{id, kind: time_of_day|weather|season, override: "file.usda"}`. The base file lists its own override files. Texture swaps use USD variant sets (`usd_variants`). Also add a `weather_schedule[]` for sessions. Fully portable except the rendering.
 3. **`cameras[]`** (reserved today): `{id, set, kind: static|tracking|onboard, pose | position, look_at, fov: [min, max], near, far, active: {s_start, s_end} | spheres[]}`. AC activates cameras by track position, rF2 by spheres, Speed Dreams by segment; allow both forms. Portable core, engine-specific post effects.
 4. **AI data beyond the racing line**: rF2 AIW corridor and paths, AC `pit_lane.ai` and CSP hints, Wreckfest and RoR routes.
    `race.ai: {corridor: [[s, left, right]], paths: [{id, purpose: pit|alternate|block|wet|safety_car, points}], hints: [{s_start, s_end, kind: danger|no_overtake|brake|speed, side, value}]}`. Portable; behaviour quality depends on the engine's AI.
@@ -80,7 +82,7 @@ Designed in `proposals/stj_tier2_proposal.md` and implemented in spec §5.1, §6
 9. **State signals**, the prerequisite for `animated_objects`. CSP conditions show the model works.
    - Signals: `sun_elevation`, `local_time`, `year_progress`, `rain`, `wetness`, `flag_state`, `session_phase`, `start_lights_state`.
    - Lights, animations and scenery variants bind to a signal through an optional curve.
-   - Keyframe animation itself uses glTF animations; engine animation files stay in `x_`.
+   - Keyframe animation itself is a `time_range` of the animation authored in the USD stage; engine animation files stay in `x_`.
 10. **Static rubber baseline**: AC `groove.ini`, rF2 RRBIN presets. `groove: {presets: [{id: green|light|medium|heavy|saturated, mf_scaling_gain}], session_defaults}`. Kept separate from the reserved `dynamic` (live rubbering).
 11. **Audio**: `audio: {emitters: [{id, position, sound_uri, volume, ref_distance, max_distance, loop}], reverb_zones: [{shape, preset: tunnel|stands|open|forest|garage}]}`. Sound banks are not portable; WAV/OGG plus a generic preset is.
 12. **Physical props**: `prototype.physics: {mode: static|movable|breakable, mass, inertia, break_impulse}` for cones, hay bales and tyre stacks (rF2 loose objects, LFS, CSP).

@@ -1253,9 +1253,18 @@ def usd_document(path):
 
 
 def embed_document(doc, usd_path, out_path=None):
-    """Write an STJ document into a USD layer's customLayerData['stj']."""
-    from pxr import Sdf
+    """Write an STJ document into a USD layer's customLayerData['stj'].
+
+    When the layer does not exist it is created as an empty track stage: Z up, metres, and a /track prim
+    as its default prim (spec §7.7)."""
+    from pxr import Sdf, Usd, UsdGeom
     layer = Sdf.Layer.FindOrOpen(str(usd_path))
+    if layer is None:
+        stage = Usd.Stage.CreateInMemory() if out_path else Usd.Stage.CreateNew(str(usd_path))
+        UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+        UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+        stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/track").GetPrim())
+        layer = stage.GetRootLayer()
     data = dict(layer.customLayerData or {})
     data[STJ_LAYER_KEY] = json.dumps(doc, ensure_ascii=False, separators=(",", ":"))
     layer.customLayerData = data

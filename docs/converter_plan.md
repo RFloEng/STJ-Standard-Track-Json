@@ -4,6 +4,8 @@ Order: **Blender export → Assetto Corsa import → RBR / BTB import**, plus on
 
 Facts marked *(m)* come from memory or community documentation and must be checked against real files before the converter relies on them.
 
+Converters write **OpenUSD**: STJ meshes are USD only (spec §7.7), with the STJ document in the root layer (§7.8). Where a source format is glTF (ACR Stage Tools, game exporters), the converter turns the glTF into USD.
+
 ---
 
 ## 0. Quick win: ACR Stage Tools IR → STJ
@@ -12,12 +14,12 @@ The existing ACR Stage Tools (DiRT Rally 2.0 → Blender → BeamNG) already pro
 
 | ACR Stage Tools output | Becomes |
 |---|---|
-| `collision.glb` with one primitive per surface material | `geometry.meshes[]` with role `collision` |
+| `collision.glb` with one primitive per surface material | `geometry.meshes[]` with role `collision` (the glTF becomes a USD mesh, one GeomSubset per surface) |
 | Materials carrying `acr_surface` / `beamng_ground` | `surfaces.bindings[]` |
 | Route curve through the DR2 gates | `reference.centerline` |
 | `ACR_Start`, `ACR_Split.*`, `ACR_Finish`, `ACR_Stop` | `timing.start`, `split_points`, `finish`, `stop` |
 | Pacenote labels | `race.pacenotes` |
-| DR2 terrain from dr2-extract 0.4: `COLOR_0` (slice·8+3), `TEXCOORD_3` weights, `materials.json` constants, `_sliceN.dds`, `TColourMap`, `TAmbientOcclusion` | `ground` (spec §8.7):<ul><li>indices = (byte − 3)/8 into `_STJ_LAYERS`, `TEXCOORD_3` into `_STJ_WEIGHTS`</li><li>`DifUV` 0 → `{texcoord: 1, scale: 8}`, 1 → `world_xy` (v flips: DR2 XZ is STJ x, −y)</li><li>`tile` = 1/`WorldUVScale`, `Thickness` → `height_contrast`</li><li>slices → layers with `height_in_alpha`</li><li>colour map → macro tint, lightmap → macro occlusion (UV 0)</li></ul> |
+| DR2 terrain from dr2-extract 0.4: `COLOR_0` (slice·8+3), `TEXCOORD_3` weights, `materials.json` constants, `_sliceN.dds`, `TColourMap`, `TAmbientOcclusion` | `ground` (spec §8.7):<ul><li>indices = (byte − 3)/8 into the `stj_surf_layers` primvars, `TEXCOORD_3` into `stj_surf_weights`</li><li>`DifUV` 0 → `{texcoord: 1, scale: 8}`, 1 → `world_xy` (v flips: DR2 XZ is STJ x, −y)</li><li>`tile` = 1/`WorldUVScale`, `Thickness` → `height_contrast`</li><li>slices → layers, with `albedo.alpha` saying what the alpha channel holds (height or specular)</li><li>the blend masks of the three-layer terrain shaders → `blend.method: "mask"`, one mask per layer after the first (provisional, spec §8.7); the wet mask → a `wetness` macro</li><li>colour map → macro tint, lightmap → macro occlusion (UV 0)</li></ul> |
 | `ACR_Objects` with `acr_collider` | `scenery.prototypes` and `instances` |
 
 The work is a small adapter. It is also the first real test of the surface model: the DR2 surface codes go into `class` and `x_dr2`, and the numbers are `_est`.
@@ -36,26 +38,27 @@ Output is DR2 content: `redistributable: false`.
 An add-on with **Export STJ** and **Import STJ**, following `docs/blender_mapping.md`.
 
 **Export:**
-1. Write the glTF files with Blender's own exporter: "+Y up", `export_extras`, `export_attributes`, `export_lights`, `export_gpu_instances`, one file per role collection.
+1. Write the USD stage with Blender's own USD exporter (Z up, metres), one file per role collection, then add with `pxr` what it drops (`docs/blender_mapping.md` §4): the nested STJ properties, per-corner primvars, PointInstancers, physics, audio and the sky.
 2. Build the STJ document:
-   - start from the `track.stj.json` text block as base
+   - start from the `track.stj.json` text block as base, and write the result into the root layer's `customLayerData["stj"]`
    - read the reference curve (resampled, cyclic → `closed`)
    - read the timing, grid and pit empties, and project them onto the curve to get `s`
    - read material `stj` properties into `surfaces.library` and `bindings`
    - read geometry-nodes scatter inputs into `scenery.scatter[]`
    - read linked-duplicate groups into `scenery.instances[]`
    - read the World Sky Texture into `environment.sky`
+   - read the road profile curve and its Geometry Nodes modifier into `cross_section` (`bank` from the curve tilt), roads and junctions, structures and decals (the v0.3 conventions in `docs/blender_mapping.md` §3; proposed, not probed yet)
    - apply all of these over the base as a merge patch
 3. Write OpenDRIVE text blocks out as `.xodr`.
 4. Run `tools/validate.py` on the result and show the report in Blender.
 
-**Import:** the reverse. glTF in, reference curve and empties rebuilt, the STJ document stored as a text block.
+**Import:** the reverse. USD in, reference curve and empties rebuilt, the STJ document stored as a text block.
 
 **Lost on export:**
-- node-based materials beyond glTF PBR (procedural textures, custom shaders) unless baked
+- node-based materials beyond UsdPreviewSurface and MaterialX (procedural textures are not translated) unless baked
 - geometry-nodes logic beyond what the scatter schema expresses (only density, prototypes and area survive)
 - modifiers are applied to meshes
-- Blender drivers and animations (until `animated_objects` exists)
+- Blender drivers; object animation exports as USD time samples, and the action name is not kept
 
 **Effort:** medium. The patterns exist in ACR Stage Tools.
 
@@ -78,7 +81,7 @@ An add-on with **Export STJ** and **Import STJ**, following `docs/blender_mappin
 
 **Mapping:**
 
-- **Collision meshes.** Physics meshes are named with a digit prefix plus a surface `KEY` (`1ROAD`, `1GRASS`). A mesh becomes a glTF collision primitive with a `bindings[]` entry → surface `<key>`.
+- **Collision meshes.** Physics meshes are named with a digit prefix plus a surface `KEY` (`1ROAD`, `1GRASS`). A mesh becomes a USD collision mesh with a `bindings[]` entry (by material or prim) → surface `<key>`.
 - **Surfaces.**
   - `class` comes from the key name (heuristic, so `_est`).
   - `LMUX = LMUY = FRICTION / FRICTION_road`. This is relative to AC's own road. The assumption that AC's road ≈ STJ-REF is unverified (spec §14).
@@ -97,7 +100,7 @@ An add-on with **Export STJ** and **Import STJ**, following `docs/blender_mappin
 - **Lighting.** `data/lighting.ini` and the remaining CSP config go into `x_ac` verbatim.
 
 **Lost:**
-- kn5 shaders (`ksPerPixel*` and others) → glTF PBR; lightmaps and AO stay only if baked
+- kn5 shaders (`ksPerPixel*` and others) → UsdPreviewSurface; lightmaps and AO stay only if baked (`baked`, spec §7.2)
 - encrypted kn5 files: not supported
 - AI line speed and side data beyond positions
 - AC audio
@@ -114,7 +117,7 @@ An add-on with **Export STJ** and **Import STJ**, following `docs/blender_mappin
 
 The best-documented paths come first:
 
-1. **BTB project files** (Bob's Track Builder, the user's own projects). BTB stores its venue and track as editable project files *(m: format to be checked on a real project)*. These carry the road spline, cross-sections, terrain, objects and materials, which is cleaner than anything recovered from RBR's runtime files.
+1. **BTB project files** (Bob's Track Builder, the user's own projects). BTB stores its venue and track as editable project files *(m: format to be checked on a real project)*. These carry the road spline, cross-sections, terrain, objects and materials, which is cleaner than anything recovered from RBR's runtime files. They map to `reference.centerline` and, for the cross-sections and banking, to `cross_section` templates and `bank` (spec §7.1).
 2. **RBR's community Blender track exporter** (richardburnsrally.github.io/blender-track-exporter). For **STJ → RBR** the shortest path is STJ → Blender (converter 1) → RBR with that exporter. The exporter guide documents driveline events (start, splits, finish, end of stage) and material handling. These map directly to STJ `timing`.
 3. **RBR runtime stage files** (`track-<id>` geometry, `.dls` driveline and pacenotes, materials, time-of-day variants M/N/E/O). These are thinly documented *(m)*. Import only what a documented reader handles. Never anything packed or protected.
 4. **Pacenotes** come from the RSF pacenote plugin's files, which its quick-start guide documents. The `.dls` layout is undocumented. Note types map to STJ `kind`, `direction` and `severity` on the 1–6 scale. The plugin's numeric note id goes in `x_rbr` for a lossless round trip. Reverse stages have their own pacenote set: that is a layout (`docs/feature_survey.md` item 1).

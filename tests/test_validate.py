@@ -2014,5 +2014,39 @@ class InstanceVariation(unittest.TestCase):
         self.assertTrue(any("age" in m for m in messages(rep, "ERROR")))
 
 
+
+class EmbedCreatesTheStage(unittest.TestCase):
+    """stj_usd embed on a file that does not exist yet (README, first look)."""
+
+    def test_embed_creates_a_track_stage(self):
+        from pxr import UsdGeom
+        with tempfile.TemporaryDirectory() as d:
+            doc = {"_metadata": {"specification": "STJ", "version": "0.3", "coordinate_system": "OpenDRIVE", "units": "SI"},
+                   "reference": {"centerline": {"points": [[0, 0, 0], [100, 0, 0]], "width": {"left": 3, "right": 3}}}}
+            target = Path(d, "new.usda")
+            core.embed_document(doc, target)
+            stage = core.usd_stage(target)
+            self.assertEqual((UsdGeom.GetStageUpAxis(stage), UsdGeom.GetStageMetersPerUnit(stage)), ("Z", 1.0))
+            self.assertEqual(stage.GetDefaultPrim().GetPath().pathString, "/track")
+            self.assertEqual(core.usd_document(target), doc)
+            self.assertEqual(messages(validate.validate(target), "ERROR") + messages(validate.validate(target), "WARN"), [])
+
+    def test_embed_with_an_output_leaves_no_input_behind(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = {"_metadata": {"specification": "STJ", "version": "0.3", "coordinate_system": "OpenDRIVE", "units": "SI"}}
+            core.embed_document(doc, Path(d, "never.usda"), Path(d, "out.usda"))
+            self.assertFalse(Path(d, "never.usda").exists())
+            self.assertEqual(core.usd_document(Path(d, "out.usda")), doc)
+
+    def test_embed_into_an_existing_stage_keeps_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d, "t.usda")
+            doc = {"_metadata": {"specification": "STJ", "version": "0.3", "coordinate_system": "OpenDRIVE", "units": "SI"}}
+            core.embed_document(doc, target)
+            doc["track_info"] = {"name": "Second"}
+            core.embed_document(doc, target)
+            self.assertEqual(core.usd_document(target)["track_info"]["name"], "Second")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,7 +23,7 @@ Every simulator stores tracks its own way: models, surface tables, AI splines, d
 
 **STJ** describes a track completely enough for any engine to rebuild it:
 
-- **where the road is**: a reference line with distance `s` and lateral offset `t`, USD meshes, a terrain heightfield
+- **where the road is**: a reference line with distance `s` and lateral offset `t`, its profile and banking, bridges and tunnels, USD meshes, a terrain heightfield
 - **what it is made of and how it grips**: surfaces relative to a defined reference road, wet behaviour, loose ground, surfaces that vary inside a mesh
 - **how a race on it is run**: timing, grid, pits, racing lines, AI hints, race control, rally controls, pace notes
 - **what surrounds it**: vegetation and objects, water, sky, lights, sound, animated objects
@@ -103,10 +103,10 @@ Everything except `_metadata` is optional. Add what you have: meshes, timing, pa
 
 | Section | Content |
 |---|---|
-| `_metadata` | Version, licence (SPDX, redistributable), provenance: original, scanned or converted, with what each conversion step lost; the authoring source file |
+| `_metadata` | Version, licence (SPDX, redistributable), provenance: original, scanned (the surveys it came from and what was made from them) or converted, with what each conversion step lost; the authoring source file |
 | `track_info` | Name, layout, type, country, primary surface, length, short name, tags, media, minimap, records |
 | `reference` | OpenDRIVE route, or a centerline (polyline or Hermite spline) with widths, an optional road profile and banking (`cross_section`), a road-terrain rule, and optional stored chainage. Other roads and junctions in `roads[]`, bridges and tunnels in `structures[]`. Defines `s` and `t`. |
-| `geometry` | USD meshes by role (visual, collision, LOD), OpenCRG grids, terrain heightfields with layers and macro maps; long stages and open areas cut into chunks or tiles with local origins (USD payloads) |
+| `geometry` | USD meshes by role (visual, collision, LOD, decal), OpenCRG grids, terrain heightfields with layers, macro maps and no-data cells; long stages and open areas cut into chunks or tiles with local origins (USD payloads) |
 | `surfaces` | <ul><li>A surface library relative to **STJ-REF** (dry, clean asphalt): Magic Formula scaling λ or absolute μ per tyre class, rolling resistance, roughness (ISO 8608, sinusoid, macrotexture), wet response, deformable loose ground (effective and terramechanics tiers), impact and visual effects</li><li>Where each surface applies: mesh materials, surface maps that blend inside a mesh with one map per state (new/worn, dry/wet), OpenDRIVE lanes, bands along the line</li><li>Rubber and swept-gravel line states</li><li>Season substitutions</li></ul> |
 | `ground` | Layered ground shading that a single material cannot express: detail layers, per-face layers with per-corner or image weights, a reference height blend, macro maps |
 | `timing` | Start/finish, sectors, splits, stop, pit lane, track limits, DRS zones, rally controls, side roads |
@@ -115,11 +115,13 @@ Everything except `_metadata` is optional. Add what you have: meshes, timing, pa
 | `race` | Grid, pit boxes, spawns, racing lines, AI corridor and hints, start procedure, service areas, stage sections, pace notes |
 | `edges` | Kerbs, verges, barriers and invisible limits, described by what they are |
 | `cameras` | TV and replay camera sets |
-| `environment` | Geo-reference, true north, time zone, date and time, sky, sun and lights, reflection probes, weather (schedule, options, climate statistics), season |
-| `scenery` | Vegetation and object prototypes, instances and scatter rules; crowds as areas with behaviour. Props can be rigid, tethered or bendable. Engine-native `x_<engine>` blocks travel alongside. |
+| `environment` | Geo-reference, true north, time zone, date and time, sky, sun (computed, or fixed for games with a fixed lighting rig), ambient and lights, reflection probes, weather (schedule, options, climate statistics), season |
+| `scenery` | Vegetation and object prototypes (with LODs and wind sway), instances (hand-placed or generated, with per-instance variation) and scatter rules; crowds as areas with behaviour. Props can be rigid, tethered or bendable. Engine-native `x_<engine>` blocks travel alongside. |
 | `water` | Lakes, rivers, fords and puddles; where water stands, drains and is sheltered; a drying line |
-| `animated_objects` | Flags, windmills, gates and helicopters on USD time samples (`time_range`) |
-| `audio`, `screens` | Point and line emitters, reverb zones, roadside reflections; scoreboards and big screens |
+| `animated_objects` | Flags, windmills, gates, clocks and helicopters, on USD time samples (`time_range`) or driven by the engine |
+| `audio`, `screens` | Point and line emitters (a sound file or an engine sound event), reverb zones, roadside reflections; scoreboards and big screens |
+| `materials` | Material inputs that follow signals: emissive windows at night, ground that darkens when wet |
+| `assets` | The files a track uses that USD cannot list: their hash and licence. Recorded, never judged. |
 | `layouts`, `variants` | Alternative layouts on the same models (including reverse), and the variant layers for night, wet and winter |
 
 **State signals** connect it all without scripting. A signal is a value the engine supplies, such as `sun_elevation`, `wetness`, `wear`, `flag` or `time_to_arrival`, with a unit and a default. Conditions on signals let the track react on its own:
@@ -144,7 +146,7 @@ New in STJ:
 ## Where the data comes from is your decision
 
 STJ is a format. It does not rip, decrypt or unpack anything, and it ships no game content.
-- Where the data for a track comes from, and whether you may use it that way, is for you to decide under the licence of the source. STJ takes no position and does not check.
+- Where the data for a track comes from, and whether you may use it that way, is for you to decide under the licence of the source. STJ takes no position and does not judge it; it only records licences (`_metadata.licence`, `assets[]`) so they stay with the files.
 - A file can say so in `_metadata.licence`: `redistributable: false` marks a file that is for your own use.
 - Scenery and ground layers reference a game's assets **by name or local path**. They never embed them.
 
@@ -162,7 +164,7 @@ python tools/validate.py examples/*.usda examples/*.usdz --strict
 python -m unittest discover tests
 ```
 
-`requirements.txt` installs `jsonschema` and `usd-core` (OpenUSD). Without `usd-core` the validator still checks plain JSON documents, but it cannot read a track's USD layers.
+`requirements.txt` installs `jsonschema` and `usd-core` (OpenUSD). Without `usd-core` the validator still checks plain JSON documents, but it cannot read a track's USD layers. `tools/las_dtm.py` reads plain LAS with the standard library; compressed `.laz` and COPC need the optional `laspy` package (`pip install "laspy[lazrs]"`).
 
 Other tools:
 - `python tools/stj_usd.py extract track.usdz -o track.stj.json` writes the document out as plain JSON.
@@ -175,12 +177,12 @@ Other tools:
 
 | Tool | Purpose |
 |---|---|
-| `tools/validate.py` | Schema validation of the document, plus the cross-reference checks a schema cannot express ([spec §12](spec/STJ_Spec.md#12-validation)). For example:<ul><li>ids, USD materials, prims and primvars exist</li><li>every `s` lies on the line</li><li>timing and pace notes are in order</li><li>signal values are valid</li><li>terrain stays below the road</li><li>inertias are physical</li><li>`.usdz` packages follow OpenUSD's rules</li><li>unit slips such as degrees for radians or km/h for m/s</li></ul>`--strict` fails on warnings. |
+| `tools/validate.py` | Schema validation of the document, plus the cross-reference checks a schema cannot express ([spec §12](spec/STJ_Spec.md#12-validation)). For example:<ul><li>ids, USD materials, prims and primvars exist</li><li>every `s` lies on the line</li><li>timing and pace notes are in order</li><li>signal values are valid</li><li>terrain agrees with the road's rule (below it, draped, or carved)</li><li>inertias are physical</li><li>`.usdz` packages follow OpenUSD's rules</li><li>unit slips such as degrees for radians or km/h for m/s</li></ul>`--strict` fails on warnings. |
 | `tools/stj_usd.py` | STJ inside OpenUSD: embed the document in a layer, extract it as JSON, package a `.usdz` |
 | `tools/stj_core.py` | Loading, `$ref`, RFC 7396 merge patch, the reference line (chainage, Hermite), USD and PNG reading, terrain sampling. It also holds the reference implementations of conditions, line states, the water-film depth, the ground blend and the evolution laws. |
 | `tools/ribbon_usd.py` | A USD collision ribbon from a centerline, surface bands and the road profile and banking, one GeomSubset per surface |
 | `tools/ground_bake.py` | Layered ground baked into an image |
-| `tools/las_dtm.py` | Grids the ground points of a LiDAR tile into a heightmap, with no-data cells and the records of where it came from |
+| `tools/las_dtm.py` | Grids the ground points of a LiDAR tile into a heightmap, with no-data cells and the records of where it came from. LAS, or LAZ and COPC with the optional `laspy`. |
 | `tools/blender/` | Probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md): what Blender 5.2 keeps in a `.blend` and in its USD export |
 | `viewer/index.html` | A browser viewer for the document and its meshes. It reads text USD: a `.usda`, or a `.usdz` with `.usda` inside. |
 | `examples/make_examples.py` | Regenerates every example from one definition |
@@ -191,10 +193,10 @@ Other tools:
 |---|---|
 | [`test_ring_minimal.usda`](examples/test_ring_minimal.usda) | A 977 m circuit with bands, sectors and a grid. No meshes; still v0.1. |
 | [`test_ring_gp.usda`](examples/test_ring_gp.usda) | The same ring, race-ready: <ul><li>edges, pit lane, DRS</li><li>racing lines and AI data</li><li>cameras</li><li>rubber</li><li>drains and a pit-roof shelter</li><li>physical props</li><li>animated windmill, gate and flag</li><li>floodlights and start lights on signals</li><li>audio, minimap</li><li>marshal sectors and posts, a safety car, evolution parameters, a big screen, a grandstand crowd, climate</li><li>a reverse layout</li><li>night and drying variant layers</li></ul> |
-| [`coll_de_prova_gravel.usda`](examples/coll_de_prova_gravel.usda) | A 2.2 km gravel stage: <ul><li>deformable surfaces with per-tyre-class and absolute μ</li><li>a surface map with a worn state</li><li>terrain</li><li>a layered ground section</li><li>pace notes and a reverse layout with its own notes</li><li>a ford and a puddle that appears in the wet</li><li>forest shelter</li><li>hay bales, saplings, tape and a runoff drag zone</li><li>a crowd reacting to the approaching car</li><li>sections and weather options</li><li>radio points, ruts and wear evolution, a crowd that steps back</li><li>wet and winter variant layers</li></ul> |
+| [`coll_de_prova_gravel.usda`](examples/coll_de_prova_gravel.usda) | A 2.2 km gravel stage: <ul><li>deformable surfaces with per-tyre-class and absolute μ</li><li>a surface map with a worn state</li><li>terrain</li><li>a layered ground section</li><li>pace notes and a reverse layout with its own notes</li><li>a ford and a puddle that appears in the wet</li><li>forest shelter</li><li>a crowned road profile, a banked corner, a flat bridge deck, and a service road with a junction</li><li>hay bales, saplings, tape and a runoff drag zone</li><li>a crowd reacting to the approaching car</li><li>sections and weather options</li><li>radio points, ruts and wear evolution, a crowd that steps back</li><li>wet and winter variant layers</li></ul> |
 | [`test_ring_blend.usda`](examples/test_ring_blend.usda), [`.usdz`](examples/test_ring_blend.usdz) | The ring as one file: <ul><li>a collision mesh blending four surfaces with per-face layers and per-corner weights (no split vertices)</li><li>a dry/wet USD variant set</li><li>an animated flag</li><li>a cone with UsdPhysics</li><li>a wet variant layer</li><li>everything in one `.usdz`</li></ul> |
 
-Both tracks are fictional. All surface numbers in them are estimates, marked `_est`.
+The ring and the stage are fictional. All surface numbers in them are estimates, marked `_est`.
 
 <p align="center"><img src="docs/img/ground_sec01_bake.png" alt="The stage's layered ground baked with the reference blend" width="720"></p>
 

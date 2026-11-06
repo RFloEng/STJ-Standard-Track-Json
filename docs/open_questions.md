@@ -21,7 +21,7 @@ Can a reference implementation derive Tier A from Tier B for one reference tyre 
 
 ## Geometry and timing
 
-**Q6. Branching and several lines.**
+**Q6. Branching and several lines.** *Partly resolved in v0.3:* `roads[]` and `junctions[]` describe several roads and where they meet (spec §7.1). Which route a race takes through them (a joker lap, alternate lines) is still open.
 A rallycross joker lap, a pit lane as its own reference, alternate routes: v0.1 has one reference line. Options:
 - several named reference lines, each with its own `s`
 - OpenDRIVE junctions only
@@ -50,7 +50,7 @@ STJ rejects unknown keys at schema level (deviation from SVJ, spec §2). *Decide
 Blender's glTF exporter writes custom properties to `extras` (verified), so a whole STJ document could ride inside one `.glb` (`scenes[0].extras.stj`). That is attractive for "one file per track", but it hides the JSON from people and tools. Proposal: allow it as an optional packaging, never as the only form.
 
 **Q23. OpenUSD as the rich container.**
-Probed in Blender 5.2 (`docs/blender_mapping.md` §4): USD holds everything STJ needs, which glTF cannot. That covers per-face primvars, curves, physics, audio, variants and payloads. Blender's exporter covers about half of it; `pxr` writes the rest. *Decided* 2026-11-03 (`proposals/stj_usd_proposal.md`): USD meshes next to glTF, plus the STJ document inside the USD layer (a `.usdz` is a single-file track). Typed USD schemas later. The JSON stays normative.
+Probed in Blender 5.2 (`docs/blender_mapping.md` §4): USD holds everything STJ needs, which glTF cannot. That covers per-face primvars, curves, physics, audio, variants and payloads. Blender's exporter covers about half of it; `pxr` writes the rest. *Decided* 2026-11-03 (`proposals/stj_usd_proposal.md`): USD meshes next to glTF, plus the STJ document inside the USD layer (a `.usdz` is a single-file track). Typed USD schemas later. The JSON stays normative. *Since then (v0.3):* USD became the only mesh format (spec §7.7).
 
 **Q13. Vertical datum and heights.**
 Ellipsoidal vs geoid heights only matter for survey data, but a converter from GNSS data must know which it has. v0.1 has `vertical_datum` as free text; it should become EPSG codes.
@@ -58,7 +58,7 @@ Ellipsoidal vs geoid heights only matter for survey data, but a converter from G
 **Q14. Large worlds.** *Resolved in v0.3:* chunks along s with local origins, a tile grid, several terrains (spec §7.6). Streaming budgets stay the engine's.
 
 **Q15. Licences of converted content.**
-`redistributable: false` is a flag, not enforcement. Should validators refuse to run in "publish" mode on such files, and should converters refuse to write output outside the user's folders?
+*Partly:* `assets[]` records a licence and hash per file (spec §5.3) and the validator warns when a file says it can be redistributed while an asset says not. `redistributable: false` is still a flag, not enforcement. Should validators refuse to run in "publish" mode on such files, and should converters refuse to write output outside the user's folders?
 
 ## Survey additions (`docs/feature_survey.md`)
 
@@ -69,7 +69,7 @@ A night override patches the base file. If a variant must differ per layout (RBR
 
 **Q17. Terrain.** *Resolved:* a first-class heightfield (spec §7.4).
 
-**Q18. Animations.** *Resolved:* glTF animations, driven by a closed signal vocabulary with declarative conditions (spec §8.5, §11.1).
+**Q18. Animations.** *Resolved:* animations are authored in the USD stage and referenced by a `time_range` (they were glTF animations in the first drafts), driven by a closed signal vocabulary with declarative conditions (spec §8.5, §11.1).
 
 **Q20. Growing the signal list.**
 The list is closed so that converters can rely on it. New signals (headlights on, safety car deployed per sector, crowd density) arrive as `x_<engine>_…` first. When should one be promoted, and who decides?

@@ -1,10 +1,12 @@
 # STJ in Blender: what the .blend, glTF and USD can hold
 
-Goal: a track is authored in **one `.blend` file** with as few files next to it as possible. An exporter then writes the delivery package (`.stj.json` + `.glb`) that converters read.
+Goal: a track is authored in **one `.blend` file** with as few files next to it as possible. An exporter then writes the delivery package that converters read: a **USD stage** (`.usda`, or a single `.usdz`) with the STJ document inside it (spec §3.1, §7.8).
+
+**Where this page stands.** STJ geometry is OpenUSD only (spec §7.7). §1 and §2 are the record of the Blender 5.2 **glTF probe**, which is what showed that glTF drops per-face data, the sky, physics and speakers; the results are kept because they are measurements, and they explain why USD is the container. §4 is the USD probe, and §3 lists the exporter's conventions as they stand now.
 
 Everything below was **checked in Blender 5.2.0 LTS**, headless, by building a scene, saving, reopening and exporting glTF with the bundled exporter. To reproduce: `blender -b --factory-startup --python tools/blender/blend_probe.py -- <out_dir>` writes `report.json`. The v0.2 rows come from `blend_probe_v02.py -- <out_dir> <any.wav>`, which writes `report_v02.json` and a 16-bit PNG. `tools/stj_core.read_png` decodes that PNG correctly, filters included.
 
-## 1. Results
+## 1. Results of the glTF probe
 
 | STJ data | How it is stored in Blender | Survives save and reopen | Survives glTF export |
 |---|---|---|---|
@@ -34,12 +36,14 @@ Everything below was **checked in Blender 5.2.0 LTS**, headless, by building a s
 - **The authoring package can be a single `.blend`.** Every STJ field has a home in it, and OpenDRIVE fits as text. The files that may remain next to it are:
   - **binary OpenCRG** (ASCII CRG would fit in a text block; not tested)
   - **linked asset libraries**, if the author chooses linking over appending
-- **Surfaces bind through materials, not face attributes.** Face attributes are the natural Blender tool, but glTF drops them. An exporter that wants them must split primitives by attribute. Materials survive as-is, which is why STJ binds by material (spec §6.3).
+- **Surfaces bind through materials first.** Face attributes are the natural Blender tool, but glTF drops them, and materials survive as-is, which is why STJ binds by material (spec §6.3). USD keeps per-face data (§4), so the per-face blends of surface maps and ground (`stj_surf_layers`, spec §7.7) work without splitting primitives.
 - **Scatter must be exported as a rule.** The geometry-nodes result is lost on export unless modifiers are applied, and applied it becomes baked geometry. The exporter therefore reads the node group's inputs (density, prototypes, area) into `scenery.scatter[]`, which is exactly what lets each engine regrow it natively (spec §8).
 - **Two sources of truth must not drift.** Rule for the exporter: the text block is the base document, and data on Blender objects and materials is applied over it as an RFC 7396 merge patch. Objects win.
-- **Axes need no conversion.** Blender's Z-up scene coordinates are STJ coordinates. The glTF exporter's "+Y up" does the glTF mapping (spec §4.5), verified to 0.6 mm on a 2 km ribbon.
+- **Axes need no conversion.** Blender's Z-up scene coordinates are STJ coordinates, and a USD stage declares `upAxis = Z` and `metersPerUnit = 1` (§4). For a glTF asset the exporter's "+Y up" does the mapping (spec §4.5), verified to 0.6 mm on a 2 km ribbon.
 
 ## 3. Conventions for an STJ Blender exporter
+
+Names are written `STJ__<category>__<id>` in the USD file, because USD forbids `::` in names and Blender's USD exporter writes `__` itself; `STJ::<category>::<id>` is the same name (spec §7.2). The table uses the `::` shorthand. Per-face data goes out as `stj_` primvars (§4).
 
 | Blender | STJ |
 |---|---|
@@ -50,7 +54,7 @@ Everything below was **checked in Blender 5.2.0 LTS**, headless, by building a s
 | Curve `STJ::reference::centerline` (cyclic = closed) | `reference.centerline` |
 | Empties `STJ::timing::start`, `::finish`, `::split_<n>`, `::start_finish` | timing lines (the exporter computes `s`) |
 | Empties `STJ::grid::<n>`, `STJ::pit::<id>`, `STJ::spawn::<id>` | poses |
-| Empty `STJ::scatter::<id>` with linked duplicates | `scenery.instances[].gltf` |
+| Empty `STJ::scatter::<id>` with linked duplicates | `scenery.instances[].usd`. Blender's USD export writes linked duplicates as separate meshes (§4), so the exporter writes a PointInstancer with `pxr`. |
 | Geometry-nodes modifier named `STJ_Scatter_<id>` | `scenery.scatter[]` |
 | Object property `stj` on prototypes (class, species, height, `x_<engine>`) | `scenery.prototypes` |
 | World Sky Texture, Sun light | `environment.sky`, `environment.lighting.sun` |
@@ -63,9 +67,24 @@ Everything below was **checked in Blender 5.2.0 LTS**, headless, by building a s
 | Image `STJ::terrain::macro` (8-bit sRGB, packed; `kind`, `encoding`, `strength` and a non-default `extent` in the image's custom property `stj`) | `geometry.terrain.macro[]`. Same row-flip rule as the heightmap; the extent is the terrain's unless the property says otherwise |
 | Image `STJ::terrain::height` (16-bit, packed) and a grid displaced by it | `geometry.terrain.heightmap`. Write the first channel, **flip rows** (Blender's buffer is bottom-up, STJ row 0 is north) |
 | Scene property `stj_season`, `stj_substitutions` on a variant scene | `environment.season`, `surfaces.substitutions` in a season override |
-| Material with a node group `STJ ground <material>` (ACR's `DR2 terrain` group, generalised), face attribute with the 3 layer indices, a UV map with the weights | `ground.materials[]`. The exporter writes `_STJ_LAYERS` and `_STJ_WEIGHTS` **per vertex**, splitting vertices where the layer set changes: the glTF exporter drops face attributes (verified). Whether it keeps `_` FACE_CORNER attributes is not verified yet. |
-| Text `track.stj.json` | everything else |
+| Material with a node group `STJ ground <material>` (ACR's `DR2 terrain` group, generalised), face attribute with the 3 layer indices, a UV map with the weights | `ground.materials[]`. The exporter writes the layer indices as three uniform int primvars `stj_surf_layers_0/1/2` and the weights as a faceVarying `float2` primvar `stj_surf_weights`, so no vertex is split. Blender's USD export drops per-corner FLOAT2 attributes (§4), so the weights are written with `pxr`. |
+| Text `track.stj.json` | everything else; the exporter also writes it into the root layer's `customLayerData["stj"]` |
 | Text `*.xodr` | `reference.opendrive` |
+
+### Conventions for the v0.3 additions (proposed, not probed in Blender yet)
+
+These follow the pattern of the table above. Each rests on a Blender feature that exists, but none has been run through the headless probes, so treat them as the intended design and check them before relying on them.
+
+| Blender | STJ |
+|---|---|
+| A profile curve, and a Geometry Nodes modifier `STJ_Road_<id>` that turns the reference curve into a mesh with that profile (Curve to Mesh), with the curve's tilt as the banking | `reference.centerline.cross_section` (`templates`, `sections`, `bank`; spec §7.1). The exported mesh is a cache of the rule: it carries `generated` with `stj_core.rule_hash`. |
+| Curve `STJ::road::<id>` (property `stj` with `width`, `surface`) | `roads[]`; empties `STJ::junction::<id>` with the `s` on each road give `junctions[]` |
+| Collection `STJ::structure::<id>` (property `stj` with `kind`, `clearance`; the objects inside are the deck, walls or ceiling) | `structures[]` with `mesh {mesh_ref, prim}` |
+| Collection `STJ_Decal` (property `stj` with `on`, `depth_offset`); a vertex-colour or attribute layer for the opacity | mesh role `decal` and `decal {on, opacity_primvar, depth_offset}` (spec §7.2) |
+| Custom property on a node group or material (`emissive_scale`, `wet_amount`) and a property `stj` with the signal curve | `materials[]`. The input must exist as an interface input on the UsdShade.Material; Blender's USD export of node-group inputs is not checked. |
+| Point attributes `stj_tint`, `stj_age` on a scatter's point cloud | `scenery.instances[].usd.primvars[]` |
+| Collection property `stj_source = "generated"` on a scatter result | `instances[].source: "generated"`; hand-placed objects stay `authored` |
+| A text block `track.assets.json`, or an add-on list of external files | `assets[]` (hash and licence per file) |
 
 ## 4. OpenUSD (checked in Blender 5.2, OpenUSD 0.26.3)
 
@@ -108,5 +127,6 @@ It writes `report_usd.json`.
 - **The round trip back into Blender is partial.** Per-face attributes, curves and simple properties come back. Physics, audio, animation as actions and the sky do not. For a lossless round trip the `.blend` stays the authoring source (`authoring_source`).
 - **Conventions adopted** (spec §7.7, §7.8):
   - **Primvars** use an `stj_` prefix, because Blender drops per-corner attributes with `:` in their names. Per-face layer indices are three uniform int primvars (`stj_surf_layers_0/1/2`), because Blender has no int3 attribute. Blender writes and reads both forms (checked with the `test_ring_blend` ring).
+  - **Names.** The probes used `_STJ_DENSITY` for the scatter density attribute. The STJ name is `stj_density` (the schema requires the `stj_` prefix for primvar names), and `stj_core.usd_attr_name` maps the old spelling.
   - **Prim data** goes in `stj:*` typed attributes or a JSON string, never in nested Blender dictionaries.
   - **The STJ document** goes in the root layer's `customLayerData["stj"]`.
