@@ -2185,6 +2185,148 @@ def check_cross_section_of(ctx, cl, p, line):
             rep.note(f"{p}.terrain", "carve with no shoulder_blend: the terrain steps up at the road edge")
 
 
+HEIGHT_STEP = 1.0               # m: roads that meet differ in height by more than this
+
+
+def _road_end(lines, road, end):
+    """(x, y, z) of the start or the end of a road, or None."""
+    line = lines.get(road)
+    if line is None:
+        return None
+    return line.frame(0.0 if end == "start" else line.length)[:3]
+
+
+def check_joints(ctx, lines):
+    """Junctions and continuations: the roads exist, meet where they say and agree in height (spec §7.1)."""
+    rep, doc = ctx.rep, ctx.doc
+    junctions = doc.get("junctions", [])
+    _dups(rep, "junctions", junctions, "junction")
+    for i, j in enumerate(junctions):
+        p = f"junctions[{i}]"
+        kind = j.get("kind", "at_grade")
+        pts, seen, ranks = [], set(), {}
+        through = j.get("through")
+        for k, r in enumerate(j["roads"]):
+            rp = f"{p}.roads[{k}]"
+            if r["road"] in seen:
+                rep.warn(rp, f"road '{r['road']}' appears twice in one junction")
+            seen.add(r["road"])
+            if "rank" in r:
+                ranks[r["road"]] = r["rank"]
+            if "join" in r and r["road"] == through:
+                rep.note(f"{rp}.join", "the through road is not joined onto anything: join is ignored")
+            if r.get("join", {}).get("mode") == "edge_snap" and "reach" not in r["join"]:
+                rep.note(f"{rp}.join", "edge_snap without a reach: a tool decides how far the end may move")
+            if r["road"] not in lines:
+                rep.error(f"{rp}.road", f"unknown road '{r['road']}'")
+                continue
+            line = lines[r["road"]]
+            if line is None:
+                rep.error(f"{rp}.road", f"road '{r['road']}' has no usable centerline")
+                continue
+            if r["s"] > line.length + TOL:
+                rep.error(f"{rp}.s", f"s = {r['s']:.1f} m is beyond road '{r['road']}' ({line.length:.1f} m)")
+                continue
+            end = r.get("end")
+            if not line.closed:
+                if end == "start" and r["s"] > 1.0:
+                    rep.warn(f"{rp}.end", f"'start', but s = {r['s']:.1f} m is not at the start of road '{r['road']}'")
+                elif end == "end" and line.length - r["s"] > 1.0:
+                    rep.warn(f"{rp}.end", f"'end', but s = {r['s']:.1f} m is not at the end of road '{r['road']}' ({line.length:.1f} m)")
+                elif end == "mid" and (r["s"] < 1.0 or line.length - r["s"] < 1.0):
+                    rep.warn(f"{rp}.end", f"'mid', but s = {r['s']:.1f} m is at an end of road '{r['road']}'")
+            pts.append((r["road"], line.frame(r["s"])[:3]))
+        if through is not None and through not in seen:
+            rep.error(f"{p}.through", f"'{through}' is not a member of the junction")
+        elif through is not None and through in ranks:
+            above = [r for r, v in ranks.items() if r != through and v < ranks[through]]
+            if above:
+                rep.warn(f"{p}.through", f"road '{above[0]}' has a better rank than the through road")
+        if "mesh" in j and j["mesh"]["mesh_ref"] not in ctx.meshes:
+            rep.error(f"{p}.mesh.mesh_ref", f"unknown mesh '{j['mesh']['mesh_ref']}'")
+        height = j.get("height") or {}
+        if height.get("mode") == "blend" and "radius" not in height:
+            rep.note(f"{p}.height", "blend without a radius: a tool decides over what distance the heights are blended")
+        for (ra, pa), (rb, pb) in zip(pts, pts[1:]):
+            gap = math.dist(pa[:2], pb[:2])
+            dz = abs(pa[2] - pb[2])
+            if kind == "grade_separated":
+                if gap <= core.JOINT_GAP and dz < HEIGHT_STEP:
+                    rep.note(p, f"grade_separated, but roads '{ra}' and '{rb}' are only {dz:.1f} m apart in height: is it at_grade?")
+            elif gap > core.JOINT_GAP:
+                rep.warn(p, f"roads '{ra}' and '{rb}' are {gap:.1f} m apart at their junction points")
+            elif dz > HEIGHT_STEP:
+                rep.warn(p, f"roads '{ra}' and '{rb}' differ by {dz:.1f} m in height at their junction points: "
+                            "agree the heights, or use kind grade_separated")
+    used = {}
+    for i, c in enumerate(doc.get("continues", [])):
+        p = f"continues[{i}]"
+        ends = []
+        for key in ("from", "to"):
+            e = c[key]
+            if e["road"] not in lines:
+                rep.error(f"{p}.{key}.road", f"unknown road '{e['road']}'")
+                continue
+            q = _road_end(lines, e["road"], e["end"])
+            if q is None:
+                rep.error(f"{p}.{key}.road", f"road '{e['road']}' has no usable centerline")
+                continue
+            ends.append(q)
+            if used.get((e["road"], e["end"])) is not None:
+                rep.warn(f"{p}.{key}", f"the {e['end']} of road '{e['road']}' already carries on in continues[{used[(e['road'], e['end'])]}]")
+            used[(e["road"], e["end"])] = i
+        if c["from"] == c["to"]:
+            rep.error(p, "joins a road end to itself")
+        elif len(ends) == 2:
+            gap = math.dist(ends[0][:2], ends[1][:2])
+            if gap > core.JOINT_GAP:
+                rep.warn(p, f"the two road ends are {gap:.1f} m apart")
+            elif abs(ends[0][2] - ends[1][2]) > HEIGHT_STEP:
+                rep.warn(p, f"the two road ends differ by {abs(ends[0][2] - ends[1][2]):.1f} m in height")
+
+
+def check_routes(ctx, lines):
+    """Routes: the steps lie on their roads and each one starts where the previous one ends (spec §7.1)."""
+    rep, doc = ctx.rep, ctx.doc
+    routes = doc.get("routes", [])
+    _dups(rep, "routes", routes, "route")
+    for i, rt in enumerate(routes):
+        p = f"routes[{i}]"
+        pieces = core.route_pieces(doc, rt)
+        prev, first, prev_road = None, None, None
+        for k, pc in enumerate(pieces):
+            sp = f"{p}.steps[{k}]"
+            line = pc["line"]
+            if pc["road"] not in lines:
+                rep.error(f"{sp}.road", f"unknown road '{pc['road']}'")
+            elif line is None:
+                rep.error(f"{sp}.road", f"road '{pc['road']}' has no usable centerline")
+            elif pc["b"] <= pc["a"]:
+                rep.error(sp, "s_end must be greater than s_start (driving backwards is direction, not a reversed range)")
+            elif pc["a"] < -TOL or pc["b"] > line.length + TOL:
+                rep.error(sp, f"{pc['a']:.1f} to {pc['b']:.1f} m is outside road '{pc['road']}' ({line.length:.1f} m)")
+            else:
+                start, end = core.route_step_ends(pc)
+                if prev is not None:
+                    gap = math.dist(prev[:2], start[:2])
+                    if gap > core.JOINT_GAP:
+                        rep.error(sp, f"starts {gap:.1f} m from where the previous step ends")
+                    elif abs(prev[2] - start[2]) > HEIGHT_STEP:
+                        rep.warn(sp, f"starts {abs(prev[2] - start[2]):.1f} m above or below where the previous step ends")
+                    elif not core.roads_linked(doc, prev_road, pc["road"]):
+                        rep.note(sp, f"no junction or continuation joins roads '{prev_road}' and '{pc['road']}'")
+                first = first or start
+                prev, prev_road = end, pc["road"]
+                continue
+            prev, prev_road = None, None
+        if rt.get("closed") and prev is not None and first is not None:
+            gap = math.dist(prev[:2], first[:2])
+            if gap > core.JOINT_GAP:
+                rep.error(p, f"closed, but the last step ends {gap:.1f} m from where the first begins")
+            elif not core.roads_linked(doc, prev_road, pieces[0]["road"]):
+                rep.note(p, f"no junction or continuation joins roads '{prev_road}' and '{pieces[0]['road']}' at the closing joint")
+
+
 def check_cross_section(ctx):
     """Cross-sections, banking and terrain rules of the reference line and of roads[] (spec §7.1)."""
     rep, doc = ctx.rep, ctx.doc
@@ -2207,32 +2349,9 @@ def check_cross_section(ctx):
             ctx.used_surfaces.add(road["surface"])
             if road["surface"] not in ctx.surface_ids:
                 rep.error(f"{p}.surface", f"unknown surface '{road['surface']}'")
-    junctions = doc.get("junctions", [])
-    _dups(rep, "junctions", junctions, "junction")
-    for i, j in enumerate(junctions):
-        p = f"junctions[{i}]"
-        pts, seen = [], set()
-        for k, r in enumerate(j["roads"]):
-            rp = f"{p}.roads[{k}]"
-            if r["road"] in seen:
-                rep.warn(rp, f"road '{r['road']}' appears twice in one junction")
-            seen.add(r["road"])
-            if r["road"] not in lines:
-                rep.error(f"{rp}.road", f"unknown road '{r['road']}'")
-                continue
-            line = lines[r["road"]]
-            if line is None:
-                rep.error(f"{rp}.road", f"road '{r['road']}' has no usable centerline")
-                continue
-            if r["s"] > line.length + TOL:
-                rep.error(f"{rp}.s", f"s = {r['s']:.1f} m is beyond road '{r['road']}' ({line.length:.1f} m)")
-                continue
-            pts.append((r["road"], line.frame(r["s"])[:3]))
-        for (ra, pa), (rb, pb) in zip(pts, pts[1:]):
-            gap = math.dist(pa[:2], pb[:2])
-            if gap > 5.0:
-                rep.warn(p, f"roads '{ra}' and '{rb}' are {gap:.1f} m apart at their junction points")
-    ids = {j["id"] for j in junctions}
+    check_joints(ctx, lines)
+    check_routes(ctx, lines)
+    ids = {j["id"] for j in doc.get("junctions", [])}
     for i, sr in enumerate((doc.get("timing") or {}).get("side_roads", [])):
         if "junction" in sr and sr["junction"] not in ids:
             rep.error(f"timing.side_roads[{i}].junction", f"unknown junction '{sr['junction']}'")
@@ -2491,7 +2610,17 @@ def check_layouts(ctx):
         if lay.get("direction") == "reverse" and "reference" not in lay and not (doc.get("reference") or {}).get("centerline") \
                 and not ((doc.get("reference") or {}).get("opendrive") or {}).get("route"):
             rep.error(p, "a reverse layout without its own reference needs a base centerline or an OpenDRIVE route")
-        own_line = "reference" in lay or lay.get("direction") == "reverse"
+        if "route" in lay:
+            if "reference" in lay or lay.get("direction") == "reverse":
+                rep.error(f"{p}.route", "a route is the layout's reference line: not together with reference or direction 'reverse'")
+            known = {r["id"]: r for r in doc.get("routes", [])}
+            if lay["route"] not in known:
+                rep.error(f"{p}.route", f"unknown route '{lay['route']}'")
+                continue
+            if sum(1 for pc in core.route_pieces(doc, known[lay["route"]]) if pc["line"] is not None and pc["length"] > 0) == 0:
+                rep.error(f"{p}.route", f"route '{lay['route']}' has no usable step")
+                continue
+        own_line = "reference" in lay or "route" in lay or lay.get("direction") == "reverse"
         if own_line and "timing" not in lay:
             rep.note(p, "own reference line but no timing: nothing timed in this layout")
         ldoc = core.layout_document(doc, lay, merge_edges=False, ground="layout")
@@ -2499,7 +2628,7 @@ def check_layouts(ctx):
         lctx = Ctx(ldoc, ctx.base_dir, lrep)
         lctx.mesh_names = ctx.mesh_names
         # reference problems of an inherited line were already reported for the base
-        lctx.rep = lrep if "reference" in lay else Report()
+        lctx.rep = lrep if "reference" in lay or "route" in lay else Report()
         check_reference(lctx)
         lctx.rep = lrep
         origin = check_timing(lctx)

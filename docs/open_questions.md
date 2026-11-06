@@ -21,7 +21,7 @@ Can a reference implementation derive Tier A from Tier B for one reference tyre 
 
 ## Geometry and timing
 
-**Q6. Branching and several lines.** *Partly resolved in v0.3:* `roads[]` and `junctions[]` describe several roads and where they meet (spec §7.1). Which route a race takes through them (a joker lap, alternate lines) is still open.
+**Q6. Branching and several lines.** *Resolved in v0.3:* `roads[]` and `junctions[]` describe several roads and where they meet, `continues[]` joins a road cut in two, and `routes[]` is an ordered run along them with one continuous `s`; a layout can take a route as its reference line (spec §7.1, §3.5). Still open: alternate lines inside one race (a joker lap chosen during the run) are not described.
 A rallycross joker lap, a pit lane as its own reference, alternate routes: v0.1 has one reference line. Options:
 - several named reference lines, each with its own `s`
 - OpenDRIVE junctions only

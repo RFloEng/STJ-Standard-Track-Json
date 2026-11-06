@@ -2345,5 +2345,156 @@ class GroundStaysOnTheBaseLine(unittest.TestCase):
         self.assertEqual((out["s_start"], out["s_end"]), (970.0, 30.0))      # the same stretch, driven the other way
 
 
+
+def loop_doc(**extra):
+    """Four straight 100 m roads (the reference and a, b, c) that form a square, with their joints and a closed route."""
+    doc = flat_line_doc()
+
+    def road(rid, pts):
+        return {"id": rid, "centerline": {"points": pts}}
+    doc["roads"] = [road("a", [[100, 0, 0], [100, 100, 0]]), road("b", [[100, 100, 0], [0, 100, 0]]), road("c", [[0, 100, 0], [0, 0, 0]])]
+    doc["junctions"] = [
+        {"id": "j1", "roads": [{"road": "reference", "s": 100, "end": "end"}, {"road": "a", "s": 0, "end": "start"}]},
+        {"id": "j2", "roads": [{"road": "a", "s": 100, "end": "end"}, {"road": "b", "s": 0, "end": "start"}]},
+    ]
+    doc["continues"] = [{"from": {"road": "b", "end": "end"}, "to": {"road": "c", "end": "start"}},
+                        {"from": {"road": "c", "end": "end"}, "to": {"road": "reference", "end": "start"}}]
+    doc["routes"] = [{"id": "loop", "closed": True, "steps": [{"road": "reference"}, {"road": "a"}, {"road": "b"}, {"road": "c"}]}]
+    doc.update(extra)
+    return doc
+
+
+class JointsAndRoutes(unittest.TestCase):
+    """Junction data, continuations and routes through several roads (spec §7.1)."""
+
+    def finding(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def clean(self, doc):
+        rep = run(doc)
+        return messages(rep, "ERROR") + messages(rep, "WARN")
+
+    def test_a_loop_of_four_roads_is_valid(self):
+        self.assertEqual(self.clean(loop_doc()), [])
+
+    def test_route_length_and_locating(self):
+        doc = loop_doc()
+        self.assertAlmostEqual(core.route_length(doc, "loop"), 400.0)
+        self.assertEqual(core.route_locate(doc, "loop", 250.0), ("b", 50.0))
+        self.assertEqual(core.route_locate(doc, "loop", 450.0)[0], "reference")          # a closed route wraps
+        self.assertEqual(core.route_s(doc, "loop", "b", 50.0), [250.0])
+
+    def test_a_step_driven_backwards(self):
+        doc = loop_doc()
+        doc["routes"] = [{"id": "back", "steps": [{"road": "a", "direction": "backward"}, {"road": "reference", "direction": "backward"}]}]
+        self.assertEqual(core.route_locate(doc, "back", 30.0), ("a", 70.0))
+        self.assertEqual(core.route_locate(doc, "back", 130.0), ("reference", 70.0))
+        pts = core.route_centerline(doc, "back")["points"]
+        self.assertEqual([tuple(q[:2]) for q in pts], [(100.0, 100.0), (100.0, 0.0), (0.0, 0.0)])
+
+    def test_a_route_is_a_centerline(self):
+        cl = core.route_centerline(loop_doc(), "loop")
+        self.assertTrue(cl["closed"])
+        self.assertEqual([tuple(q[:2]) for q in cl["points"]], [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)])
+
+    def test_a_layout_takes_a_route_as_its_reference_line(self):
+        doc = loop_doc(layouts=[{"id": "lap", "route": "loop"}])
+        line = core.reference_line(core.layout_document(doc, "lap"))
+        self.assertTrue(line.closed)
+        self.assertAlmostEqual(line.length, 400.0)
+        self.assertEqual(self.clean(doc), [])
+
+    def test_a_layout_route_must_exist_and_stand_alone(self):
+        self.finding(loop_doc(layouts=[{"id": "x", "route": "nope"}]), "ERROR", "unknown route 'nope'")
+        self.finding(loop_doc(layouts=[{"id": "x", "route": "loop", "direction": "reverse"}]), "ERROR", "not together with reference")
+
+    def test_steps_that_do_not_meet_are_an_error(self):
+        doc = loop_doc()
+        doc["routes"][0]["steps"] = [{"road": "reference"}, {"road": "b"}]
+        self.finding(doc, "ERROR", "from where the previous step ends")
+
+    def test_a_closed_route_must_come_back(self):
+        doc = loop_doc()
+        doc["routes"][0]["steps"] = doc["routes"][0]["steps"][:3]
+        self.finding(doc, "ERROR", "closed, but the last step ends")
+
+    def test_a_missing_link_is_a_note(self):
+        doc = loop_doc()
+        doc["continues"], doc["junctions"] = [], []
+        rep = run(doc)
+        self.assertEqual(messages(rep, "ERROR") + messages(rep, "WARN"), [])
+        self.assertTrue(any("no junction or continuation joins" in m for m in messages(rep, "NOTE")))
+
+    def test_step_ranges_are_checked(self):
+        doc = loop_doc()
+        doc["routes"][0]["steps"][1] = {"road": "a", "s_start": 60, "s_end": 20}
+        self.finding(doc, "ERROR", "s_end must be greater than s_start")
+        doc["routes"][0]["steps"][1] = {"road": "a", "s_start": 0, "s_end": 400}
+        self.finding(doc, "ERROR", "outside road 'a'")
+        doc["routes"][0]["steps"][1] = {"road": "ghost"}
+        self.finding(doc, "ERROR", "unknown road 'ghost'")
+
+    def test_the_through_road_is_a_member(self):
+        doc = loop_doc()
+        doc["junctions"][0]["through"] = "c"
+        self.finding(doc, "ERROR", "'c' is not a member of the junction")
+
+    def test_end_must_match_s(self):
+        doc = loop_doc()
+        doc["junctions"][0]["roads"][1]["end"] = "end"
+        self.finding(doc, "WARN", "is not at the end of road 'a'")
+
+    def test_the_through_road_has_the_best_rank(self):
+        doc = loop_doc()
+        doc["junctions"][0].update(through="reference")
+        doc["junctions"][0]["roads"][0]["rank"] = 2
+        doc["junctions"][0]["roads"][1]["rank"] = 1
+        self.finding(doc, "WARN", "has a better rank than the through road")
+
+    def test_roads_that_meet_agree_in_height(self):
+        doc = loop_doc()
+        doc["roads"][0]["centerline"]["points"][0] = [100, 0, 3]
+        self.finding(doc, "WARN", "differ by 3.0 m in height")
+        doc["junctions"][0]["kind"] = "grade_separated"
+        self.assertEqual([m for m in self.clean(doc) if "differ by" in m and "junctions" in m], [])
+
+    def test_grade_separated_roads_need_not_meet(self):
+        doc = loop_doc()
+        doc["junctions"].append({"id": "over", "kind": "grade_separated",
+                                 "roads": [{"road": "reference", "s": 50}, {"road": "b", "s": 50}]})
+        self.assertEqual([m for m in self.clean(doc) if "apart" in m], [])
+        doc["junctions"][-1]["kind"] = "at_grade"
+        self.finding(doc, "WARN", "apart at their junction points")
+
+    def test_a_continuation_joins_two_ends(self):
+        doc = loop_doc()
+        doc["continues"][0]["to"] = {"road": "reference", "end": "end"}
+        self.finding(doc, "WARN", "road ends are")
+        doc["continues"][0] = {"from": {"road": "b", "end": "end"}, "to": {"road": "b", "end": "end"}}
+        self.finding(doc, "ERROR", "joins a road end to itself")
+
+    def test_an_end_continues_only_once(self):
+        doc = loop_doc()
+        doc["continues"].append({"from": {"road": "b", "end": "end"}, "to": {"road": "c", "end": "start"}})
+        self.finding(doc, "WARN", "already carries on")
+
+    def test_join_notes(self):
+        doc = loop_doc()
+        doc["junctions"][0]["through"] = "reference"
+        doc["junctions"][0]["roads"][1]["join"] = {"mode": "edge_snap"}
+        doc["junctions"][0]["height"] = {"mode": "blend"}
+        notes = messages(run(doc), "NOTE")
+        self.assertTrue(any("edge_snap without a reach" in m for m in notes))
+        self.assertTrue(any("blend without a radius" in m for m in notes))
+
+    def test_joint_point_is_the_through_road(self):
+        doc = loop_doc()
+        doc["junctions"][0]["through"] = "a"
+        self.assertEqual(tuple(round(v, 6) for v in core.joint_point(doc, "j1")), (100.0, 0.0, 0.0))
+        self.assertTrue(core.roads_linked(doc, "reference", "a"))
+        self.assertFalse(core.roads_linked(doc, "reference", "b"))
+
+
 if __name__ == "__main__":
     unittest.main()

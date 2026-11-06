@@ -19,6 +19,8 @@
     "reference": { "$ref": "#/definitions/reference" },
     "roads": { "type": "array", "items": { "$ref": "#/definitions/road" }, "description": "Roads other than the reference line (spec §7.1)." },
     "junctions": { "type": "array", "items": { "$ref": "#/definitions/junction" }, "description": "Where roads meet." },
+    "continues": { "type": "array", "items": { "$ref": "#/definitions/continuation" }, "description": "Road ends that carry on as another road: one road cut at a bridge, a tunnel or a change of tags (spec §7.1)." },
+    "routes": { "type": "array", "items": { "$ref": "#/definitions/route" }, "description": "Ordered runs along roads[] and the reference line, with one continuous s (spec §7.1)." },
     "structures": { "type": "array", "items": { "$ref": "#/definitions/structure" }, "description": "Bridges, tunnels, underpasses and galleries along a road (spec §7.1)." },
     "assets": { "type": "array", "items": { "$ref": "#/definitions/asset" }, "description": "Files the track uses that USD cannot list: their hash and licence (spec §5.3)." },
     "materials": { "type": "array", "items": { "$ref": "#/definitions/material_drive" }, "description": "Material inputs that follow signals (spec §11.1)." },
@@ -540,12 +542,19 @@
     },
     "junction": {
       "type": "object",
-      "description": "Where roads meet, by s on each (spec §7.1). Geometry at the crossing is not described.",
+      "description": "Where roads meet, by s on each, and how (spec §7.1). The shape of the crossing itself is not described; `mesh` may point at an authored patch.",
       "required": ["id", "roads"],
       "additionalProperties": false,
       "patternProperties": { "^x_": {}, "^_": {} },
       "properties": {
         "id": { "$ref": "#/definitions/id" },
+        "kind": {
+          "type": "string",
+          "enum": ["at_grade", "grade_separated", "merge", "split", "roundabout"],
+          "default": "at_grade",
+          "description": "at_grade: the roads meet and connect. grade_separated: they cross at different heights and do not connect (a bridge over a road); its members need not meet in plan. merge and split: one road joins or leaves another at a shallow angle. roundabout: the members are the arms of a circulating road."
+        },
+        "through": { "type": "string", "description": "The through road: the one the others end on or cross. A roads[] id or 'reference'; it must be a member." },
         "roads": {
           "type": "array",
           "minItems": 2,
@@ -556,7 +565,92 @@
             "patternProperties": { "^_": {} },
             "properties": {
               "road": { "type": "string", "description": "A roads[] id, or 'reference' for the reference line." },
-              "s": { "$ref": "#/definitions/s" }
+              "s": { "$ref": "#/definitions/s" },
+              "end": { "type": "string", "enum": ["start", "end", "mid"], "description": "Which part of the road is at the junction: its first point, its last point, or somewhere along it (a road that crosses or is joined)." },
+              "rank": { "type": "integer", "minimum": 1, "description": "Priority at the junction, 1 first (the user's route, then the road class). Absent: the through road is 1, the others equal." },
+              "join": {
+                "type": "object",
+                "description": "How this road's end meets the through road.",
+                "additionalProperties": false,
+                "patternProperties": { "^_": {} },
+                "properties": {
+                  "mode": { "type": "string", "enum": ["centre", "edge_snap"], "default": "centre", "description": "centre: centre line to centre line. edge_snap: the end is snapped onto the edge of the through road. A tool that cannot snap uses centre." },
+                  "reach": { "type": "number", "exclusiveMinimum": 0, "description": "edge_snap: the furthest distance (m) the end moves to reach the edge." }
+                }
+              },
+              "corner_radius": { "type": "number", "minimum": 0, "description": "Radius (m) of the corner between this road and the through road." }
+            }
+          }
+        },
+        "height": {
+          "type": "object",
+          "description": "How the heights of the roads agree at the junction.",
+          "required": ["mode"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "mode": { "type": "string", "enum": ["pinned", "blend"], "description": "pinned: every road keeps the height it has at the joint and is smoothed with that end held. blend: the roads and the terrain targets around the joint are blended by inverse distance." },
+            "radius": { "type": "number", "exclusiveMinimum": 0, "description": "blend: the distance (m) over which the heights are blended." }
+          }
+        },
+        "mesh": {
+          "type": "object",
+          "description": "An authored patch for the crossing.",
+          "required": ["mesh_ref", "prim"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "mesh_ref": { "$ref": "#/definitions/id" },
+            "prim": { "type": "string", "pattern": "^/" }
+          }
+        }
+      }
+    },
+    "road_end": {
+      "type": "object",
+      "required": ["road", "end"],
+      "additionalProperties": false,
+      "patternProperties": { "^_": {} },
+      "properties": {
+        "road": { "type": "string", "description": "A roads[] id, or 'reference'." },
+        "end": { "type": "string", "enum": ["start", "end"] }
+      }
+    },
+    "continuation": {
+      "type": "object",
+      "description": "The end of one road carries on as the start or end of another: the two are one road cut in two. It is not a junction, so nothing is snapped or prioritised.",
+      "required": ["from", "to"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "from": { "$ref": "#/definitions/road_end" },
+        "to": { "$ref": "#/definitions/road_end" }
+      }
+    },
+    "route": {
+      "type": "object",
+      "description": "A run along roads, in order. Its s is continuous: the sum of the lengths of the steps before plus the distance into the current step. A layout can take a route as its reference line.",
+      "required": ["id", "steps"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "closed": { "type": "boolean", "default": false, "description": "True when the last step ends where the first begins: a lapped route of several roads." },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["road"],
+            "additionalProperties": false,
+            "patternProperties": { "^x_": {}, "^_": {} },
+            "properties": {
+              "road": { "type": "string", "description": "A roads[] id, or 'reference'." },
+              "s_start": { "$ref": "#/definitions/s", "description": "Start of the stretch on the road (default 0)." },
+              "s_end": { "$ref": "#/definitions/s", "description": "End of the stretch on the road (default: the road's length). Always above s_start." },
+              "direction": { "type": "string", "enum": ["forward", "backward"], "default": "forward", "description": "backward: the stretch is driven from s_end to s_start." }
             }
           }
         }
@@ -1793,6 +1887,7 @@
           "description": "reverse without an own reference: the base reference line driven backwards, s' = L - s."
         },
         "reference": { "$ref": "#/definitions/reference" },
+        "route": { "$ref": "#/definitions/id", "description": "A routes[] id: the reference line is that route, chained from its roads. Not together with reference or direction." },
         "timing": { "$ref": "#/definitions/timing" },
         "race": { "$ref": "#/definitions/race" },
         "edges": {

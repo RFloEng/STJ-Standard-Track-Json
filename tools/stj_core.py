@@ -544,6 +544,126 @@ def road_line(doc, road_id):
     return None
 
 
+# ── joints and routes (spec §7.1) ────────────────────────────────────────────
+
+JOINT_GAP = 5.0                  # m: roads that meet further apart than this are not joined
+
+
+def roads_linked(doc, road_a, road_b):
+    """Whether the document says two roads meet: a junction holds both, or a continuation joins them."""
+    if road_a == road_b:
+        return True
+    for j in doc.get("junctions", []):
+        names = {r["road"] for r in j.get("roads", [])}
+        if road_a in names and road_b in names:
+            return True
+    for c in doc.get("continues", []):
+        if {c["from"]["road"], c["to"]["road"]} == {road_a, road_b}:
+            return True
+    return False
+
+
+def joint_point(doc, junction):
+    """The point where a junction's roads meet: the position of the through road at its `s`, else of the
+    first listed member. Returns (x, y, z) or None. A junction describes one point; this is it."""
+    if isinstance(junction, str):
+        junction = next((j for j in doc.get("junctions", []) if j.get("id") == junction), None)
+    if not junction:
+        return None
+    members = junction.get("roads", [])
+    through = junction.get("through")
+    order = [m for m in members if m["road"] == through] + [m for m in members if m["road"] != through]
+    for m in order:
+        line = road_line(doc, m["road"])
+        if line is not None:
+            return line.frame(min(m["s"], line.length))[:3]
+    return None
+
+
+def route_pieces(doc, route):
+    """The steps of a route resolved against the roads: [{road, line, a, b, backward, length, offset}].
+
+    `a` and `b` are the stretch on the road (s_start, s_end), `length` is b - a and `offset` is the route s at
+    the start of the step. `line` is None when the road has no usable centerline."""
+    if isinstance(route, str):
+        route = next((r for r in doc.get("routes", []) if r.get("id") == route), None)
+    pieces, offset = [], 0.0
+    for st in (route or {}).get("steps", []):
+        line = road_line(doc, st["road"])
+        a = float(st.get("s_start", 0.0))
+        b = float(st.get("s_end", line.length if line is not None else a))
+        length = max(b - a, 0.0) if line is not None else 0.0
+        pieces.append({"road": st["road"], "line": line, "a": a, "b": b,
+                       "backward": st.get("direction", "forward") == "backward", "length": length, "offset": offset})
+        offset += length
+    return pieces
+
+
+def route_length(doc, route):
+    """The length of a route: the sum of its steps."""
+    return sum(p["length"] for p in route_pieces(doc, route))
+
+
+def route_locate(doc, route, s):
+    """(road, s on that road) for the route distance s. A closed route wraps; None for an empty route."""
+    pieces = [p for p in route_pieces(doc, route) if p["line"] is not None]
+    if not pieces:
+        return None
+    total = sum(p["length"] for p in pieces)
+    closed = bool((route if isinstance(route, dict) else next(
+        (r for r in doc.get("routes", []) if r.get("id") == route), {})).get("closed"))
+    s = s % total if closed and total else min(max(s, 0.0), total)
+    for p in pieces:
+        if s <= p["offset"] + p["length"] or p is pieces[-1]:
+            d = min(max(s - p["offset"], 0.0), p["length"])
+            return p["road"], (p["b"] - d if p["backward"] else p["a"] + d)
+
+
+def route_s(doc, route, road, s, tol=0.01):
+    """The route distances at which the route passes s on `road` (a road can be used by more than one step)."""
+    out = []
+    for p in route_pieces(doc, route):
+        if p["road"] == road and p["a"] - tol <= s <= p["b"] + tol:
+            d = (p["b"] - s) if p["backward"] else (s - p["a"])
+            out.append(p["offset"] + min(max(d, 0.0), p["length"]))
+    return out
+
+
+def route_step_ends(piece):
+    """((x, y, z), (x, y, z)) where a resolved step starts and ends in the direction of travel."""
+    line = piece["line"]
+    first, last = line.frame(piece["a"])[:3], line.frame(min(piece["b"], line.length))[:3]
+    return (last, first) if piece["backward"] else (first, last)
+
+
+def route_centerline(doc, route, step=5.0):
+    """The route as one centerline {points, closed}: the steps chained in order, a road driven backwards
+    reversed, repeated joints dropped. A curved (tangent) road is sampled every `step` metres; the
+    chainage, tangents, cross-section and widths of the single roads are not carried over."""
+    if isinstance(route, str):
+        route = next((r for r in doc.get("routes", []) if r.get("id") == route), None) or {}
+    pts = []
+    for p in route_pieces(doc, route):
+        line = p["line"]
+        if line is None or p["length"] <= 0:
+            continue
+        a, b = p["a"], min(p["b"], line.length)
+        ss = {a, b} | {v for v in line.s if a < v < b}
+        if line.tangents:
+            n = max(1, int(math.ceil((b - a) / step)))
+            ss |= {a + (b - a) * k / n for k in range(1, n)}
+        run = [line.point(v) for v in sorted(ss)]
+        if p["backward"]:
+            run.reverse()
+        for q in run:
+            if not pts or math.dist(q, pts[-1]) > 1e-6:
+                pts.append(q)
+    closed = bool(route.get("closed"))
+    if closed and len(pts) > 2 and math.dist(pts[0], pts[-1]) < 1e-6:
+        pts.pop()
+    return {"points": [list(q) for q in pts], "closed": closed}
+
+
 # ── layouts ──────────────────────────────────────────────────────────────────
 
 def reverse_profile(cl, length):
@@ -645,7 +765,8 @@ def layout_document(doc, layout, merge_edges=True, ground="base"):
     """The document as seen when `layout` (a layouts[] entry or its id) is selected (spec §3.5).
 
     reference, timing and race are replaced wholesale by the layout's. When the layout has its own
-    reference line (or reverses the base line) nothing s-based is inherited from the top level except
+    reference line, takes a route (its roads chained, `route_centerline`) or reverses the base line, nothing
+    s-based is inherited from the top level except
     ground data, which always stays on the base line: surface bands, CRG placements, the road profile and
     terrain rule, structures and junctions keep their base-line s and t. Layout edges are added to the
     top-level edges when the line is unchanged (merge_edges), otherwise they replace them.
@@ -655,9 +776,11 @@ def layout_document(doc, layout, merge_edges=True, ground="base"):
     if isinstance(layout, str):
         layout = next(l for l in doc.get("layouts", []) if l.get("id") == layout)
     out = {k: copy.deepcopy(v) for k, v in doc.items() if k not in ("layouts", "variants")}
-    own_line = "reference" in layout or layout.get("direction") == "reverse"
+    own_line = "reference" in layout or "route" in layout or layout.get("direction") == "reverse"
     if "reference" in layout:
         out["reference"] = copy.deepcopy(layout["reference"])
+    elif "route" in layout:
+        out["reference"] = {"centerline": route_centerline(doc, layout["route"])}
     elif layout.get("direction") == "reverse":
         out["reference"] = reverse_reference(doc.get("reference"))
         if ground == "layout":
