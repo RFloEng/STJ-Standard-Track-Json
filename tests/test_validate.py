@@ -2003,7 +2003,18 @@ class InstanceVariation(unittest.TestCase):
         rep = self.primvars({"name": "stj_age", "role": "tint"}, {"name": "stj_tint", "role": "age"})
         warns = " ".join(messages(rep, "WARN"))
         self.assertIn("the role 'tint' needs 3 components", warns)
+        self.assertIn("(or 4, the last ignored)", warns)
         self.assertIn("the role 'age' is one number", warns)
+
+    def test_a_four_component_tint_is_accepted(self):
+        # Blender's FLOAT_COLOR attribute exports as color4f[]
+        from pxr import Sdf, Usd, UsdGeom, Vt
+        st = Usd.Stage.Open(str(self.dir / "forest.usda"))
+        pv = UsdGeom.PrimvarsAPI(st.GetPrimAtPath("/f/trees")).CreatePrimvar("stj_tint4", Sdf.ValueTypeNames.Color4fArray, UsdGeom.Tokens.vertex)
+        pv.Set(Vt.Vec4fArray([(1, 1, 1, 1), (0.8, 0.9, 0.7, 1)]))
+        st.GetRootLayer().Save()
+        rep = self.primvars({"name": "stj_tint4", "role": "tint"})
+        self.assertEqual([m for m in messages(rep, "ERROR") + messages(rep, "WARN") if "primvar" in m or "tint" in m], [])
 
     def test_a_primvar_listed_twice(self):
         rep = self.primvars({"name": "stj_age", "role": "age"}, {"name": "stj_age", "role": "other"})

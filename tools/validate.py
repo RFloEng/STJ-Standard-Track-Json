@@ -2417,8 +2417,8 @@ def check_instance_primvars(ctx, p, g):
             rep.error(f"{pp}.name", f"primvar '{pv['name']}' is not on {g['prim']}")
             continue
         kind = types[pv["name"]]
-        if pv["role"] == "tint" and kind not in ("color3f", "float3", "color3d", "double3"):
-            rep.warn(pp, f"the role 'tint' needs 3 components, but '{pv['name']}' is {kind}")
+        if pv["role"] == "tint" and kind not in ("color3f", "float3", "color3d", "double3", "color4f", "float4", "color4d", "double4"):
+            rep.warn(pp, f"the role 'tint' needs 3 components (or 4, the last ignored), but '{pv['name']}' is {kind}")
         elif pv["role"] in ("age", "scale_jitter", "phase") and kind not in ("float", "double"):
             rep.warn(pp, f"the role '{pv['role']}' is one number, but '{pv['name']}' is {kind}")
 

@@ -40,6 +40,7 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - `prototypes[].wind` (§8.2); `water.bodies[].physical: false` (§7.5); `meshes[].reflective` and `baked` (§7.2)
   - validator checks for all of them; `stj_core.ReferenceLine` takes per-segment tangents
   - open: asset manifest with licences, and LOD ranges for prototypes
+- **Blender probe for the v0.3 conventions** (`tools/blender/blend_probe_v03.py`, `docs/blender_mapping.md` §3): the road profile modifier agrees with `stj_core.profile_point` when the profile is drawn as `(t, −dz)`; material inputs and PointInstancers must be written with `pxr`; a `tint` primvar may have four components (the last is ignored).
 - **Tools**: `stj_usd.py embed` creates the stage when the file does not exist, so a plain document becomes a track in one step.
 - **Instance variation** (`proposals/stj_visual_materials_proposal.md` §3.5; additive): `scenery.instances[].usd.primvars[] {name, role}` names the per-instance primvars of a PointInstancer (tint, age, scale_jitter, phase) (§8.2).
 - **Structures** (`proposals/stj_structures_proposal.md`; additive):

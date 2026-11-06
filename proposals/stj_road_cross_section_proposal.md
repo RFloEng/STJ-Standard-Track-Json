@@ -69,7 +69,7 @@ A `cross_section` block on the centerline (the same place as `width_profile`). I
 |---|---|
 | **OpenDRIVE** | `bank` becomes `<superelevation>`. Template slopes become `<crossfall>` or `<shape>`. Lane widths come from `width_profile`. Export is lossy for arbitrary `dz` points beyond what `<shape>` can hold; `_metadata.provenance.lost` should say so. |
 | **OpenUSD** | The templates travel as `BasisCurves` or `stj:` typed attributes next to the document, so a USD tool can see the profile. The collision ribbon is generated from them (`ribbon_usd.py`). |
-| **Blender** | The natural non-destructive form: a Geometry Nodes modifier turns the centerline curve into a mesh using the profile as a profile curve (Curve to Mesh), with `bank` as the curve's tilt. `docs/blender_mapping.md` already maps a named modifier to a scatter rule; this would map `STJ_Road_<id>` to `cross_section`. The exported mesh is the baked cache, and the rule stays in the document. |
+| **Blender** | The natural non-destructive form: a Geometry Nodes modifier turns the centerline curve into a mesh using the profile as a profile curve (Curve to Mesh), with `bank` as the curve's tilt. `docs/blender_mapping.md` already maps a named modifier to a scatter rule; this would map `STJ_Road_<id>` to `cross_section`. The exported mesh is the baked cache, and the rule stays in the document. Checked in Blender 5.2 (`blend_probe_v03.py`): the profile is drawn as `(t, −dz)` and a positive tilt banks the left side up, as `bank`. |
 | **Engines with splines** (UE splines, Unity splines, BeamNG roads) | Width, banking and a few profile points map to their road-spline parameters. Arbitrary profiles are approximated. |
 
 ## 4. Validator

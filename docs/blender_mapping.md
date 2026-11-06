@@ -71,18 +71,24 @@ Names are written `STJ__<category>__<id>` in the USD file, because USD forbids `
 | Text `track.stj.json` | everything else; the exporter also writes it into the root layer's `customLayerData["stj"]` |
 | Text `*.xodr` | `reference.opendrive` |
 
-### Conventions for the v0.3 additions (proposed, not probed in Blender yet)
+### Conventions for the v0.3 additions (checked in Blender 5.2)
 
-These follow the pattern of the table above. Each rests on a Blender feature that exists, but none has been run through the headless probes, so treat them as the intended design and check them before relying on them.
+`tools/blender/blend_probe_v03.py -- <out_dir>` checks four of them and writes `report_v03.json`. The first three rows are results; the last table is the rest of the design, **not probed yet**.
+
+| Convention | Result | Rule for the exporter |
+|---|---|---|
+| **Road profile**: a Geometry Nodes modifier (`STJ_Road_<id>`) with Curve to Mesh, the profile as a second curve, and the curve's tilt as banking (spec §7.1) | ✓ works. The profile's **x lands on world +Y** (left, as `t`). The profile's **y lands on world −Z**. A **positive tilt raises the left side**, the same sign as STJ's `bank`. | **Draw the profile as `(t, −dz)`.** With that and the tilt set to `bank`, the evaluated cross-section equals `stj_core.profile_point` to 0.01 m (8 m wide, 0.1 rad). The curve's tilt is per point: write the `bank` table into the points' tilt at their `s`. |
+| **Material inputs** (`materials[]`, spec §11.1) | ✗ not written as interface inputs. A node-group input is flattened away, and a material custom property comes out as `userProperties:<name>`. | The exporter reads the property and writes `inputs:<name>` on the UsdShade.Material with `pxr`, and connects the shader networks to it. |
+| **Per-instance variation** (`usd.primvars[]`, spec §8.2): point attributes named `stj_*` | ✓ `FLOAT` → `float[]` `vertex`; `FLOAT_VECTOR` → `float3[]` `vertex`; `FLOAT_COLOR` → `color4f[]` `vertex` (four components). | Use `FLOAT` for `age`, `scale_jitter` and `phase`, and `FLOAT_VECTOR` or `FLOAT_COLOR` for `tint` (the fourth component of a colour attribute is ignored). On a PointInstancer the exporter copies them with `pxr`, because stock export writes a mesh. |
+| **Names** (spec §7.2): `STJ::<category>::<id>` | ✓ becomes `STJ__<category>__<id>`. An object is an Xform prim named after it, with the mesh data as a child prim. **Collections are not exported** as prims, and their custom properties are not either. | The exporter reads the `.blend`, so a collection can still be its input. To make a prim path predictable (`structures[].mesh.prim`, `decal`), name the **objects** `STJ__structure__<id>[__part]` as well. |
+
+The rest of the design follows the same pattern but has **not been run through a probe**:
 
 | Blender | STJ |
 |---|---|
-| A profile curve, and a Geometry Nodes modifier `STJ_Road_<id>` that turns the reference curve into a mesh with that profile (Curve to Mesh), with the curve's tilt as the banking | `reference.centerline.cross_section` (`templates`, `sections`, `bank`; spec §7.1). The exported mesh is a cache of the rule: it carries `generated` with `stj_core.rule_hash`. |
 | Curve `STJ::road::<id>` (property `stj` with `width`, `surface`) | `roads[]`; empties `STJ::junction::<id>` with the `s` on each road give `junctions[]` |
-| Collection `STJ::structure::<id>` (property `stj` with `kind`, `clearance`; the objects inside are the deck, walls or ceiling) | `structures[]` with `mesh {mesh_ref, prim}` |
-| Collection `STJ_Decal` (property `stj` with `on`, `depth_offset`); a vertex-colour or attribute layer for the opacity | mesh role `decal` and `decal {on, opacity_primvar, depth_offset}` (spec §7.2) |
-| Custom property on a node group or material (`emissive_scale`, `wet_amount`) and a property `stj` with the signal curve | `materials[]`. The input must exist as an interface input on the UsdShade.Material; Blender's USD export of node-group inputs is not checked. |
-| Point attributes `stj_tint`, `stj_age` on a scatter's point cloud | `scenery.instances[].usd.primvars[]` |
+| Collection `STJ::structure::<id>` (property `stj` with `kind`, `clearance`), its objects named `STJ__structure__<id>…` | `structures[]` with `mesh {mesh_ref, prim}` |
+| Objects named `STJ__decal__<id>` (property `stj` with `on`, `depth_offset`); a vertex attribute for the opacity | mesh role `decal` and `decal {on, opacity_primvar, depth_offset}` (spec §7.2) |
 | Collection property `stj_source = "generated"` on a scatter result | `instances[].source: "generated"`; hand-placed objects stay `authored` |
 | A text block `track.assets.json`, or an add-on list of external files | `assets[]` (hash and licence per file) |
 

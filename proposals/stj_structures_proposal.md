@@ -69,7 +69,7 @@ A pace note may name the structure it belongs to (`structure: "viaduct_1"`).
 | OpenDRIVE `<tunnel>` and `<bridge>` objects | `kind`, `s_start`, `s_end` from their `s` and `length` |
 | LAS class 17 (bridge deck) | a `bridge` over the `s` range of the points; the mesh as `mesh` |
 | Game track files with tunnel and bridge flags (BeamNG, Speed Dreams) | `kind` and range |
-| Blender | an empty or collection named `STJ__structure__<id>` |
+| Blender | the deck, walls or ceiling as objects named `STJ__structure__<id>` |
 
 ## 4. Validator
 
