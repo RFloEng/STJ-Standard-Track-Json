@@ -234,7 +234,7 @@ Pit count and length are not repeated: they follow from `race.pit_boxes` and the
 **Scans (`provenance.scan.sources[]` and `derived`).** Many tracks start as a LiDAR, photogrammetry or GNSS survey. STJ does not carry the raw cloud: it is hundreds of millions of points and no simulator renders it. What belongs in the file is what engines can use (the heightmap, the OpenCRG surface, the instances) and a record of where it came from, so it can be made again at a better resolution (`proposals/stj_lidar_proposal.md`).
 
 - A **source** is `{id, format (las | laz | copc | e57 | ept | other), uri?, reference?, crs, vertical_datum, date, point_density (points per m²), accuracy {horizontal, vertical}, classified, licence}`. The survey's `crs` and `vertical_datum` are its own; the track's projection stays `environment.geo_reference`. `uri` is given only when the cloud ships with the track, which is rare; otherwise `reference` says where it came from. `licence` records the survey's licence and is not judged.
-- A product made from a scan carries **`derived {source, product, classes, cell_size, method, void_fill}`**: on `geometry.terrain.heightmap`, `geometry.crg[]`, `geometry.meshes[]`, `scenery.instances[]` and `scenery.scatter[]`. `product` is `dtm` (bare ground), `dsm` (top surface), `chm` (canopy height), `road_surface` or `other`. `classes` are ASPRS classification codes, and the usual ones map as follows:
+- A product made from a scan carries **`derived {source | sources, product, classes, cell_size, method, void_fill, void_source}`**: on `geometry.terrain.heightmap`, `geometry.crg[]`, `geometry.meshes[]`, `scenery.instances[]`, `scenery.scatter[]`, and on a road's `centerline` (the heights of its points, for example the median of the ground points under the road) and its `cross_section` (the bank table or the templates, for example the cross-slope of a DEM). `source` is one id; `sources` lists several, for a product merged from more than one survey. With `void_fill: from_other_source`, `void_source` names the source the gaps were filled from, such as a global DEM. An id may name a scan source or an entry of `provenance.sources[]` (below); ids are shared between the two lists. `product` is `dtm` (bare ground), `dsm` (top surface), `chm` (canopy height), `road_surface` or `other`. `classes` are ASPRS classification codes, and the usual ones map as follows:
 
 | ASPRS class | Goes into |
 |---|---|
@@ -248,6 +248,15 @@ Pit count and length are not repeated: they follow from `race.pit_boxes` and the
 - The validator checks that `derived.source` names a source (ERROR) and that the source has a `crs` (WARN). It notes a cell size finer than about `2 / sqrt(point_density)`, because detail below the point spacing is interpolated, and it notes a product from a source that may not be redistributed.
 - `tools/las_dtm.py` is the converter step: it grids the ground points of a LAS tile (`.laz` and COPC with the optional `laspy`) into a heightmap, with `nodata`, and writes the `derived` and source records.
 - A GeoTIFF is not a heightmap format. STJ does not resample (§7.4), so a converter writes `png16` or `raw_f32` and records the original in `derived`.
+
+
+**Other data sources and licences (`provenance.sources[]`).** A track is often made from data that is not a scan: an OpenStreetMap extract, a cadastre, an orthophoto, a global DEM, a land-cover product, or content converted from a game. `provenance.sources[] {id, kind, reference, retrieved, crs, licence}` records each one, with `kind` one of `osm`, `cadastre`, `orthophoto`, `satellite`, `dem`, `landcover`, `map`, `game` or `other`, and `derived` blocks can name it like a scan source. A `licence` adds three fields to the existing ones (`spdx`, `holder`, `url`, `redistributable`, `notes`):
+
+- `attribution`: the credit line the licence asks for (ODbL, CC-BY and open-government licences);
+- `share_alike`: products made from the data must carry the same terms (ODbL, CC-BY-SA);
+- `commercial_use`: `false` when the licence forbids commercial use.
+
+STJ records and never judges, but `stj_core.licence_summary(doc)` collects what the sources mean for the file: whether any source is not redistributable, which are share-alike or non-commercial, the credit lines to print, and the sources whose licence asks for a credit line and has none. The validator warns when the file says it is redistributable and a source is not, and when a licence that asks for attribution (CC-BY, ODbL, ODC-By, OGL, Etalab) has none; it notes share-alike and non-commercial sources, because their terms pass on to what is made from them.
 
 ### 5.3 Assets
 

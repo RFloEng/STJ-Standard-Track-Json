@@ -2031,6 +2031,21 @@ def check_metadata(ctx):
     prov = md.get("provenance") or {}
     if prov.get("type") == "converted" and not prov.get("converted_from"):
         rep.warn("_metadata.provenance", "type 'converted' without converted_from")
+    summary = core.licence_summary(ctx.doc)
+    if summary["not_redistributable"] and lic.get("redistributable") is True:
+        rep.warn("_metadata.licence.redistributable",
+                 f"true, but source {', '.join(repr(i) for i in summary['not_redistributable'])} is not redistributable")
+    elif summary["not_redistributable"] and "redistributable" not in lic:
+        rep.note("_metadata.licence.redistributable",
+                 f"not stated, and source {', '.join(repr(i) for i in summary['not_redistributable'])} is not redistributable: it should be false")
+    if summary["share_alike"] and lic.get("redistributable") is not False:
+        rep.note("_metadata.licence", f"source {', '.join(repr(i) for i in summary['share_alike'])} is share-alike: "
+                                      "the track data made from it must carry the same terms")
+    if summary["non_commercial"]:
+        rep.note("_metadata.licence", f"source {', '.join(repr(i) for i in summary['non_commercial'])} forbids commercial use: "
+                                      "the same holds for what is made from it")
+    for sid in summary["missing_attribution"]:
+        rep.warn("_metadata.provenance", f"source '{sid}' has a licence that asks for attribution, and no licence.attribution")
 
 
 def _derived_blocks(doc):
@@ -2046,6 +2061,16 @@ def _derived_blocks(doc):
         for i, item in enumerate(geo.get(kind, [])):
             if "derived" in item:
                 yield f"geometry.{kind}[{i}].derived", item["derived"], item
+    lines = [("reference.centerline", (doc.get("reference") or {}).get("centerline"))] + \
+        [(f"roads[{i}].centerline", r.get("centerline")) for i, r in enumerate(doc.get("roads", []))]
+    for lp, cl in lines:
+        if not isinstance(cl, dict):
+            continue
+        if "derived" in cl:
+            yield f"{lp}.derived", cl["derived"], cl
+        xs = cl.get("cross_section")
+        if isinstance(xs, dict) and "derived" in xs:
+            yield f"{lp}.cross_section.derived", xs["derived"], xs
     sc = doc.get("scenery") or {}
     for kind in ("instances", "scatter"):
         for i, item in enumerate(sc.get(kind, [])):
@@ -2058,8 +2083,17 @@ def check_scan(ctx):
     rep, doc = ctx.rep, ctx.doc
     scan = ((doc.get("_metadata") or {}).get("provenance") or {}).get("scan") or {}
     sources = scan.get("sources", [])
+    others = ((doc.get("_metadata") or {}).get("provenance") or {}).get("sources", [])
     _dups(rep, "_metadata.provenance.scan.sources", sources, "scan source")
+    _dups(rep, "_metadata.provenance.sources", others, "data source")
     by_id = {src["id"]: src for src in sources}
+    for i, src in enumerate(others):
+        p = f"_metadata.provenance.sources[{i}]"
+        if src["id"] in by_id:
+            rep.error(f"{p}.id", f"'{src['id']}' is also a scan source: ids are shared")
+        by_id.setdefault(src["id"], src)
+        if "reference" not in src:
+            rep.note(p, "no reference: nothing says where this data came from")
     for i, src in enumerate(sources):
         p = f"_metadata.provenance.scan.sources[{i}]"
         if "uri" in src and not ctx.file(src["uri"]).is_file():
@@ -2067,24 +2101,37 @@ def check_scan(ctx):
         if "uri" not in src and "reference" not in src:
             rep.note(p, "neither a uri nor a reference: nothing says where this survey came from")
     for path, d, owner in _derived_blocks(doc):
-        src = by_id.get(d["source"])
-        if src is None:
-            rep.error(f"{path}.source", f"unknown scan source '{d['source']}'")
-            continue
-        if "crs" not in src:
-            rep.warn(path, f"source '{src['id']}' has no crs: the reprojection into this track cannot be checked")
-        if src.get("classified") is False and d.get("classes"):
-            rep.warn(f"{path}.classes", f"classes given, but source '{src['id']}' is not classified")
-        if (src.get("licence") or {}).get("redistributable") is False:
-            rep.note(path, f"source '{src['id']}' is not redistributable: check this product may be published")
-        density = src.get("point_density")
+        ids = ([d["source"]] if "source" in d else []) + list(d.get("sources") or [])
+        if "source" in d and d["source"] in (d.get("sources") or []):
+            rep.warn(f"{path}.sources", f"'{d['source']}' is given as source and again in sources")
+        for key, sid in [("source" if i == 0 and "source" in d else "sources", x) for i, x in enumerate(ids)] + \
+                ([("void_source", d["void_source"])] if "void_source" in d else []):
+            if sid not in by_id:
+                rep.error(f"{path}.{key}", f"unknown source '{sid}'")
+        if d.get("void_fill") == "from_other_source" and "void_source" not in d:
+            rep.note(path, "void_fill is from_other_source, but void_source does not say which")
+        elif "void_source" in d and d.get("void_fill") != "from_other_source":
+            rep.note(f"{path}.void_source", "given, but void_fill is not from_other_source")
+        is_line = path.endswith("centerline.derived") or path.endswith("cross_section.derived")
+        for sid in ids + ([d["void_source"]] if "void_source" in d else []):
+            src = by_id.get(sid)
+            if src is None:
+                continue
+            if "crs" not in src:
+                rep.warn(path, f"source '{src['id']}' has no crs: the reprojection into this track cannot be checked")
+            if src.get("classified") is False and d.get("classes"):
+                rep.warn(f"{path}.classes", f"classes given, but source '{src['id']}' is not classified")
+            if (src.get("licence") or {}).get("redistributable") is False:
+                rep.note(path, f"source '{src['id']}' is not redistributable: check this product may be published")
+        main = by_id.get(ids[0]) if ids else None
+        density = (main or {}).get("point_density")
         cell = d.get("cell_size")
         if cell is None and "size" in owner and "extent" in owner:     # a heightmap
             cell = (owner["extent"][2] - owner["extent"][0]) / (owner["size"][0] - 1)
         if density and cell and cell < 2.0 / math.sqrt(density) * 0.999:
             rep.note(path, f"cell size {cell:g} m is finer than about 2/sqrt(point density) = "
                            f"{2.0 / math.sqrt(density):.2f} m: detail below that is interpolated")
-        if d["product"] in ("dtm", "dsm", "chm") and "cell_size" not in d and "size" not in owner:
+        if d["product"] in ("dtm", "dsm", "chm") and "cell_size" not in d and "size" not in owner and not is_line:
             rep.note(path, "no cell_size: the grid spacing of this product is not recorded")
 
 

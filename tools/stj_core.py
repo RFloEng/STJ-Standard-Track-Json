@@ -544,6 +544,57 @@ def road_line(doc, road_id):
     return None
 
 
+# ── data sources and licences (spec §5.2) ────────────────────────────────────
+
+ATTRIBUTION_LICENCES = ("cc-by", "odbl", "odc-by", "ogl", "etalab")        # SPDX prefixes that ask for a credit line
+
+
+def data_sources(doc):
+    """Every source the file names, scans and others: [(path, source)]."""
+    prov = (doc.get("_metadata") or {}).get("provenance") or {}
+    out = [(f"_metadata.provenance.scan.sources[{i}]", s) for i, s in enumerate((prov.get("scan") or {}).get("sources", []))]
+    out += [(f"_metadata.provenance.sources[{i}]", s) for i, s in enumerate(prov.get("sources", []))]
+    return out
+
+
+def needs_attribution(licence):
+    """Whether a licence asks for a credit line (by its SPDX id) and has not got one."""
+    spdx = str((licence or {}).get("spdx", "")).lower()
+    return spdx.startswith(ATTRIBUTION_LICENCES) and not (licence or {}).get("attribution")
+
+
+def licence_summary(doc):
+    """What the licences of the sources mean for the file: {redistributable, not_redistributable, share_alike,
+    non_commercial, attribution, missing_attribution}. The lists hold source ids; `redistributable` is false when
+    any source is not redistributable. The file's own licence is not changed: this says what it should allow."""
+    out = {"redistributable": True, "not_redistributable": [], "share_alike": [], "non_commercial": [],
+           "attribution": [], "missing_attribution": []}
+    for _path, src in data_sources(doc):
+        lic = src.get("licence") or {}
+        if lic.get("redistributable") is False:
+            out["not_redistributable"].append(src["id"])
+        if lic.get("share_alike"):
+            out["share_alike"].append(src["id"])
+        if lic.get("commercial_use") is False:
+            out["non_commercial"].append(src["id"])
+        if lic.get("attribution"):
+            out["attribution"].append(lic["attribution"])
+        elif needs_attribution(lic):
+            out["missing_attribution"].append(src["id"])
+    out["redistributable"] = not out["not_redistributable"]
+    return out
+
+
+def derived_sources(derived):
+    """The source ids a `derived` block names: source, sources and void_source."""
+    ids = list(derived.get("sources") or [])
+    if "source" in derived:
+        ids.insert(0, derived["source"])
+    if "void_source" in derived:
+        ids.append(derived["void_source"])
+    return ids
+
+
 # ── joints and routes (spec §7.1) ────────────────────────────────────────────
 
 JOINT_GAP = 5.0                  # m: roads that meet further apart than this are not joined

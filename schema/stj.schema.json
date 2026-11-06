@@ -145,7 +145,25 @@
           "type": "boolean",
           "description": "False when the file was converted from content the user owns a copy of but may not share (e.g. a commercial game's track). Tools SHOULD refuse to publish or upload such files."
         },
+        "attribution": { "type": "string", "description": "The credit line the licence asks for (ODbL, CC-BY, open-government licences)." },
+        "share_alike": { "type": "boolean", "description": "True when the licence requires products made from the data to carry the same terms (ODbL, CC-BY-SA)." },
+        "commercial_use": { "type": "boolean", "description": "False when the licence forbids commercial use (CC-BY-NC, some imagery)." },
         "notes": { "type": "string" }
+      }
+    },
+    "data_source": {
+      "type": "object",
+      "description": "A source of data that is not a scan: a map extract, a cadastre, an orthophoto, a global DEM, a land-cover product (spec §5.2). Recorded, never judged.",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "kind": { "type": "string", "enum": ["osm", "cadastre", "orthophoto", "satellite", "dem", "landcover", "map", "game", "other"], "description": "osm: OpenStreetMap extract. cadastre: parcels and building footprints. orthophoto and satellite: imagery. dem: a gridded elevation model that is not a scan of this track (a global DEM). landcover: a classified land-cover product. map: another map. game: content converted from a game." },
+        "reference": { "type": "string", "description": "Where it came from: a dataset name, tile id, query or address." },
+        "retrieved": { "type": "string", "format": "date", "description": "When the data was fetched." },
+        "crs": { "type": "string", "description": "Coordinate system of the data (an EPSG code or a PROJ string)." },
+        "licence": { "$ref": "#/definitions/licence", "description": "Licence of the data. Recorded, not judged." }
       }
     },
     "scan_source": {
@@ -178,12 +196,15 @@
     },
     "scan_derived": {
       "type": "object",
-      "description": "How a product in this file was made from a scan (spec §5.2).",
-      "required": ["source", "product"],
+      "description": "How a product in this file was made from a scan or another source (spec §5.2).",
+      "required": ["product"],
+      "anyOf": [{ "required": ["source"] }, { "required": ["sources"] }],
       "additionalProperties": false,
       "patternProperties": { "^x_": {}, "^_": {} },
       "properties": {
-        "source": { "$ref": "#/definitions/id", "description": "Id of a provenance.scan.sources[] entry." },
+        "source": { "$ref": "#/definitions/id", "description": "Id of a provenance.scan.sources[] or provenance.sources[] entry." },
+        "sources": { "type": "array", "items": { "$ref": "#/definitions/id" }, "minItems": 1, "uniqueItems": true, "description": "Several sources that went into the product (instead of source)." },
+        "void_source": { "$ref": "#/definitions/id", "description": "With void_fill from_other_source: the source the gaps were filled from, such as a global DEM." },
         "product": {
           "type": "string",
           "enum": ["dtm", "dsm", "chm", "road_surface", "other"],
@@ -229,6 +250,11 @@
               "description": "The surveys this track was made from (spec §5.2). The point clouds themselves usually stay outside the track."
             }
           }
+        },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/data_source" },
+          "description": "Data that is not a scan: map extracts, cadastre, imagery, global DEMs, land cover (spec §5.2). Their licences decide what the track may do (stj_core.licence_summary)."
         },
         "converted_from": {
           "type": "array",
@@ -438,6 +464,7 @@
       "additionalProperties": false,
       "patternProperties": { "^x_": {}, "^_": {} },
       "properties": {
+        "derived": { "$ref": "#/definitions/scan_derived", "description": "How the bank table or the templates were measured: for example the cross-slope of a DEM." },
         "templates": {
           "type": "object",
           "minProperties": 1,
@@ -687,6 +714,7 @@
         },
         "cross_section": { "$ref": "#/definitions/cross_section" },
         "terrain": { "$ref": "#/definitions/terrain_rule" },
+        "derived": { "$ref": "#/definitions/scan_derived", "description": "How the points (their heights) were measured: for example the median of the ground points under the road." },
         "chainage": {
           "type": "array",
           "items": { "type": "number" },

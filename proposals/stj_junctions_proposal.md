@@ -42,9 +42,18 @@ and lap counting then work on the route's `s` unchanged. The chained line carrie
 road's profile, widths and terrain rule stay on that road. Reversing a route is reversing its step
 list and flipping each direction.
 
+## Sources and licences (gap list B5, C5, E1, E2)
+
+Adopted with the junctions, because they are small and each needs a field that does not exist:
+
+- E1: `provenance.sources[]` (`id`, `kind`, `reference`, `retrieved`, `crs`, `licence`) and the licence fields `attribution`, `share_alike`, `commercial_use`.
+- E2: not a rule but a helper: `stj_core.licence_summary` computes what the sources imply, and the validator warns on a contradiction.
+- C5: `derived.sources[]` and `derived.void_source`; `derived.source` stays for one source.
+- B5: `derived` on `centerline` and `cross_section`.
+
 ## Left open
 
 - Alternate lines inside one race (a joker lap chosen during the run).
 - Crossing geometry beyond `corner_radius` and an authored patch.
-- Sections B to E of the gap list (markings, retaining walls and portals, land cover, buildings and
-  areas, non-scan provenance): a separate backlog.
+- The rest of sections B to D of the gap list (markings, retaining walls and portals, land cover,
+  texture orientation, buildings and areas): a separate backlog.

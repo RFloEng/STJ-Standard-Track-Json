@@ -1373,7 +1373,7 @@ class ScanRecords(unittest.TestCase):
 
     def test_unknown_source(self):
         self.hm["derived"] = {"source": "nope", "product": "dtm"}
-        self.finding("ERROR", "unknown scan source 'nope'")
+        self.finding("ERROR", "unknown source 'nope'")
 
     def test_source_without_crs(self):
         del self.md["provenance"]["scan"]["sources"][0]["crs"]
@@ -2494,6 +2494,102 @@ class JointsAndRoutes(unittest.TestCase):
         self.assertEqual(tuple(round(v, 6) for v in core.joint_point(doc, "j1")), (100.0, 0.0, 0.0))
         self.assertTrue(core.roads_linked(doc, "reference", "a"))
         self.assertFalse(core.roads_linked(doc, "reference", "b"))
+
+
+
+class DataSourcesAndLicences(unittest.TestCase):
+    """provenance.sources[], several sources in derived, derived on the line, licence rules (spec §5.2)."""
+
+    def setUp(self):
+        self.doc = core.load_document(STAGE)
+        self.hm = self.doc["geometry"]["terrain"]["heightmap"]
+        self.md = self.doc["_metadata"]
+        self.md["provenance"] = {"type": "scanned", "scan": {"method": "lidar", "sources": [
+            {"id": "als", "format": "laz", "reference": "tile 0404", "crs": "EPSG:25831", "point_density": 8.0, "classified": True}]},
+            "sources": [
+                {"id": "osm", "kind": "osm", "reference": "overpass extract", "retrieved": "2026-10-01", "crs": "EPSG:4326",
+                 "licence": {"spdx": "ODbL-1.0", "attribution": "(c) OpenStreetMap contributors", "share_alike": True}},
+                {"id": "glo", "kind": "dem", "reference": "global DEM tile", "crs": "EPSG:4326",
+                 "licence": {"spdx": "CC-BY-4.0", "attribution": "Global DEM team"}}]}
+
+        for m in self.doc["geometry"].get("meshes", []):
+            m.pop("generated", None)                                    # the line changes below: the stamp would be stale
+        self.baseline = set(self.problems())                            # a temp copy of the example has findings of its own
+
+    def problems(self):
+        rep = run(self.doc)
+        return messages(rep, "ERROR") + messages(rep, "WARN")
+
+    def new_problems(self):
+        return [m for m in self.problems() if m not in self.baseline]
+
+    def level(self, level):
+        return messages(run(self.doc), level)
+
+    def finding(self, level, fragment):
+        found = self.level(level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def test_the_example_with_sources_is_clean(self):
+        self.assertEqual(self.new_problems(), [])
+
+    def test_derived_may_name_several_sources_and_a_void_source(self):
+        self.hm["derived"] = {"sources": ["als", "glo"], "product": "dtm", "cell_size": 2.0, "void_fill": "from_other_source", "void_source": "glo"}
+        self.assertEqual(self.new_problems(), [])
+
+    def test_derived_can_use_a_data_source(self):
+        self.hm["derived"] = {"source": "glo", "product": "dtm", "cell_size": 30.0}
+        self.assertEqual(self.new_problems(), [])
+
+    def test_unknown_source_in_the_list_and_the_void_source(self):
+        self.hm["derived"] = {"sources": ["als", "nope"], "product": "dtm", "cell_size": 2.0, "void_fill": "from_other_source", "void_source": "gone"}
+        self.finding("ERROR", "sources: unknown source 'nope'")
+        self.finding("ERROR", "void_source: unknown source 'gone'")
+
+    def test_derived_needs_a_source(self):
+        self.hm["derived"] = {"product": "dtm"}
+        self.assertTrue(any("heightmap.derived" in m for m in self.level("ERROR")))
+
+    def test_void_source_and_void_fill_go_together(self):
+        self.hm["derived"] = {"source": "als", "product": "dtm", "cell_size": 2.0, "void_fill": "from_other_source"}
+        self.finding("NOTE", "void_source does not say which")
+        self.hm["derived"] = {"source": "als", "product": "dtm", "cell_size": 2.0, "void_source": "glo"}
+        self.finding("NOTE", "void_fill is not from_other_source")
+
+    def test_ids_are_shared_between_scans_and_data_sources(self):
+        self.md["provenance"]["sources"][0]["id"] = "als"
+        self.finding("ERROR", "is also a scan source")
+
+    def test_derived_on_the_centerline_and_the_cross_section(self):
+        cl = self.doc["reference"]["centerline"]
+        cl["derived"] = {"source": "als", "product": "road_surface", "classes": [11], "method": "median of ground points under the road"}
+        cl.setdefault("cross_section", {})["derived"] = {"source": "glo", "product": "dtm", "method": "cross-slope of the DEM"}
+        self.assertEqual(self.new_problems(), [])
+        self.assertEqual([m for m in self.level("NOTE") if "cell_size" in m and "centerline" in m], [])
+        cl["derived"]["source"] = "nope"
+        self.finding("ERROR", "reference.centerline.derived.source: unknown source 'nope'")
+
+    def test_a_source_that_is_not_redistributable_contradicts_a_redistributable_file(self):
+        self.md["licence"] = {"spdx": "CC-BY-4.0", "redistributable": True}
+        self.md["provenance"]["sources"][1]["licence"]["redistributable"] = False
+        self.finding("WARN", "true, but source 'glo' is not redistributable")
+        self.assertFalse(core.licence_summary(self.doc)["redistributable"])
+
+    def test_the_summary_collects_attribution_and_share_alike(self):
+        summary = core.licence_summary(self.doc)
+        self.assertTrue(summary["redistributable"])
+        self.assertEqual(summary["share_alike"], ["osm"])
+        self.assertEqual(summary["attribution"], ["(c) OpenStreetMap contributors", "Global DEM team"])
+
+    def test_share_alike_and_non_commercial_are_notes(self):
+        self.md["provenance"]["sources"][1]["licence"]["commercial_use"] = False
+        self.finding("NOTE", "source 'osm' is share-alike")
+        self.finding("NOTE", "source 'glo' forbids commercial use")
+
+    def test_a_licence_that_asks_for_a_credit_line_needs_one(self):
+        del self.md["provenance"]["sources"][1]["licence"]["attribution"]
+        self.finding("WARN", "source 'glo' has a licence that asks for attribution")
+        self.assertEqual(core.licence_summary(self.doc)["missing_attribution"], ["glo"])
 
 
 if __name__ == "__main__":
