@@ -40,6 +40,7 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - `prototypes[].wind` (§8.2); `water.bodies[].physical: false` (§7.5); `meshes[].reflective` and `baked` (§7.2)
   - validator checks for all of them; `stj_core.ReferenceLine` takes per-segment tangents
   - open: asset manifest with licences, and LOD ranges for prototypes
+- **Layouts: ground data stays on the base line** (spec §3.5): surface bands, CRG placements, structures, junctions and the road profile and terrain rule of the reference keep their base-line `s` and `t` in every layout document, and `layout_document(..., ground="layout")` or `stj_core.reverse_ground` maps the profile, structures and junctions when a tool needs layout coordinates (the validator does). `reverse_reference` now reverses the line only. Rule 3 no longer says edges stay on the base line: a layout lists its own.
 - **Closed lines** (fix; spec §7.1): the sections of the road profile and of the terrain rule, and structures, can cross `s = 0` on a lapped line with `s_end < s_start`, as surface bands and edges already could (they were rejected before); an OpenDRIVE-only reference is a loop when `track_info.type` is lapped and `reference.length` is given (`stj_core.reference_lap`); the profile's `bank` table wraps across `s = 0`; overlaps are found across `s = 0`. `stj_core` gains `s_in_range`, `s_since`, `s_segments` and `s_overlap`, and the profile functions take the lap length.
 - **Keeping the ground blend** (`proposals/stj_visual_materials_proposal.md`; additive): `ground.materials[].fallback {uri, texcoord, tool, inputs_sha256}` marks a baked image as a cache of the recipe, with a stale check (`stj_core.rule_hash(doc, "ground.materials[<i>]")`, printed by `ground_bake.py`); `tools/ground_materialx.py` writes the recipe as a MaterialX network (height, linear and mask blends, macro maps), checked against the reference blend by `tests/mtlx_eval.py`; the gravel stage's ground material shows its stamped fallback (§8.7).
 - **Blender probe for the v0.3 conventions** (`tools/blender/blend_probe_v03.py`, `docs/blender_mapping.md` §3): the road profile modifier agrees with `stj_core.profile_point` when the profile is drawn as `(t, −dz)`; material inputs and PointInstancers must be written with `pxr`; a `tint` primvar may have four components (the last is ignored).
@@ -63,7 +64,7 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - `roads[]` and `junctions[]`: other roads and where they meet; `side_roads[].junction`
   - `instances[].source` (authored or generated) and `scatter[].exclude_zones` (§8.2)
   - `meshes[].generated`: a mesh as a cache of a rule, with `stj_core.rule_hash` (§7.2)
-  - reversed layouts map the profile, bank, sections and junctions
+  - the profile, bank, sections and junctions are ground data: in a reversed layout they keep their base-line coordinates (see the layout rule below)
   - validator checks; `stj_core` profile, terrain-rule and hash functions; `tools/ribbon_usd.py` follows the profile
   - the gravel stage gains a crowned profile, a flat deck, a banked corner and a service road
 - **Scan sources** (`proposals/stj_lidar_proposal.md`; additive):

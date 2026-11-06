@@ -2494,7 +2494,7 @@ def check_layouts(ctx):
         own_line = "reference" in lay or lay.get("direction") == "reverse"
         if own_line and "timing" not in lay:
             rep.note(p, "own reference line but no timing: nothing timed in this layout")
-        ldoc = core.layout_document(doc, lay, merge_edges=False)
+        ldoc = core.layout_document(doc, lay, merge_edges=False, ground="layout")
         lrep = PrefixReport(rep, f"{p}({lay['id']})")
         lctx = Ctx(ldoc, ctx.base_dir, lrep)
         lctx.mesh_names = ctx.mesh_names

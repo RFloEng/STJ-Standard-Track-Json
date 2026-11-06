@@ -546,8 +546,71 @@ def road_line(doc, road_id):
 
 # ── layouts ──────────────────────────────────────────────────────────────────
 
+def reverse_profile(cl, length):
+    """Map a centerline dict's road profile and terrain rule onto the same line driven backwards (in place).
+
+    s' = L - s and t' = -t: the sections and the bank table are reversed (the bank changes sign, because left and
+    right swap), and each template is mirrored, its strip surfaces staying on the same strips."""
+    xs = cl.get("cross_section")
+    if xs:
+        if "bank" in xs:           # left and right swap, so the tilt changes sign
+            xs["bank"] = [[length - s, -a] for s, a in reversed(xs["bank"])]
+        if "sections" in xs:
+            xs["sections"] = [{**sec, "s_start": length - sec["s_end"], "s_end": length - sec["s_start"]}
+                              for sec in reversed(xs["sections"])]
+        for tpl in (xs.get("templates") or {}).values():
+            if not isinstance(tpl, dict) or "points" not in tpl:
+                continue
+            old = tpl["points"]
+            n = len(old)
+            new = []
+            for k in range(n):
+                p = old[n - 1 - k]
+                q = {**p, "t": -p["t"]}
+                q.pop("surface", None)
+                # the strip between two points keeps its surface, now carried by the other end
+                if k > 0 and "surface" in old[n - k]:
+                    q["surface"] = old[n - k]["surface"]
+                new.append(q)
+            tpl["points"] = new
+    rule = cl.get("terrain")
+    if rule and rule.get("sections"):
+        rule["sections"] = [{**sec, "s_start": length - sec["s_end"], "s_end": length - sec["s_start"]}
+                            for sec in reversed(rule["sections"])]
+
+
+def reverse_ground(doc, length=None):
+    """The ground data of a document addressed in the coordinates of the reference line driven backwards.
+
+    Ground data (spec §3.5) keeps its base-line s and t in every layout. A tool that needs it in the coordinates of a
+    reversed layout calls this: the road profile and terrain rule of the reference line, the structures of the
+    reference line and the junction points on it are mapped with s' = L - s and t' = -t. Returns a copy; `length` is
+    the lap or line length (default: that of the reference line)."""
+    out = copy.deepcopy(doc)
+    if length is None:
+        line = reference_line(doc)
+        length = line.length if line is not None else (doc.get("reference") or {}).get("length")
+    if not length:
+        return out
+    cl = (out.get("reference") or {}).get("centerline")
+    if cl:
+        reverse_profile(cl, length)
+    for st in out.get("structures", []):
+        if st.get("road", "reference") == "reference":
+            st["s_start"], st["s_end"] = length - st["s_end"], length - st["s_start"]
+    for j in out.get("junctions", []):
+        for r in j["roads"]:
+            if r["road"] == "reference":
+                r["s"] = length - r["s"]
+    return out
+
+
 def reverse_reference(ref):
-    """The same reference driven backwards: s' = L - s (mod L on a closed line), t' = -t."""
+    """The same reference line driven backwards: s' = L - s (mod L on a closed line), t' = -t.
+
+    The line itself is reversed: points, chainage, tangents, widths and an OpenDRIVE route. Ground data kept
+    inside the reference (the road profile and the terrain rule) is left as it is, in base-line coordinates:
+    see reverse_ground and spec §3.5."""
     out = copy.deepcopy(ref or {})
     cl = out.get("centerline")
     if cl:
@@ -571,32 +634,6 @@ def reverse_reference(ref):
             cl["width"] = {"left": cl["width"]["right"], "right": cl["width"]["left"]}
         if "width_profile" in cl:
             cl["width_profile"] = [[length - s, right, left] for s, left, right in reversed(cl["width_profile"])]
-        xs = cl.get("cross_section")
-        if xs:
-            if "bank" in xs:           # left and right swap, so the tilt changes sign
-                xs["bank"] = [[length - s, -a] for s, a in reversed(xs["bank"])]
-            if "sections" in xs:
-                xs["sections"] = [{**sec, "s_start": length - sec["s_end"], "s_end": length - sec["s_start"]}
-                                  for sec in reversed(xs["sections"])]
-            for tpl in (xs.get("templates") or {}).values():
-                if not isinstance(tpl, dict) or "points" not in tpl:
-                    continue
-                old = tpl["points"]
-                n = len(old)
-                new = []
-                for k in range(n):
-                    p = old[n - 1 - k]
-                    q = {**p, "t": -p["t"]}
-                    q.pop("surface", None)
-                    # the strip between two points keeps its surface, now carried by the other end
-                    if k > 0 and "surface" in old[n - k]:
-                        q["surface"] = old[n - k]["surface"]
-                    new.append(q)
-                tpl["points"] = new
-        rule = cl.get("terrain")
-        if rule and rule.get("sections"):
-            rule["sections"] = [{**sec, "s_start": length - sec["s_end"], "s_end": length - sec["s_start"]}
-                                for sec in reversed(rule["sections"])]
     od = out.get("opendrive")
     if od and od.get("route"):
         flip = {"forward": "backward", "backward": "forward"}
@@ -604,14 +641,17 @@ def reverse_reference(ref):
     return out
 
 
-def layout_document(doc, layout, merge_edges=True):
+def layout_document(doc, layout, merge_edges=True, ground="base"):
     """The document as seen when `layout` (a layouts[] entry or its id) is selected (spec §3.5).
 
     reference, timing and race are replaced wholesale by the layout's. When the layout has its own
     reference line (or reverses the base line) nothing s-based is inherited from the top level except
-    surface bands and CRG placements, which always stay on the base line. Layout edges are added to
-    the top-level edges when the line is unchanged (merge_edges), otherwise they replace them.
-    """
+    ground data, which always stays on the base line: surface bands, CRG placements, the road profile and
+    terrain rule, structures and junctions keep their base-line s and t. Layout edges are added to the
+    top-level edges when the line is unchanged (merge_edges), otherwise they replace them.
+
+    ground="layout" maps the ground data that has a reversing rule (reverse_ground) into the coordinates of a
+    reversed layout, for tools that pair it with the layout's timing and race data (the validator does)."""
     if isinstance(layout, str):
         layout = next(l for l in doc.get("layouts", []) if l.get("id") == layout)
     out = {k: copy.deepcopy(v) for k, v in doc.items() if k not in ("layouts", "variants")}
@@ -620,11 +660,15 @@ def layout_document(doc, layout, merge_edges=True):
         out["reference"] = copy.deepcopy(layout["reference"])
     elif layout.get("direction") == "reverse":
         out["reference"] = reverse_reference(doc.get("reference"))
-        line = reference_line(doc)
-        for j in out.get("junctions", []):
-            for r in j["roads"]:
-                if r["road"] == "reference" and line is not None:
-                    r["s"] = line.length - r["s"]
+        if ground == "layout":
+            mapped = reverse_ground(doc)
+            for key in ("structures", "junctions"):
+                if key in mapped:
+                    out[key] = mapped[key]
+            mcl = (mapped.get("reference") or {}).get("centerline") or {}
+            for key in ("cross_section", "terrain"):
+                if key in mcl and out["reference"].get("centerline") is not None:
+                    out["reference"]["centerline"][key] = mcl[key]
     for key in ("timing", "race"):
         if key in layout:
             out[key] = copy.deepcopy(layout[key])

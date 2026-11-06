@@ -1500,7 +1500,7 @@ class RoadProfile(unittest.TestCase):
     # -- reversing --
     def test_reverse_flips_bank_sections_and_templates(self):
         doc = flat_line_doc(cross_section=self.xs(bank=[[10, 0.05], [40, 0.0]]))
-        rev = core.reverse_reference(doc["reference"])["centerline"]["cross_section"]
+        rev = core.reverse_ground(doc)["reference"]["centerline"]["cross_section"]
         self.assertEqual(rev["bank"], [[60.0, 0.0], [90.0, -0.05]])      # s' = L - s, and left becomes right
         self.assertEqual([(x["s_start"], x["s_end"], x["template"]) for x in rev["sections"]],
                          [(0.0, 50.0, "flat"), (50.0, 100.0, "crowned")])
@@ -1510,23 +1510,25 @@ class RoadProfile(unittest.TestCase):
 
     def test_reverse_twice_is_the_original(self):
         doc = flat_line_doc(cross_section=self.xs(bank=[[10, 0.05], [40, 0.0]]))
-        twice = core.reverse_reference(core.reverse_reference(doc["reference"]))
-        self.assertEqual(twice["centerline"]["cross_section"], doc["reference"]["centerline"]["cross_section"])
+        twice = core.reverse_ground(core.reverse_ground(doc))
+        self.assertEqual(twice["reference"]["centerline"]["cross_section"], doc["reference"]["centerline"]["cross_section"])
 
     def test_reverse_keeps_the_strip_surfaces_on_the_right_strips(self):
         tpl = {"points": [{"t": -4, "dz": 0}, {"t": 0, "dz": 0, "surface": "grass"}, {"t": 4, "dz": 0, "surface": "gravel"}]}
         doc = flat_line_doc(cross_section={"templates": {"a": tpl}, "sections": [{"s_start": 0, "s_end": 100, "template": "a"}]})
-        rev = core.reverse_reference(doc["reference"])
+        rev = core.reverse_ground(doc)["reference"]
         before = core.strip_surface(doc["reference"]["centerline"], 10, 2.0)       # right of the centre: gravel
         after = core.strip_surface(rev["centerline"], 90, -2.0)                    # the same strip, driven the other way
         self.assertEqual((before, after), ("gravel", "gravel"))
 
-    def test_reverse_layout_moves_junctions_on_the_reference(self):
+    def test_reverse_layout_keeps_junctions_on_the_base_line_unless_asked(self):
         doc = flat_line_doc()
         doc["junctions"] = [{"id": "j", "roads": [{"road": "reference", "s": 30.0}, {"road": "other", "s": 0.0}]}]
         doc["layouts"] = [{"id": "back", "direction": "reverse"}]
-        out = core.layout_document(doc, "back")
-        self.assertAlmostEqual(out["junctions"][0]["roads"][0]["s"], 70.0)
+        self.assertEqual(core.layout_document(doc, "back")["junctions"][0]["roads"][0]["s"], 30.0)
+        mapped = core.layout_document(doc, "back", ground="layout")["junctions"][0]["roads"]
+        self.assertAlmostEqual(mapped[0]["s"], 70.0)
+        self.assertEqual(mapped[1]["s"], 0.0)                              # a road other than the reference is not reversed
 
     # -- ribbon --
     def test_ribbon_follows_banking_and_adds_columns(self):
@@ -2185,10 +2187,10 @@ class ClosedLoops(unittest.TestCase):
     def test_reversing_keeps_a_wrapping_section_and_flips_the_bank(self):
         L = self.L
         ref = self.doc(sections=[{"s_start": L - 100, "s_end": 100, "template": "a"}], bank=[[20, 0.0], [L - 20, 0.0], [L - 5, 0.04]])["reference"]
-        rev = core.reverse_reference(ref)["centerline"]["cross_section"]
+        rev = core.reverse_ground({"reference": ref}, L)["reference"]["centerline"]["cross_section"]
         self.assertEqual((round(rev["sections"][0]["s_start"], 6), round(rev["sections"][0]["s_end"], 6)), (round(L - 100, 6), 100.0))
         self.assertEqual(rev["bank"][0][1], -0.04)
-        twice = core.reverse_reference({"centerline": {**ref["centerline"], "cross_section": rev}})["centerline"]["cross_section"]
+        twice = core.reverse_ground({"reference": {"centerline": {**ref["centerline"], "cross_section": rev}}}, L)["reference"]["centerline"]["cross_section"]
         for got, want in zip(twice["bank"], ref["centerline"]["cross_section"]["bank"]):
             self.assertAlmostEqual(got[0], want[0], places=6)
             self.assertAlmostEqual(got[1], want[1], places=9)
@@ -2286,6 +2288,61 @@ class ClosedLoops(unittest.TestCase):
     def test_the_bank_beyond_the_lap_is_an_error(self):
         d = self.doc(bank=[[0, 0.0], [self.L + 50, 0.02]])
         self.finding(d, "ERROR", "is beyond the line")
+
+
+
+class GroundStaysOnTheBaseLine(unittest.TestCase):
+    """Ground data keeps its base-line s and t in every layout; reverse_ground maps it on request (spec §3.5)."""
+
+    def setUp(self):
+        d = core.load_document(STAGE)
+        self.doc = d
+        self.L = core.reference_line(d).length
+
+    def test_a_reversed_layout_document_keeps_the_ground_as_it_is(self):
+        out = core.layout_document(self.doc, "ss1_reverse")
+        self.assertEqual(out["reference"]["centerline"]["cross_section"], self.doc["reference"]["centerline"]["cross_section"])
+        self.assertEqual(out["structures"], self.doc["structures"])
+        self.assertEqual(out["junctions"], self.doc["junctions"])
+        self.assertEqual(out["surfaces"]["bands"], self.doc["surfaces"]["bands"])
+
+    def test_only_the_line_itself_is_reversed(self):
+        out = core.layout_document(self.doc, "ss1_reverse")
+        base_pts = self.doc["reference"]["centerline"]["points"]
+        self.assertEqual(out["reference"]["centerline"]["points"], base_pts[::-1])
+
+    def test_reverse_reference_leaves_the_profile_alone(self):
+        rev = core.reverse_reference(self.doc["reference"])
+        self.assertEqual(rev["centerline"]["cross_section"], self.doc["reference"]["centerline"]["cross_section"])
+
+    def test_reverse_ground_maps_structures_and_junctions(self):
+        out = core.reverse_ground(self.doc)
+        st, base = out["structures"][0], self.doc["structures"][0]
+        self.assertAlmostEqual(st["s_start"], self.L - base["s_end"])
+        self.assertAlmostEqual(st["s_end"], self.L - base["s_start"])
+        ref_j = next(r for r in out["junctions"][0]["roads"] if r["road"] == "reference")
+        base_j = next(r for r in self.doc["junctions"][0]["roads"] if r["road"] == "reference")
+        self.assertAlmostEqual(ref_j["s"], self.L - base_j["s"])
+        self.assertEqual(self.doc["structures"][0]["s_start"], base["s_start"], "the input is not changed")
+
+    def test_ground_in_layout_coordinates_pairs_with_the_layouts_pace_notes(self):
+        doc = core.layout_document(self.doc, "ss1_reverse", ground="layout")
+        st = doc["structures"][0]
+        self.assertAlmostEqual(st["s_start"], self.L - self.doc["structures"][0]["s_end"])
+        mid = 0.5 * (st["s_start"] + st["s_end"])
+        self.assertEqual(core.structure_at(doc, mid)["id"], "viaduct_1")
+
+    def test_the_example_validates_with_its_reverse_layout(self):
+        rep = validate.validate(STAGE)
+        self.assertEqual(messages(rep, "ERROR") + messages(rep, "WARN"), [])
+        self.assertFalse([m for m in messages(rep, "NOTE") if "no structure there" in m])
+
+    def test_a_wrapping_structure_maps_to_a_wrapping_range(self):
+        L = 1000.0
+        doc = {"reference": {"length": L}, "track_info": {"type": "circuit"},
+               "structures": [{"id": "t", "kind": "tunnel", "s_start": 970.0, "s_end": 30.0, "clearance": 5}]}
+        out = core.reverse_ground(doc, L)["structures"][0]
+        self.assertEqual((out["s_start"], out["s_end"]), (970.0, 30.0))      # the same stretch, driven the other way
 
 
 if __name__ == "__main__":
