@@ -1,6 +1,6 @@
 # STJ proposal: visual materials, ground masks, decals and instancing
 
-Status: **accepted** 2026-11-05 with the recommended answers of §6. **Implemented** 2026-11-05 in v0.3 (draft): all of it. §3.1 material profile (spec §7.7), §3.2 ground, §3.3 `decal` role (§7.2), §3.4 `materials[]` (§11.1), §3.5 prototype LODs and `cull_distance` (§8.2), and the editorial cleanup of §4. Instance primvars (`instance_set.usd.primvars[]`) were not added.
+Status: **accepted** 2026-11-05 with the recommended answers of §6. **Implemented** 2026-11-05 in v0.3 (draft): all of it. §3.1 material profile (spec §7.7), §3.2 ground, §3.3 `decal` role (§7.2), §3.4 `materials[]` (§11.1), §3.5 prototype LODs and `cull_distance` (§8.2), and the editorial cleanup of §4. The instance primvars (`instance_set.usd.primvars[]`) were decided on 2026-11-06 and added: `{name, role}` with the roles `tint`, `age`, `scale_jitter`, `phase`, `other`.
 
 Source: an audit of the Dirt2 Stage Importer 0.11.0 STJ export against what DiRT Rally 2.0 stores, what the Blender scene shows, and what OpenUSD can carry (a real stage, Australia `australia_rally_01_route_5`). This is a condensed record: the original text was written in the `blender_acr_exporter` repository and was not available when this copy was made, so it restates each section rather than quoting it.
 
@@ -13,6 +13,9 @@ Source: an audit of the Dirt2 Stage Importer 0.11.0 STJ export against what DiRT
 | Q3 | Signal-driven materials are a **top-level `materials[]`** `{material, input, by}`. |
 | Q4 | Prototype LODs **reuse the mesh `lod` shape** (`lods[] {prim, level, switch_distance}` plus `cull_distance`), shared with item 7 of `stj_rbr_gaps_proposal.md`. |
 | Decals | A **mesh role `decal`** first. Spline-projected paint (editor-style decal roads) is a separate later proposal. |
+| Instance primvars (§3.5) | **Yes (2026-11-06):** `usd.primvars[] {name, role}` on the instance set, so engines can map tint, age, scale jitter and phase to their per-instance data. |
+| Road paint (decal roads) | **A separate proposal, later (2026-11-06),** when a converter needs spline-projected paint. The `decal` mesh role covers paint as meshes meanwhile. |
+| Trigger volumes | **Stay in `x_<engine>` (2026-11-06).** The portable cases are restricted zones, marshal sectors and track-limit rules; script triggers are game logic, which the spec excludes. |
 | Editorial (§4) | Clean up the leftover glTF and `.stj.json` wording in the spec **now**. |
 
 ## 1. The gap

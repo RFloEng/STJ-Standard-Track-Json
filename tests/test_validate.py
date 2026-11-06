@@ -1961,5 +1961,58 @@ class Structures(unittest.TestCase):
         self.assertEqual((flat["s_start"], flat["s_end"]), (st["s_start"], st["s_end"]))
 
 
+
+class InstanceVariation(unittest.TestCase):
+    """Per-instance primvars on a PointInstancer (spec §8.2)."""
+
+    def setUp(self):
+        from pxr import Sdf, Usd, UsdGeom, Vt
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        st = Usd.Stage.CreateNew(str(self.dir / "forest.usda"))
+        UsdGeom.SetStageUpAxis(st, UsdGeom.Tokens.z)
+        root = UsdGeom.Xform.Define(st, "/f")
+        st.SetDefaultPrim(root.GetPrim())
+        inst = UsdGeom.PointInstancer.Define(st, "/f/trees")
+        inst.CreatePositionsAttr(Vt.Vec3fArray([(0, 0, 0), (5, 0, 0)]))
+        api = UsdGeom.PrimvarsAPI(inst.GetPrim())
+        api.CreatePrimvar("stj_tint", Sdf.ValueTypeNames.Color3fArray, UsdGeom.Tokens.vertex).Set(Vt.Vec3fArray([(1, 1, 1), (0.8, 0.9, 0.7)]))
+        api.CreatePrimvar("stj_age", Sdf.ValueTypeNames.FloatArray, UsdGeom.Tokens.vertex).Set(Vt.FloatArray([0.1, 0.9]))
+        st.GetRootLayer().Save()
+        self.doc = {"_metadata": {"specification": "STJ", "version": "0.3", "coordinate_system": "OpenDRIVE", "units": "SI"},
+                    "geometry": {"meshes": [{"id": "forest", "uri": "forest.usda", "roles": ["visual"]}]},
+                    "scenery": {"prototypes": {"pine": {"class": "tree"}},
+                                "instances": [{"prototype": "pine", "usd": {"mesh_ref": "forest", "prim": "/f/trees", "primvars": []}}]}}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def primvars(self, *pvs):
+        self.doc["scenery"]["instances"][0]["usd"]["primvars"] = list(pvs)
+        return run(self.doc, self.dir)
+
+    def test_listed_primvars_that_exist_are_fine(self):
+        rep = self.primvars({"name": "stj_tint", "role": "tint"}, {"name": "stj_age", "role": "age"})
+        self.assertEqual([m for m in messages(rep, "ERROR") + messages(rep, "WARN") if "primvar" in m], [])
+
+    def test_a_missing_primvar(self):
+        rep = self.primvars({"name": "stj_phase", "role": "phase"})
+        self.assertTrue(any("is not on /f/trees" in m for m in messages(rep, "ERROR")))
+
+    def test_roles_need_the_right_components(self):
+        rep = self.primvars({"name": "stj_age", "role": "tint"}, {"name": "stj_tint", "role": "age"})
+        warns = " ".join(messages(rep, "WARN"))
+        self.assertIn("the role 'tint' needs 3 components", warns)
+        self.assertIn("the role 'age' is one number", warns)
+
+    def test_a_primvar_listed_twice(self):
+        rep = self.primvars({"name": "stj_age", "role": "age"}, {"name": "stj_age", "role": "other"})
+        self.assertTrue(any("listed twice" in m for m in messages(rep, "ERROR")))
+
+    def test_the_name_needs_the_stj_prefix(self):
+        rep = self.primvars({"name": "age", "role": "age"})
+        self.assertTrue(any("age" in m for m in messages(rep, "ERROR")))
+
+
 if __name__ == "__main__":
     unittest.main()

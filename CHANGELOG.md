@@ -40,6 +40,7 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - `prototypes[].wind` (§8.2); `water.bodies[].physical: false` (§7.5); `meshes[].reflective` and `baked` (§7.2)
   - validator checks for all of them; `stj_core.ReferenceLine` takes per-segment tangents
   - open: asset manifest with licences, and LOD ranges for prototypes
+- **Instance variation** (`proposals/stj_visual_materials_proposal.md` §3.5; additive): `scenery.instances[].usd.primvars[] {name, role}` names the per-instance primvars of a PointInstancer (tint, age, scale_jitter, phase) (§8.2).
 - **Structures** (`proposals/stj_structures_proposal.md`; additive):
   - `structures[]`: bridges, tunnels, underpasses and galleries by `s` range, with `clearance`, an optional mesh and `carried_by` (§7.1)
   - the kind implies rain shelter, a reverb zone and a free terrain rule as data (`stj_core.structure_defaults`); explicit entries win

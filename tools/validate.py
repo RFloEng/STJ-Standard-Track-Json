@@ -872,6 +872,8 @@ def check_scenery(ctx):
                 rep.error(f"{p}.usd.mesh_ref", f"unknown mesh '{g['mesh_ref']}'")
             elif g["mesh_ref"] in ctx.mesh_names and g["prim"] not in ctx.mesh_names[g["mesh_ref"]][1]:
                 rep.error(f"{p}.usd.prim", f"prim '{g['prim']}' not in {ctx.meshes[g['mesh_ref']]['uri']}")
+            elif g.get("primvars") and g["mesh_ref"] in ctx.mesh_names:
+                check_instance_primvars(ctx, f"{p}.usd", g)
     ids = [x["id"] for x in sc.get("scatter", [])]
     for dup in {x for x in ids if ids.count(x) > 1}:
         rep.error("scenery.scatter", f"duplicate scatter id '{dup}'")
@@ -2397,6 +2399,28 @@ def check_structures(ctx):
                 rep.warn(f"{p}.structure", f"a {n['kind']} note, but '{st['id']}' is a {st['kind']}")
         elif n["kind"] in ("bridge", "tunnel") and structs and core.structure_at(doc, n["s"], slack=30.0) is None:
             rep.note(p, f"a {n['kind']} note at s = {n['s']:g} m with no structure there")
+
+
+def check_instance_primvars(ctx, p, g):
+    """Per-instance variation primvars named on a PointInstancer (spec §8.2)."""
+    rep = ctx.rep
+    names = [pv["name"] for pv in g["primvars"]]
+    for dup in sorted({n for n in names if names.count(n) > 1}):
+        rep.error(f"{p}.primvars", f"primvar '{dup}' is listed twice")
+    try:
+        types = core.usd_primvar_types(_usd_stage(ctx, g["mesh_ref"]), g["prim"])
+    except Exception:    # noqa: BLE001
+        return
+    for j, pv in enumerate(g["primvars"]):
+        pp = f"{p}.primvars[{j}]"
+        if pv["name"] not in types:
+            rep.error(f"{pp}.name", f"primvar '{pv['name']}' is not on {g['prim']}")
+            continue
+        kind = types[pv["name"]]
+        if pv["role"] == "tint" and kind not in ("color3f", "float3", "color3d", "double3"):
+            rep.warn(pp, f"the role 'tint' needs 3 components, but '{pv['name']}' is {kind}")
+        elif pv["role"] in ("age", "scale_jitter", "phase") and kind not in ("float", "double"):
+            rep.warn(pp, f"the role '{pv['role']}' is one number, but '{pv['name']}' is {kind}")
 
 
 def _overlap_s(a, b):

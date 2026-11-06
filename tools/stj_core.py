@@ -1177,6 +1177,15 @@ def usd_material_report(material_prim):
     return report
 
 
+def usd_primvar_types(stage, prim_path):
+    """{primvar name: scalar type name} of a prim, such as {'stj_tint': 'color3f', 'stj_age': 'float'}."""
+    from pxr import UsdGeom
+    prim = stage.GetPrimAtPath(prim_path)
+    if not prim or not prim.IsValid():
+        return {}
+    return {pv.GetPrimvarName(): str(pv.GetTypeName().scalarType) for pv in UsdGeom.PrimvarsAPI(prim).GetPrimvars()}
+
+
 def usd_material_inputs(stage, name):
     """[set of interface input names] for each UsdShade material called `name` in a stage."""
     from pxr import UsdShade

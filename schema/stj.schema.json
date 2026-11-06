@@ -2444,7 +2444,25 @@
           "patternProperties": { "^_": {} },
           "properties": {
             "mesh_ref": { "$ref": "#/definitions/id" },
-            "prim": { "type": "string", "pattern": "^/", "description": "USD prim path in the mesh file." }
+            "prim": { "type": "string", "pattern": "^/", "description": "USD prim path in the mesh file." },
+            "primvars": {
+              "type": "array",
+              "description": "Per-instance primvars on the PointInstancer that carry variation, so engines can map them to their per-instance data (spec §8.2).",
+              "items": {
+                "type": "object",
+                "required": ["name", "role"],
+                "additionalProperties": false,
+                "patternProperties": { "^_": {} },
+                "properties": {
+                  "name": { "type": "string", "pattern": "^stj_", "description": "Primvar name on the PointInstancer." },
+                  "role": {
+                    "type": "string",
+                    "enum": ["tint", "age", "scale_jitter", "phase", "other"],
+                    "description": "tint: a colour multiplier (3 components). age: 0 young to 1 old. scale_jitter: a size variation around 1. phase: a phase in turns (wind sway, animation offset). Floats unless tint."
+                  }
+                }
+              }
+            }
           },
           "description": "A PointInstancer (or a prim with native instances) in a USD mesh file."
         }
