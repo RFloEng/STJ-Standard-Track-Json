@@ -810,6 +810,8 @@ def coll_de_prova():
                                      "cross_section": cross_section,
                                      "_note": "Stored distance per point, as a driveline or a survey keeps it (here equal to the geometry)."}},
         "roads": [service],
+        "structures": [{"id": "viaduct_1", "kind": "bridge", "name": "Pont del Diable", "s_start": 1500.0, "s_end": 1560.0,
+                        "_note": "The flat deck of the cross-section; the terrain is free here, and a bridge keeps no rain off."}],
         "junctions": [{"id": "service_junction", "roads": [{"road": "reference", "s": 1310.0}, {"road": "service", "s": 0.0}]}],
         "geometry": {"meshes": [{"id": "stage_collision", "uri": "meshes/coll_de_prova_collision.usda", "roles": ["collision"]},
                                 {"id": "stage_ground", "uri": "meshes/coll_de_prova_ground.usda", "roles": ["visual", "collision"],

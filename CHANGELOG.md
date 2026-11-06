@@ -40,6 +40,11 @@ Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserv
   - `prototypes[].wind` (§8.2); `water.bodies[].physical: false` (§7.5); `meshes[].reflective` and `baked` (§7.2)
   - validator checks for all of them; `stj_core.ReferenceLine` takes per-segment tangents
   - open: asset manifest with licences, and LOD ranges for prototypes
+- **Structures** (`proposals/stj_structures_proposal.md`; additive):
+  - `structures[]`: bridges, tunnels, underpasses and galleries by `s` range, with `clearance`, an optional mesh and `carried_by` (§7.1)
+  - the kind implies rain shelter, a reverb zone and a free terrain rule as data (`stj_core.structure_defaults`); explicit entries win
+  - `pacenotes.notes[].structure`; `stj_core.structure_at`
+  - the gravel stage's flat deck is the bridge `viaduct_1`
 - **Materials, decals, assets and prototype LODs** (`proposals/stj_visual_materials_proposal.md`, `proposals/stj_rbr_gaps_proposal.md`; additive):
   - material profile for visual and decal meshes: a UsdPreviewSurface fallback and two-sided cards are errors, maps and colour spaces are warnings, a NOTE lists the maps each material carries (§7.7)
   - mesh role `decal` with `decal {on, opacity_primvar, depth_offset}` (§7.2)

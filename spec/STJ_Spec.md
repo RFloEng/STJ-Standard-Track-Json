@@ -485,6 +485,32 @@ STJ fixes simple, first-order **reference laws**. An engine may run its own, bet
 - `carve`: the terrain is cut or filled to meet the road. Across the drivable width it takes the road surface, and over `shoulder_blend` metres beyond the edge it returns to its natural height, linearly or by smoothstep (`falloff`, default `smooth`). `stj_core.terrain_with_road` is the reference, and a converter to a mesh-only engine bakes it.
 - `sections[] {s_start, s_end, mode, shoulder_blend, falloff}` override over `s` ranges: a bridge or tunnel stays `free`, a cutting carves. Only the road knows where those are, which is why the rule is on the road and not on the terrain.
 
+**Structures (`structures[]`).** A stretch of road that is a bridge, a tunnel, an underpass or a gallery used to be implied by several unrelated blocks: rain shelter, reverb zones, probes, pace notes, the terrain rule. `structures[] {id, kind, road, s_start, s_end, clearance, mesh, carried_by, name}` states it once (`proposals/stj_structures_proposal.md`):
+
+```json
+"structures": [
+  { "id": "viaduct_1", "kind": "bridge", "s_start": 1500, "s_end": 1560, "name": "Pont del Diable" },
+  { "id": "tunnel_1", "kind": "tunnel", "s_start": 820, "s_end": 960, "clearance": 5.2,
+    "mesh": { "mesh_ref": "stage_visual", "prim": "/track/structures/tunnel_1" } },
+  { "id": "under_1", "kind": "underpass", "road": "service", "s_start": 40, "s_end": 52, "carried_by": "viaduct_1" }
+]
+```
+
+- `kind` is `bridge` (the road crosses over something; an overpass is a bridge on the other road), `tunnel` (enclosed), `underpass` (the road passes under something), `gallery` (covered, open on one side) or `other`. `road` is `reference` (the default) or a `roads[]` id. `clearance` is the free height above the road in metres. `mesh {mesh_ref, prim}` names the deck, walls or ceiling in a USD file, so a tool can tell structure from road. `carried_by` names the structure an underpass passes under.
+- **Defaults as data.** The kind implies defaults for blocks that already exist, and an explicit entry in the block concerned always wins. `stj_core.structure_defaults(doc)` returns them as data and a converter applies them or ignores them:
+
+| Kind | Rain shelter on the road | Reverb zone | Terrain rule |
+|---|---|---|---|
+| `bridge` | none (the deck is open; a bridge shelters the road *under* it, which is an `underpass` there) | none (open air) | `free` over the span |
+| `tunnel` | 1 | `tunnel` | `free` over the span |
+| `underpass` | 1 | `underpass` | `free` over the span |
+| `gallery` | 0.7 | `underpass` | `free` over the span |
+
+  An entry is left out where the file already has an explicit shelter, audio zone or terrain section over that range. Structures on other roads are skipped, because shelter and audio bands lie along the base reference line.
+- A **pace note** may name its structure (`pacenotes.notes[].structure`), so a bridge or tunnel call follows the structure if it moves. `stj_core.structure_at(doc, s)` finds the structure at a distance.
+- **Validator:** ERROR for a range beyond the road or `s_end` not above `s_start`, and for an unknown road, mesh, prim, `carried_by` or note structure. WARN for a tunnel, underpass or gallery without `clearance`, for two structures overlapping on one road (an underpass may lie under another), and for a terrain rule other than `free` under a structure. NOTE for a `shelter` of kind tunnel or bridge that no structure covers, and for a bridge or tunnel note with no structure there.
+- **Mapping.** OpenDRIVE `<tunnel>` and `<bridge>` objects give `kind`, `s_start` and `length`; an ASPRS class 17 (bridge deck) cluster gives a `bridge` and its mesh (§5.2); a Blender collection `STJ__structure__<id>` holds the mesh. No structural engineering is described: no span, load or material.
+
 **Roads and junctions.** A reference line is one road. `roads[]` adds others, each with its own `centerline` (so cross-sections and terrain rules apply to it) and optional `name`, `drivable`, `surface`. `junctions[] {id, roads[{road, s}]}` joins roads by `s` on each, with `road: "reference"` naming the reference line; the validator warns when the points are more than 5 m apart. A timing `side_roads[]` entry may name its `junction`. Timing, pacenotes and surface bands stay on the reference line. A reversed layout (§3.5) moves junction points on the reference line to `s' = L − s`; the geometry of the crossing itself is not described.
 
 ### 7.2 Geometry

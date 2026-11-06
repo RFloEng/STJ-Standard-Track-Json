@@ -1846,5 +1846,120 @@ class MaterialsAndAssets(unittest.TestCase):
         self.assertTrue(any("no_such_signal" in m for m in messages(self.run_doc(), "ERROR")))
 
 
+
+class Structures(unittest.TestCase):
+    """Bridges, tunnels, underpasses and galleries (spec §7.1)."""
+
+    def doc(self, *structs, **extra):
+        d = flat_line_doc(**extra)
+        d["structures"] = list(structs)
+        return d
+
+    def finding(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def absent(self, doc, level, fragment):
+        found = messages(run(doc), level)
+        self.assertFalse(any(fragment in m for m in found), f"unexpected {level} {fragment!r} in {found}")
+
+    # -- defaults --
+    def test_defaults_follow_the_kind(self):
+        d = self.doc({"id": "t", "kind": "tunnel", "s_start": 10, "s_end": 40},
+                     {"id": "b", "kind": "bridge", "s_start": 50, "s_end": 60},
+                     {"id": "g", "kind": "gallery", "s_start": 70, "s_end": 80})
+        out = core.structure_defaults(d)
+        self.assertEqual({sh["id"]: sh["factor"] for sh in out["shelter"]}, {"t_shelter": 1.0, "g_shelter": 0.7})
+        self.assertEqual({z["id"]: z["reverb"] for z in out["audio_zones"]}, {"t_reverb": "tunnel", "g_reverb": "underpass"})
+        self.assertEqual(sorted(sec["s_start"] for sec in out["terrain_sections"]), [10, 50, 70])   # a bridge is free too
+        self.assertTrue(all(sec["mode"] == "free" for sec in out["terrain_sections"]))
+
+    def test_the_band_covers_the_road_and_a_metre_more(self):
+        d = self.doc({"id": "t", "kind": "tunnel", "s_start": 10, "s_end": 40})
+        band = core.structure_defaults(d)["shelter"][0]["band"]
+        self.assertEqual((band["s_start"], band["s_end"], band["t_min"], band["t_max"]), (10, 40, -5.0, 5.0))
+
+    def test_explicit_entries_win(self):
+        d = self.doc({"id": "t", "kind": "tunnel", "s_start": 10, "s_end": 40})
+        d["water"] = {"shelter": [{"id": "mine", "kind": "tunnel", "factor": 0.9,
+                                   "band": {"s_start": 20, "s_end": 30, "t_min": -4, "t_max": 4}}]}
+        d["audio"] = {"zones": [{"id": "z", "reverb": "canyon", "shape": {"band": {"s_start": 0, "s_end": 50, "t_min": -9, "t_max": 9}}}]}
+        d["reference"]["centerline"]["terrain"] = {"mode": "carve", "sections": [{"s_start": 10, "s_end": 40, "mode": "carve"}]}
+        out = core.structure_defaults(d)
+        self.assertEqual((out["shelter"], out["audio_zones"], out["terrain_sections"]), ([], [], []))
+
+    def test_other_roads_are_skipped(self):
+        d = self.doc({"id": "u", "kind": "underpass", "road": "link", "s_start": 1, "s_end": 9})
+        self.assertEqual(core.structure_defaults(d), {"shelter": [], "audio_zones": [], "terrain_sections": []})
+
+    def test_structure_at(self):
+        d = self.doc({"id": "b", "kind": "bridge", "s_start": 50, "s_end": 60})
+        self.assertEqual(core.structure_at(d, 55)["id"], "b")
+        self.assertIsNone(core.structure_at(d, 40))
+        self.assertEqual(core.structure_at(d, 40, slack=15)["id"], "b")
+
+    # -- validator --
+    def test_ranges(self):
+        self.finding(self.doc({"id": "b", "kind": "bridge", "s_start": 60, "s_end": 50}), "ERROR", "s_end must be greater")
+        self.finding(self.doc({"id": "b", "kind": "bridge", "s_start": 10, "s_end": 500}), "ERROR", "is beyond road 'reference'")
+
+    def test_unknown_references(self):
+        d = self.doc({"id": "b", "kind": "bridge", "road": "ghost", "s_start": 1, "s_end": 9})
+        self.finding(d, "ERROR", "unknown road 'ghost'")
+        d = self.doc({"id": "u", "kind": "underpass", "s_start": 1, "s_end": 9, "clearance": 4, "carried_by": "nope"})
+        self.finding(d, "ERROR", "unknown structure 'nope'")
+        d = self.doc({"id": "b", "kind": "bridge", "s_start": 1, "s_end": 9, "mesh": {"mesh_ref": "ghost", "prim": "/x"}})
+        self.finding(d, "ERROR", "unknown mesh 'ghost'")
+
+    def test_carried_by_only_for_an_underpass(self):
+        d = self.doc({"id": "b", "kind": "bridge", "s_start": 1, "s_end": 9},
+                     {"id": "t", "kind": "tunnel", "s_start": 20, "s_end": 30, "clearance": 5, "carried_by": "b"})
+        self.finding(d, "WARN", "only an underpass passes under a structure")
+
+    def test_clearance(self):
+        self.finding(self.doc({"id": "t", "kind": "tunnel", "s_start": 1, "s_end": 9}), "WARN", "without clearance")
+        self.absent(self.doc({"id": "t", "kind": "tunnel", "s_start": 1, "s_end": 9, "clearance": 5}), "WARN", "without clearance")
+        self.absent(self.doc({"id": "b", "kind": "bridge", "s_start": 1, "s_end": 9}), "WARN", "without clearance")
+
+    def test_overlap(self):
+        d = self.doc({"id": "a", "kind": "bridge", "s_start": 10, "s_end": 30}, {"id": "b", "kind": "tunnel", "s_start": 20, "s_end": 40, "clearance": 5})
+        self.finding(d, "WARN", "overlaps structure 'a'")
+        d = self.doc({"id": "a", "kind": "bridge", "s_start": 10, "s_end": 30}, {"id": "u", "kind": "underpass", "s_start": 20, "s_end": 25, "clearance": 4})
+        self.absent(d, "WARN", "overlaps structure")
+
+    def test_a_structure_stands_apart_from_the_ground(self):
+        d = self.doc({"id": "b", "kind": "bridge", "s_start": 10, "s_end": 30}, terrain={"mode": "carve", "shoulder_blend": 4})
+        self.finding(d, "WARN", "the terrain rule is 'carve' under this bridge")
+        d = self.doc({"id": "b", "kind": "bridge", "s_start": 10, "s_end": 30},
+                     terrain={"mode": "carve", "shoulder_blend": 4, "sections": [{"s_start": 10, "s_end": 30, "mode": "free"}]})
+        self.absent(d, "WARN", "the terrain rule is")
+
+    def test_an_unexplained_shelter(self):
+        d = flat_line_doc()
+        d["water"] = {"shelter": [{"id": "s", "kind": "tunnel", "factor": 1.0, "band": {"s_start": 10, "s_end": 30, "t_min": -4, "t_max": 4}}]}
+        self.finding(d, "NOTE", "no structure covers it")
+        d["structures"] = [{"id": "t", "kind": "tunnel", "s_start": 5, "s_end": 35, "clearance": 5}]
+        self.absent(d, "NOTE", "no structure covers it")
+
+    def test_pace_notes(self):
+        d = self.doc({"id": "b", "kind": "bridge", "s_start": 50, "s_end": 60})
+        d["race"] = {"pacenotes": {"scale": "ascending_1_6", "notes": [
+            {"s": 10.0, "kind": "bridge"},                        # nothing there
+            {"s": 45.0, "kind": "bridge"},                        # 5 m before the bridge: found with the slack
+            {"s": 55.0, "kind": "tunnel", "structure": "b"},      # the wrong kind
+            {"s": 58.0, "kind": "bridge", "structure": "gone"}]}}
+        self.finding(d, "NOTE", "a bridge note at s = 10 m with no structure there")
+        self.absent(d, "NOTE", "at s = 45 m")
+        self.finding(d, "WARN", "a tunnel note, but 'b' is a bridge")
+        self.finding(d, "ERROR", "unknown structure 'gone'")
+
+    def test_the_example_has_its_bridge(self):
+        doc = core.load_document(STAGE)
+        st = doc["structures"][0]
+        self.assertEqual((st["id"], st["kind"], st["s_start"], st["s_end"]), ("viaduct_1", "bridge", 1500.0, 1560.0))
+        flat = next(sec for sec in doc["reference"]["centerline"]["cross_section"]["sections"] if sec["template"] == "bridge_deck")
+        self.assertEqual((flat["s_start"], flat["s_end"]), (st["s_start"], st["s_end"]))
+
+
 if __name__ == "__main__":
     unittest.main()

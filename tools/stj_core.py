@@ -418,6 +418,54 @@ def rule_hash(doc, rule="reference.centerline.cross_section"):
     return hashlib.sha256(blob).hexdigest()
 
 
+# What a structure's kind implies for the blocks that already exist (spec §7.1). Explicit data always wins.
+STRUCTURE_SHELTER = {"tunnel": 1.0, "underpass": 1.0, "gallery": 0.7}
+STRUCTURE_REVERB = {"tunnel": "tunnel", "underpass": "underpass", "gallery": "underpass"}
+
+
+def _overlaps(a0, a1, b0, b1):
+    return a0 < b1 and b0 < a1
+
+
+def structure_defaults(doc):
+    """What the structures of the reference line imply, as data: {shelter, audio_zones, terrain_sections}.
+
+    A tunnel or underpass keeps rain off (1), a gallery partly (0.7), a bridge not at all; tunnels, underpasses
+    and galleries have a reverb zone; every structure leaves the terrain `free` over its span. An entry is left
+    out where the file already has an explicit one over that range. Structures on other roads are skipped:
+    shelter and audio bands lie along the base reference line."""
+    out = {"shelter": [], "audio_zones": [], "terrain_sections": []}
+    cl = (doc.get("reference") or {}).get("centerline") or {}
+    explicit_shelter = [(b["band"]["s_start"], b["band"]["s_end"]) for b in (doc.get("water") or {}).get("shelter", []) if "band" in b]
+    explicit_zones = [(z["shape"]["band"]["s_start"], z["shape"]["band"]["s_end"])
+                      for z in (doc.get("audio") or {}).get("zones", []) if "band" in z.get("shape", {})]
+    explicit_terrain = [(sec["s_start"], sec["s_end"]) for sec in (cl.get("terrain") or {}).get("sections", [])]
+    for st in doc.get("structures", []):
+        if st.get("road", "reference") != "reference":
+            continue
+        a, b = st["s_start"], st["s_end"]
+        wl_wr = half_widths(doc, 0.5 * (a + b)) or (10.0, 10.0)
+        band = {"s_start": a, "s_end": b, "t_min": -wl_wr[1] - 1.0, "t_max": wl_wr[0] + 1.0}
+        factor = STRUCTURE_SHELTER.get(st["kind"])
+        if factor is not None and not any(_overlaps(a, b, *e) for e in explicit_shelter):
+            out["shelter"].append({"id": f"{st['id']}_shelter", "kind": "tunnel" if st["kind"] != "gallery" else "roof",
+                                   "band": band, "factor": factor})
+        reverb = STRUCTURE_REVERB.get(st["kind"])
+        if reverb and not any(_overlaps(a, b, *e) for e in explicit_zones):
+            out["audio_zones"].append({"id": f"{st['id']}_reverb", "shape": {"band": band}, "reverb": reverb})
+        if not any(_overlaps(a, b, *e) for e in explicit_terrain):
+            out["terrain_sections"].append({"s_start": a, "s_end": b, "mode": "free"})
+    return out
+
+
+def structure_at(doc, s, road="reference", slack=0.0):
+    """The structure of `road` covering s (within `slack` metres before its start), or None."""
+    for st in doc.get("structures", []):
+        if st.get("road", "reference") == road and st["s_start"] - slack <= s <= st["s_end"]:
+            return st
+    return None
+
+
 def road_line(doc, road_id):
     """ReferenceLine of 'reference' or of a roads[] entry, or None."""
     if road_id == "reference":

@@ -2341,6 +2341,68 @@ def check_material_drives(ctx):
             rep.warn(f"{p}.input", f"material '{md['material']}' has no interface input '{md['input']}' (inputs:{md['input']}): nothing reads it")
 
 
+def check_structures(ctx):
+    """Bridges, tunnels, underpasses and galleries (spec §7.1)."""
+    rep, doc = ctx.rep, ctx.doc
+    structs = doc.get("structures", [])
+    _dups(rep, "structures", structs, "structure")
+    ids = {st["id"]: st for st in structs}
+    roads = {"reference": ctx.line}
+    roads.update({r["id"]: core.road_line(doc, r["id"]) for r in doc.get("roads", [])})
+    cl = (doc.get("reference") or {}).get("centerline") or {}
+    for i, st in enumerate(structs):
+        p = f"structures[{i}]"
+        road = st.get("road", "reference")
+        if road not in roads:
+            rep.error(f"{p}.road", f"unknown road '{road}'")
+            continue
+        line = roads[road]
+        if st["s_end"] <= st["s_start"]:
+            rep.error(p, "s_end must be greater than s_start")
+        if line is not None and st["s_end"] > line.length + TOL:
+            rep.error(p, f"s_end = {st['s_end']:.1f} m is beyond road '{road}' ({line.length:.1f} m)")
+        if st["kind"] in ("tunnel", "underpass", "gallery") and "clearance" not in st:
+            rep.warn(p, f"a {st['kind']} without clearance: the free height above the road is not stated")
+        if "mesh" in st:
+            if st["mesh"]["mesh_ref"] not in ctx.meshes:
+                rep.error(f"{p}.mesh.mesh_ref", f"unknown mesh '{st['mesh']['mesh_ref']}'")
+            else:
+                _mesh_has(ctx, rep, f"{p}.mesh", st["mesh"]["mesh_ref"], nodes=[st["mesh"]["prim"]])
+        if "carried_by" in st:
+            if st["carried_by"] not in ids:
+                rep.error(f"{p}.carried_by", f"unknown structure '{st['carried_by']}'")
+            elif st["kind"] != "underpass":
+                rep.warn(f"{p}.carried_by", f"only an underpass passes under a structure; this is a {st['kind']}")
+        for j in range(i):
+            o = structs[j]
+            if o.get("road", "reference") == road and _overlap_s(o, st) and "underpass" not in (o["kind"], st["kind"]):
+                rep.warn(p, f"overlaps structure '{o['id']}' on the same road")
+        if road == "reference" and cl and (st["kind"] != "other"):
+            mode = core.terrain_rule_at(cl, 0.5 * (st["s_start"] + st["s_end"]))[0]
+            if mode != "free":
+                rep.warn(p, f"the terrain rule is '{mode}' under this {st['kind']}: a structure stands apart from the ground, so it should be free")
+    for i, sh in enumerate((doc.get("water") or {}).get("shelter", [])):
+        if sh.get("kind") in ("tunnel", "bridge") and "band" in sh:
+            if not any(st.get("road", "reference") == "reference" and st["s_start"] < sh["band"]["s_end"] and sh["band"]["s_start"] < st["s_end"]
+                       for st in structs):
+                rep.note(f"water.shelter[{i}]", f"kind '{sh['kind']}', but no structure covers it: say so in structures[]")
+    notes = ((doc.get("race") or {}).get("pacenotes") or {}).get("notes", [])
+    for i, n in enumerate(notes):
+        p = f"race.pacenotes.notes[{i}]"
+        if "structure" in n:
+            st = ids.get(n["structure"])
+            if st is None:
+                rep.error(f"{p}.structure", f"unknown structure '{n['structure']}'")
+            elif n["kind"] in ("bridge", "tunnel") and st["kind"] != n["kind"] and not (n["kind"] == "bridge" and st["kind"] == "other"):
+                rep.warn(f"{p}.structure", f"a {n['kind']} note, but '{st['id']}' is a {st['kind']}")
+        elif n["kind"] in ("bridge", "tunnel") and structs and core.structure_at(doc, n["s"], slack=30.0) is None:
+            rep.note(p, f"a {n['kind']} note at s = {n['s']:g} m with no structure there")
+
+
+def _overlap_s(a, b):
+    return a["s_start"] < b["s_end"] and b["s_start"] < a["s_end"]
+
+
 def check_unused_surfaces(ctx):
     sc = ctx.doc.get("scenery") or {}
     for layer in sc.get("scatter", []):
@@ -2441,6 +2503,7 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     check_chainage(ctx)
     check_scan(ctx)
     check_cross_section(ctx)
+    check_structures(ctx)
     check_assets(ctx)
     check_visual_materials(ctx)
     check_material_drives(ctx)

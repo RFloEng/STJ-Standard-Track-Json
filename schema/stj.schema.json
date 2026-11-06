@@ -19,6 +19,7 @@
     "reference": { "$ref": "#/definitions/reference" },
     "roads": { "type": "array", "items": { "$ref": "#/definitions/road" }, "description": "Roads other than the reference line (spec §7.1)." },
     "junctions": { "type": "array", "items": { "$ref": "#/definitions/junction" }, "description": "Where roads meet." },
+    "structures": { "type": "array", "items": { "$ref": "#/definitions/structure" }, "description": "Bridges, tunnels, underpasses and galleries along a road (spec §7.1)." },
     "assets": { "type": "array", "items": { "$ref": "#/definitions/asset" }, "description": "Files the track uses that USD cannot list: their hash and licence (spec §5.3)." },
     "materials": { "type": "array", "items": { "$ref": "#/definitions/material_drive" }, "description": "Material inputs that follow signals (spec §11.1)." },
     "geometry": { "$ref": "#/definitions/geometry" },
@@ -364,6 +365,37 @@
             }
           }
         }
+      }
+    },
+    "structure": {
+      "type": "object",
+      "description": "A stretch of road that is a bridge, a tunnel, an underpass or a gallery (spec §7.1). Rain shelter, reverb and the terrain rule follow from its kind unless the file says otherwise.",
+      "required": ["id", "kind", "s_start", "s_end"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["bridge", "tunnel", "underpass", "gallery", "other"],
+          "description": "bridge: the road crosses over something (an overpass is a bridge on the other road). tunnel: fully enclosed. underpass: the road passes under something. gallery: covered, open on one side."
+        },
+        "road": { "type": "string", "default": "reference", "description": "'reference' or a roads[] id." },
+        "s_start": { "$ref": "#/definitions/s" },
+        "s_end": { "$ref": "#/definitions/s" },
+        "clearance": { "type": "number", "exclusiveMinimum": 0, "description": "Free height above the road (m): tunnels, galleries and underpasses." },
+        "mesh": {
+          "type": "object",
+          "required": ["mesh_ref", "prim"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "mesh_ref": { "$ref": "#/definitions/id" },
+            "prim": { "type": "string", "pattern": "^/", "description": "USD prim path of the deck, walls or ceiling." }
+          }
+        },
+        "carried_by": { "$ref": "#/definitions/id", "description": "An underpass: the structure it passes under." }
       }
     },
     "asset": {
@@ -1820,6 +1852,7 @@
       "additionalProperties": false,
       "patternProperties": { "^x_": {}, "^_": {} },
       "properties": {
+        "structure": { "$ref": "#/definitions/id", "description": "The structures[] entry this note is about (a bridge or tunnel note)." },
         "s": {
           "$ref": "#/definitions/s",
           "description": "Where the feature begins (not where the co-driver calls it; call timing is up to the engine)."
