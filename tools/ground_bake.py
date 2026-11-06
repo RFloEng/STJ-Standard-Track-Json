@@ -13,6 +13,7 @@ Standard library plus pxr; slow on big meshes by design.
 """
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
@@ -234,6 +235,9 @@ def main(argv=None):
     rows = bake(doc, chain[0].parent, index, w, h, a.uv)
     core.write_png(a.out, w, h, [c for row in rows for px in row for c in px], 3)
     print(f"baked {mats[index]['material']} -> {a.out} ({w} x {h})")
+    stamp = {"uri": Path(a.out).name, "texcoord": a.uv, "tool": "ground_bake.py",
+             "inputs_sha256": core.rule_hash(doc, f"ground.materials[{index}]")}
+    print(f"ground.materials[{index}].fallback:", json.dumps(stamp))
 
 
 if __name__ == "__main__":

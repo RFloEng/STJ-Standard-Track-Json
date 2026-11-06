@@ -2059,5 +2059,59 @@ class EmbedCreatesTheStage(unittest.TestCase):
             self.assertEqual(core.usd_document(target)["track_info"]["name"], "Second")
 
 
+
+class GroundFallback(unittest.TestCase):
+    """The baked fallback of a ground material is a cache of its recipe (spec §8.7)."""
+
+    def setUp(self):
+        self.doc = core.load_document(STAGE)
+        self.gm = self.doc["ground"]["materials"][0]
+
+    def finding(self, level, fragment):
+        found = messages(run(self.doc), level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    def test_the_example_stamp_is_current(self):
+        self.assertEqual(self.gm["fallback"]["inputs_sha256"], core.rule_hash(self.doc, "ground.materials[0]"))
+        self.assertEqual([m for m in messages(run(self.doc), "WARN") if "fallback" in m], [])
+
+    def test_the_hash_follows_the_recipe_and_ignores_the_fallback(self):
+        before = core.rule_hash(self.doc, "ground.materials[0]")
+        self.gm["fallback"]["uri"] = "ground/elsewhere.png"
+        self.assertEqual(before, core.rule_hash(self.doc, "ground.materials[0]"))
+        self.gm["blend"]["depth"] = 0.5
+        self.assertNotEqual(before, core.rule_hash(self.doc, "ground.materials[0]"))
+
+    def test_the_hash_follows_the_layers_it_names(self):
+        before = core.rule_hash(self.doc, "ground.materials[0]")
+        self.doc["ground"]["layers"]["rock"]["tile"] = 20.0
+        self.assertNotEqual(before, core.rule_hash(self.doc, "ground.materials[0]"))
+
+    def test_a_changed_recipe_makes_the_fallback_stale(self):
+        self.gm["blend"]["height_influence"] = 0.9
+        self.finding("WARN", "it is stale")
+
+    def test_a_fallback_without_a_hash_or_a_file(self):
+        del self.gm["fallback"]["inputs_sha256"]
+        self.gm["fallback"]["uri"] = "ground/missing_bake.png"
+        self.finding("NOTE", "no inputs_sha256")
+        self.finding("WARN", "file not found: ground/missing_bake.png")
+
+    def test_an_unknown_rule_is_refused(self):
+        with self.assertRaises(ValueError):
+            core.rule_hash(self.doc, "ground.materials[x]")
+
+    def test_ground_bake_prints_the_stamp(self):
+        import ground_bake
+        with tempfile.TemporaryDirectory() as d:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                ground_bake.main([str(STAGE), "-o", str(Path(d, "bake.png")), "--size", "32x4"])
+            line = next(l for l in buf.getvalue().splitlines() if l.startswith("ground.materials[0].fallback:"))
+            stamp = json.loads(line.split(":", 1)[1])
+            self.assertEqual(stamp["inputs_sha256"], core.rule_hash(self.doc, "ground.materials[0]"))
+            self.assertEqual((stamp["uri"], stamp["texcoord"]), ("bake.png", "st"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -408,12 +408,21 @@ def terrain_with_road(doc, line, terrain_height, x, y):
 def rule_hash(doc, rule="reference.centerline.cross_section"):
     """SHA-256 of the inputs of a generating rule, so a cached mesh can be told stale (spec §7.2).
 
-    For the cross-section rule these are the centerline (every key) and the surface bands."""
+    For the cross-section rule these are the centerline (every key) and the surface bands. For
+    `ground.materials[<i>]` they are that entry (without its `fallback` and `when`) and the layers it names."""
     import hashlib
-    if rule != "reference.centerline.cross_section":
+    import re
+    m = re.fullmatch(r"ground\.materials\[(\d+)\]", rule)
+    if rule == "reference.centerline.cross_section":
+        inputs = {"centerline": (doc.get("reference") or {}).get("centerline"),
+                  "bands": (doc.get("surfaces") or {}).get("bands")}
+    elif m:
+        gm = ((doc.get("ground") or {}).get("materials") or [])[int(m.group(1))]
+        layers = (doc.get("ground") or {}).get("layers") or {}
+        inputs = {"material": {k: v for k, v in gm.items() if k not in ("fallback", "when")},
+                  "layers": {lid: layers.get(lid) for lid in gm["palette"]}}
+    else:
         raise ValueError(f"unknown rule '{rule}'")
-    inputs = {"centerline": (doc.get("reference") or {}).get("centerline"),
-              "bands": (doc.get("surfaces") or {}).get("bands")}
     blob = json.dumps(inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
 

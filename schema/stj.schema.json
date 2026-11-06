@@ -3367,6 +3367,20 @@
           "description": "ground.layers ids; weights refer to them by index."
         },
         "weights": { "$ref": "#/definitions/ground_weights" },
+        "fallback": {
+          "type": "object",
+          "required": ["uri"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "uri": { "$ref": "#/definitions/relative_uri", "description": "The baked image the material's own surface shows." },
+            "texcoord": { "$ref": "#/definitions/texcoord", "description": "The UV set the image is drawn in." },
+            "tool": { "type": "string" },
+            "tool_version": { "type": "string" },
+            "inputs_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Hash of the recipe the image was baked from (stj_core.rule_hash), so a tool can tell when it is stale." }
+          },
+          "description": "The material's own surface is a bake of this entry, a cache of the layered recipe and not the source (spec §8.7)."
+        },
         "blend": {
           "type": "object",
           "additionalProperties": false,

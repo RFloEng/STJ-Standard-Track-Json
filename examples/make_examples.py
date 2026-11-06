@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "tools"))
 import stj_core as core  # noqa: E402
 import ribbon_usd  # noqa: E402
+import ground_bake  # noqa: E402
 import stj_usd  # noqa: E402
 
 META = {"specification": "STJ", "version": "0.1", "coordinate_system": "OpenDRIVE", "units": "SI"}
@@ -547,7 +548,18 @@ def stage_ground(line):
     mat = UsdShade.Material.Define(stage, "/ground/materials/Ground_Sec01")
     sh = UsdShade.Shader.Define(stage, "/ground/materials/Ground_Sec01/surface")
     sh.CreateIdAttr("UsdPreviewSurface")
-    sh.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set((0.42, 0.38, 0.3))
+    # the material's own surface shows a bake of the layered recipe (written by bake_ground_fallback, spec §8.7)
+    reader = UsdShade.Shader.Define(stage, "/ground/materials/Ground_Sec01/st")
+    reader.CreateIdAttr("UsdPrimvarReader_float2")
+    reader.CreateInput("varname", Sdf.ValueTypeNames.String).Set("st")
+    reader.CreateOutput("result", Sdf.ValueTypeNames.Float2)
+    tex = UsdShade.Shader.Define(stage, "/ground/materials/Ground_Sec01/fallback")
+    tex.CreateIdAttr("UsdUVTexture")
+    tex.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath("../ground/ground_sec01_fallback.png"))
+    tex.CreateInput("sourceColorSpace", Sdf.ValueTypeNames.Token).Set("sRGB")
+    tex.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(reader.ConnectableAPI(), "result")
+    tex.CreateOutput("rgb", Sdf.ValueTypeNames.Float3)
+    sh.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(tex.ConnectableAPI(), "rgb")
     sh.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.95)
     mat.CreateSurfaceOutput().ConnectToSource(sh.ConnectableAPI(), "surface")
     UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(mat)
@@ -650,6 +662,15 @@ def severity(radius):
         if radius < limit:
             return sev
     return None
+
+
+def bake_ground_fallback(doc):
+    """Bake ground.materials[0] into the image its material shows, and stamp it with the recipe's hash (spec §8.7)."""
+    rows = ground_bake.bake(doc, HERE, 0, 512, 64, "st")
+    core.write_png(HERE / "ground" / "ground_sec01_fallback.png", 512, 64, [c for row in rows for px in row for c in px], 3)
+    doc["ground"]["materials"][0]["fallback"] = {
+        "uri": "ground/ground_sec01_fallback.png", "texcoord": "st", "tool": "ground_bake.py",
+        "inputs_sha256": core.rule_hash(doc, "ground.materials[0]")}
 
 
 def coll_de_prova():
@@ -1372,6 +1393,7 @@ def main():
     write_override(night_override(), "test_ring_gp_night.usda", "test_ring_gp.usda")
     write_override(drying_override(), "test_ring_gp_drying.usda", "test_ring_gp.usda")
     stage = coll_de_prova()
+    bake_ground_fallback(stage)
     # the collision ribbon is a cache of the cross-section: stamp it so a tool can tell when it is stale
     stage["geometry"]["meshes"][0]["generated"] = {"rule": "reference.centerline.cross_section", "tool": "ribbon_usd.py",
                                                    "inputs_sha256": core.rule_hash(stage)}

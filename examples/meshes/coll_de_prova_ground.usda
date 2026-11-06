@@ -57,9 +57,25 @@ def Xform "ground"
             def Shader "surface"
             {
                 uniform token info:id = "UsdPreviewSurface"
-                color3f inputs:diffuseColor = (0.42, 0.38, 0.3)
+                color3f inputs:diffuseColor.connect = </ground/materials/Ground_Sec01/fallback.outputs:rgb>
                 float inputs:roughness = 0.95
                 token outputs:surface
+            }
+
+            def Shader "st"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            def Shader "fallback"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @../ground/ground_sec01_fallback.png@
+                token inputs:sourceColorSpace = "sRGB"
+                float2 inputs:st.connect = </ground/materials/Ground_Sec01/st.outputs:result>
+                float3 outputs:rgb
             }
         }
     }

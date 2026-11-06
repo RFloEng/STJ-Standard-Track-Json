@@ -16,6 +16,7 @@ Source: an audit of the Dirt2 Stage Importer 0.11.0 STJ export against what DiRT
 | Instance primvars (§3.5) | **Yes (2026-11-06):** `usd.primvars[] {name, role}` on the instance set, so engines can map tint, age, scale jitter and phase to their per-instance data. |
 | Road paint (decal roads) | **A separate proposal, later (2026-11-06),** when a converter needs spline-projected paint. The `decal` mesh role covers paint as meshes meanwhile. |
 | Trigger volumes | **Stay in `x_<engine>` (2026-11-06).** The portable cases are restricted zones, marshal sectors and track-limit rules; script triggers are game logic, which the spec excludes. |
+| Keeping ground blends (2026-11-06) | **A writer plus a cache stamp.** `ground.materials[].fallback` marks a baked image as a cache of the `ground` recipe (hash, stale check), and `tools/ground_materialx.py` writes the recipe as a MaterialX network so Blender and USD viewers show the real layers. MaterialX stays optional and derived: the recipe is the source of truth, and UsdPreviewSurface stays the required baseline. |
 | Editorial (§4) | Clean up the leftover glTF and `.stj.json` wording in the spec **now**. |
 
 ## 1. The gap

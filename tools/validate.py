@@ -1497,6 +1497,14 @@ def check_ground(ctx):
                     rep.warn(f"{p}.weights.maps[{j}].uri", f"file not found: {m['uri']}")
         if enc == "vertex_dense" and len(w.get("attributes", [])) * 4 < len(pal):
             rep.error(f"{p}.weights.attributes", f"{len(w.get('attributes', []))} VEC4 attributes cannot hold {len(pal)} layers")
+        fb = gm.get("fallback")
+        if fb:
+            if not ctx.file(fb["uri"]).is_file():
+                rep.warn(f"{p}.fallback.uri", f"file not found: {fb['uri']}")
+            if "inputs_sha256" not in fb:
+                rep.note(f"{p}.fallback", "no inputs_sha256: nothing says whether the baked image is stale")
+            elif fb["inputs_sha256"] != core.rule_hash(ctx.doc, f"ground.materials[{i}]"):
+                rep.warn(f"{p}.fallback", "the layers, weights, blend or macro maps changed since the fallback was baked: it is stale")
         blend = gm.get("blend") or {}
         method = blend.get("method", "height")
         if method == "height" and not any(
