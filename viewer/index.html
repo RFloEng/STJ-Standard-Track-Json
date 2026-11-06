@@ -122,10 +122,10 @@ dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
       <h1>Drop a track here</h1>
       <div class="small">A folder, or the track file with its meshes and images.<br>Or open one of the examples (serve the repository over HTTP, e.g. <code>python -m http.server</code>).</div>
       <div class="ex">
-        <button class="primary" data-ex="../examples/test_ring_gp.stj.json">GP ring</button>
-        <button data-ex="../examples/coll_de_prova_gravel.stj.json">Gravel stage</button>
-        <button data-ex="../examples/usd/test_ring_usd.usdz">USD ring (.usdz)</button>
-        <button data-ex="../examples/test_ring_minimal.stj.json">Minimal ring</button>
+        <button class="primary" data-ex="../examples/test_ring_gp.usda">GP ring</button>
+        <button data-ex="../examples/coll_de_prova_gravel.usda">Gravel stage</button>
+        <button data-ex="../examples/test_ring_blend.usdz">Ring in one file (.usdz)</button>
+        <button data-ex="../examples/test_ring_minimal.usda">Minimal ring</button>
       </div>
     </div></div>
     <div id="inspect"></div>
@@ -281,7 +281,7 @@ function usdaMeshes(text) {
       primvars[pm[2]] = { type: pm[1], interp, values: numbers(content) };
     }
     const mat = (/rel material:binding\s*=\s*<([^>]+)>/.exec(body) || [])[1];
-    meshes.push({ name: m[1], points: arr('point3f[] points') || arr('points'), counts: arr('faceVertexCounts'),
+    meshes.push({ name: m[1], points: arr('points'), counts: arr('faceVertexCounts'),
       indices: arr('faceVertexIndices'), primvars, material: mat ? mat.split('/').pop() : null });
   }
   return meshes;
