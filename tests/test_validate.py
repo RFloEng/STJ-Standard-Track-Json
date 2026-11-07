@@ -920,6 +920,19 @@ class LessonsFromRbr(unittest.TestCase):
         del self.stage["scenery"]["prototypes"]["birch_sapling"]["physics"]["stiffness"]
         self.assertFinding(self.stage, "WARN", "bendable without stiffness")
 
+    def test_breakable_flag_against_physics_mode(self):
+        pr = self.stage["scenery"]["prototypes"]["birch_sapling"]
+        pr["breakable"] = True                      # the sapling is bendable
+        self.assertFinding(self.stage, "WARN", "breakable is true, but physics.mode is 'bendable'")
+        pr["breakable"] = False
+        pr["physics"]["mode"] = "breakable"
+        pr["physics"]["break_impulse"] = 500
+        self.assertFinding(self.stage, "WARN", "breakable is false, but physics.mode is 'breakable'")
+
+    def test_no_collision_with_a_rigid_body(self):
+        self.stage["scenery"]["prototypes"]["birch_sapling"]["collision"] = "none"
+        self.assertFinding(self.stage, "WARN", "collision is 'none', but physics.mode")
+
     def test_hermite_line(self):
         r = 100.0
         line = core.ReferenceLine([[r, 0, 0], [0, r, 0]], tangents=[[0, r * math.pi / 2, 0], [-r * math.pi / 2, 0, 0]])

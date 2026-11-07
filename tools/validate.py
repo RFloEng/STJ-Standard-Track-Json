@@ -1294,6 +1294,12 @@ def check_props(ctx):
         p = f"scenery.prototypes.{pid}.physics"
         if ph["mode"] != "static":
             physical.add(pid)
+        if pr.get("breakable") is True and ph["mode"] != "breakable":
+            rep.warn(f"scenery.prototypes.{pid}", f"breakable is true, but physics.mode is '{ph['mode']}': physics wins, set one of them")
+        elif pr.get("breakable") is False and ph["mode"] == "breakable":
+            rep.warn(f"scenery.prototypes.{pid}", "breakable is false, but physics.mode is 'breakable'")
+        if pr.get("collision") == "none":
+            rep.warn(f"scenery.prototypes.{pid}", f"collision is 'none', but physics.mode is '{ph['mode']}': a rigid body has a shape to hit")
         if ph["mode"] != "static" and "mass" not in ph:
             rep.error(p, f"mode '{ph['mode']}' needs a mass")
         if ph["mode"] == "tethered" and "tether" not in ph:
