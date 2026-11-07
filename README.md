@@ -184,7 +184,7 @@ Other tools:
 | `tools/ground_bake.py` | Layered ground baked into an image, with the stamp that marks the image as a cache of the recipe |
 | `tools/ground_materialx.py` | Writes the layered ground as a MaterialX network on the ground material, so Blender and USD viewers show the real layers instead of a bake |
 | `tools/las_dtm.py` | Grids the ground points of a LiDAR tile into a heightmap, with no-data cells and the records of where it came from. LAS, or LAZ and COPC with the optional `laspy`. |
-| `tools/blender/` | Probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md): what Blender 5.2 keeps in a `.blend` and in its USD export |
+| `tools/blender/` | The [STJ Blender profile](spec/STJ_Blender_Profile.md) translator (`stj_blender.py`: lint and export of a `.blend`; `stj_profile.py`: the rules, no Blender needed) and the probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md) |
 | `viewer/index.html` | A browser viewer for the document and its meshes. It reads text USD: a `.usda`, or a `.usdz` with `.usda` inside. |
 | `examples/make_examples.py` | Regenerates every example from one definition |
 
@@ -210,7 +210,7 @@ docs/       best practices, Blender mapping, converter plan, feature survey, ope
 proposals/  design proposals with their decisions
 examples/   USD tracks and variant layers, meshes, terrain, ground, audio, UI, the generator
 viewer/     the browser viewer
-tools/      validator, core library, USD and ground tools, Blender probes
+tools/      validator, core library, USD and ground tools, Blender profile translator and probes
 tests/      unittest suite
 ```
 

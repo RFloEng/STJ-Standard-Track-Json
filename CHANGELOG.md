@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **STJ Blender profile 0.1** (`spec/STJ_Blender_Profile.md`; `proposals/stj_blender_profile_proposal.md`): a normative description of how a `.blend` holds a track, with its own version (scene property `stj_blender_profile`), for Blender LTS releases (run on 5.2 LTS). Normative rows: reference curve, timing gates and splits, grid, pit boxes and garage, spawns, surface materials, the base text block `track.stj.json` with objects applied over it. `tools/blender/stj_profile.py` (rules, no Blender needed), `tools/blender/stj_blender.py` (`lint` and `export` inside Blender: document plus USD with the document embedded), `examples/make_blender_reference.py` (the conformance `.blend`), `tests/test_blender_profile.py`. Import, meshes, roads and the other rows of `docs/blender_mapping.md` follow as they are probed.
+
 Survey Tier 3 (`proposals/stj_tier3_proposal.md`, accepted). Additive; no reserved keys remain.
 
 - **Race control** (`marshals`, spec §10.1):

@@ -43,6 +43,8 @@ Everything below was **checked in Blender 5.2.0 LTS**, headless, by building a s
 
 ## 3. Conventions for an STJ Blender exporter
 
+> The rows for the reference curve, timing gates, grid, pit boxes, spawns and surface materials are now normative in [the STJ Blender profile](../spec/STJ_Blender_Profile.md). The rest of this section is advice until probed.
+
 Names are written `STJ__<category>__<id>` in the USD file, because USD forbids `::` in names and Blender's USD exporter writes `__` itself; `STJ::<category>::<id>` is the same name (spec §7.2). The table uses the `::` shorthand. Per-face data goes out as `stj_` primvars (§4).
 
 | Blender | STJ |
