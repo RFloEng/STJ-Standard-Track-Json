@@ -49,6 +49,34 @@ def levels(findings, level):
     return [f"{where}: {msg}" for lvl, where, msg in findings if lvl == level]
 
 
+def with_places(doc):
+    """The stage example with names, tags, a source, a building and an area (spec §7.9)."""
+    doc["roads"][0].update({"name": "Carrer Major", "ref": "BV-1", "tags": {"highway": "residential"},
+                            "source": {"id": "osm", "osm_id": "way/1"}})
+    square = [[0.0, 0.0], [20.0, 0.0], [20.0, 10.0], [0.0, 10.0]]
+    doc["buildings"] = [{"id": "hall", "name": "Ajuntament", "class": "public", "footprint": square,
+                         "holes": [[[5.0, 3.0], [8.0, 3.0], [8.0, 6.0], [5.0, 6.0]]], "z": 12.5, "height": 12.0,
+                         "tags": {"building": "civic", "addr:street": "Carrer Major"}}]
+    doc["areas"] = [{"id": "square", "class": "park", "name": "Placa", "polygon": square}]
+    return doc
+
+
+class KeepExamples:
+    """make_examples writes the example PNGs when a document is built; put the files back as they were."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._saved = {p: p.read_bytes() for p in (ROOT / "examples").rglob("*.png")}
+
+    @classmethod
+    def tearDownClass(cls):
+        for p, data in cls._saved.items():
+            if p.read_bytes() != data:
+                p.write_bytes(data)
+        super().tearDownClass()
+
+
 class Names(unittest.TestCase):
     def test_both_spellings_and_the_duplicate_suffix(self):
         self.assertEqual(profile.parse_name("STJ::timing::start"), ("timing", "start", None))
@@ -126,7 +154,7 @@ class SceneToDocument(unittest.TestCase):
         self.assertEqual([f"{w}: {m}" for lv, w, m in rep.items if lv == "ERROR"], [])
 
 
-class DocumentToScene(unittest.TestCase):
+class DocumentToScene(KeepExamples, unittest.TestCase):
     """Import: a document becomes a scene description, and the scene gives the document back."""
 
     def doc(self):
@@ -149,6 +177,64 @@ class DocumentToScene(unittest.TestCase):
         back = profile.apply_scene(desc)
         self.assertIn("position", back["race"]["grid"][0]["pose"])          # a world pose now
         self.assertNotEqual(back["timing"]["start_finish"]["s"], 150.0)
+
+    def test_every_example_document_round_trips_exactly(self):
+        import make_examples
+        for name in ("test_ring", "test_ring_gp", "coll_de_prova"):
+            doc = getattr(make_examples, name)()
+            self.assertEqual(profile.apply_scene(profile.scene_from_document(doc)), doc, name)
+
+    def test_records_instances_and_emitters(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        desc = profile.scene_from_document(doc)
+        names = {o["name"] for o in desc["objects"]}
+        self.assertIn("STJ::structure::" + doc["structures"][0]["id"], names)
+        self.assertIn("STJ::prototype::scots_pine", names)
+        inst = next(o for o in desc["objects"] if o["name"].startswith("STJ::instance::scots_pine"))
+        self.assertEqual(len(inst["points"]), len(doc["scenery"]["instances"][0]["transforms"]))
+        inst["points"][0][0] += 1.0                                             # move one tree
+        back = profile.apply_scene(desc)
+        first = back["scenery"]["instances"][0]["transforms"][0]
+        self.assertAlmostEqual(first[0], doc["scenery"]["instances"][0]["transforms"][0][0] + 1.0, places=3)
+        self.assertEqual(len(first), len(doc["scenery"]["instances"][0]["transforms"][0]))      # scale kept or left out as given
+
+    def test_a_moved_emitter_writes_its_new_position(self):
+        import make_examples
+        doc = make_examples.test_ring_gp()
+        desc = profile.scene_from_document(doc)
+        em = next(o for o in desc["objects"] if o["name"].startswith("STJ::emitter::"))
+        em["location"][2] += 3.0
+        want = doc["audio"]["emitters"][0]["position"][2] + 3.0
+        self.assertAlmostEqual(profile.apply_scene(desc)["audio"]["emitters"][0]["position"][2], want, places=3)
+
+    def test_names_tags_buildings_and_areas_round_trip(self):
+        import make_examples
+        doc = with_places(make_examples.coll_de_prova())
+        desc = profile.scene_from_document(doc)
+        names = {o["name"] for o in desc["objects"]}
+        self.assertIn("STJ::building::hall", names)
+        self.assertIn("STJ::area::square", names)
+        self.assertEqual(profile.apply_scene(desc), doc)
+        hall = next(o for o in desc["objects"] if o["name"] == "STJ::building::hall")
+        hall["points"][2][0] += 5.0                                         # pull a corner out
+        self.assertEqual(profile.apply_scene(desc)["buildings"][0]["footprint"][2], [25.0, 10.0])
+        self.assertEqual(profile.apply_scene(desc)["buildings"][0]["holes"], doc["buildings"][0]["holes"])
+
+    def test_moving_a_camera_a_road_and_an_edge(self):
+        import make_examples
+        doc = make_examples.test_ring_gp()
+        desc = profile.scene_from_document(doc)
+        cam = next(o for o in desc["objects"] if o["name"].startswith("STJ::camera::"))
+        cam["location"][2] += 2.0
+        edge = next(o for o in desc["objects"] if o["name"].startswith("STJ::edge::"))
+        edge["points"] = [[x, y + 1.0, z] for x, y, z in edge["points"]]
+        back = profile.apply_scene(desc)
+        first = doc["cameras"]["sets"][0]["cameras"][0]
+        self.assertAlmostEqual(back["cameras"]["sets"][0]["cameras"][0]["position"][2], first["position"][2] + 2.0, places=3)
+        old = next(e for e in doc["edges"] if f"STJ::edge::{e['id']}" == edge["name"])
+        new = next(e for e in back["edges"] if e["id"] == old["id"])
+        self.assertNotEqual(new.get("t"), old.get("t"))               # the curve moved sideways: the offset follows it
 
     def test_the_scene_has_the_profile_names_and_no_errors(self):
         desc = profile.scene_from_document(self.doc())
@@ -179,11 +265,11 @@ class DocumentToScene(unittest.TestCase):
         desc = profile.scene_from_document(doc)
         self.assertEqual(len(desc["objects"][0]["tangents_out"]), len(cl["points"]))
         back = profile.apply_scene(desc)["reference"]["centerline"]
-        self.assertEqual(back["tangents_out"], back["tangents_in"])
-        self.assertNotIn("tangents", back)
+        self.assertEqual(back["tangents"], cl["tangents"])                # given as one per point, written as given
+        self.assertNotIn("tangents_out", back)
 
 
-class PlaceAndSun(unittest.TestCase):
+class PlaceAndSun(KeepExamples, unittest.TestCase):
     """The geo origin (coordinates, height, time, north) and the sun light (spec/STJ_Blender_Profile.md §4)."""
 
     ENV = {"geo_reference": {"latitude": 41.0, "longitude": 0.0, "altitude": 312.5, "vertical_datum": "EGM2008"},
@@ -323,7 +409,7 @@ def find_blender():
 
 
 @unittest.skipUnless(find_blender(), "Blender not found (set STJ_BLENDER)")
-class InBlender(unittest.TestCase):
+class InBlender(KeepExamples, unittest.TestCase):
     """Builds the reference .blend, lints it, exports it and checks the result."""
 
     def run_blender(self, *args):
@@ -429,6 +515,52 @@ class InBlender(unittest.TestCase):
             self.assertTrue(any(p.GetName() == "STJ__surface__asphalt" for p in out_stage.Traverse()))
             rep = validate.validate(str(d / "out" / "ring.stj.json"))
             self.assertEqual([f"{w}: {m}" for lv, w, m in rep.items if lv == "ERROR"], [])
+
+    def test_full_documents_survive_blender(self):
+        import make_examples
+        script = str(ROOT / "tools" / "blender" / "stj_blender.py")
+        for name in ("test_ring_gp", "coll_de_prova", "with_places"):
+            doc = with_places(make_examples.coll_de_prova()) if name == "with_places" else getattr(make_examples, name)()
+            with tempfile.TemporaryDirectory() as d:
+                d = Path(d)
+                (d / "t.stj.json").write_text(json.dumps(doc), encoding="utf-8")
+                r = self.run_blender("--python", script, "--", "import", str(d / "t.stj.json"), str(d / "t.blend"))
+                self.assertEqual(r.returncode, 0, name + r.stdout[-1500:] + r.stderr[-500:])
+                r = subprocess.run([find_blender(), "-b", str(d / "t.blend"), "--python", script, "--", "export", str(d / "out"), "t"],
+                                   capture_output=True, text=True, timeout=300)
+                self.assertEqual(r.returncode, 0, name + r.stdout[-1500:])
+                back = json.loads((d / "out" / "t.stj.json").read_text(encoding="utf-8"))
+                for key in sorted(set(doc) | set(back)):
+                    self.assertEqual(back.get(key), doc.get(key), f"{name}: {key}")
+
+    def test_blend_to_document_to_blend_keeps_the_scene(self):
+        script = str(ROOT / "tools" / "blender" / "stj_blender.py")
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            self.run_blender("--python", str(ROOT / "examples" / "make_blender_reference.py"), "--", str(d))
+            ref = d / "test_ring_profile.blend"
+
+            def run(*args, blend=None):
+                cmd = [find_blender(), "-b"] + ([str(blend)] if blend else ["--factory-startup"]) + ["--python", script, "--", *args]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                self.assertEqual(r.returncode, 0, r.stdout[-1500:])
+            run("dump", str(d / "a.json"), blend=ref)
+            run("export", str(d / "out"), "r", blend=ref)
+            run("import", str(d / "out" / "r.stj.json"), str(d / "b.blend"))
+            run("dump", str(d / "b.json"), blend=d / "b.blend")
+            a, b = (json.loads((d / f"{x}.json").read_text(encoding="utf-8")) for x in "ab")
+            A, B = ({o["name"]: o for o in sc["objects"]} for sc in (a, b))
+            self.assertEqual(sorted(A), sorted(B))
+            for name in A:
+                self.assertEqual(A[name]["type"], B[name]["type"], name)
+                for i in range(3):
+                    self.assertAlmostEqual(A[name]["location"][i], B[name]["location"][i], delta=0.01, msg=name)
+                self.assertAlmostEqual(A[name]["heading"], B[name]["heading"], delta=0.001, msg=name)
+                if "points" in A[name]:
+                    self.assertEqual(len(A[name]["points"]), len(B[name]["points"]))
+                    for p, q in zip(A[name]["points"], B[name]["points"]):
+                        self.assertAlmostEqual(p[0], q[0], delta=0.001)
+            self.assertEqual([m["name"] for m in a["materials"]], [m["name"] for m in b["materials"]])
 
 
 if __name__ == "__main__":

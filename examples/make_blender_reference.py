@@ -84,9 +84,9 @@ def empty(name, x, y, z, heading):
     return add(e)
 
 
-def at(s, t=0.0):
-    x, y, z, h = line.frame(s)
-    return line.point(s, t) + (h,)
+# the gates and slots lie on the curve Blender draws (the Bezier handles above), not on the bare polyline
+tangents = [list((Vector(pts[(i + 1) % n]) - Vector(pts[i - 1])) / 2.0) for i in range(n)]
+line = core.ReferenceLine(pts, closed=True, tangents=tangents)
 
 
 # timing gates and splits

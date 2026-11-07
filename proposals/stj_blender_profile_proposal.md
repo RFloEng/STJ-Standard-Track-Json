@@ -2,7 +2,10 @@
 
 Status: accepted (all five decisions as recommended). First slice implemented: profile 0.1
 (`spec/STJ_Blender_Profile.md`), export, import and lint (`tools/blender/`), the reference `.blend`, the geo
-origin and the sun. Still to do: meshes and collision collections, roads, and the other rows as they are probed.
+origin and the sun, mesh collections, roads, junctions, edges and cameras. structures, prototypes, instance sets,
+animated objects, audio emitters and crowds. Round trips are exact on the example documents. Still to do: scatter
+rules, ground layers, terrain, water and the other sections, Blender Rigid Body and actions for physics and
+animation.
 Source: question from the repo owner: can a standard `.blend` be defined from the STJ entities, so that
 every conversion to and from Blender stays consistent between translators, and where should the
 STJ-to-Blender translator live?

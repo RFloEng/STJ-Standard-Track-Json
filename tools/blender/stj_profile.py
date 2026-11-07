@@ -48,8 +48,22 @@ CATEGORIES = {
     "junction": ({"EMPTY"}, "junctions"),
     "camera": ({"CAMERA"}, "cameras.sets"),
     "edge": ({"CURVE"}, "edges"),
+    "structure": ({"EMPTY"}, "structures"),
+    "animated": ({"EMPTY"}, "animated_objects"),
+    "prototype": ({"EMPTY"}, "scenery.prototypes"),
+    "emitter": ({"EMPTY"}, "audio.emitters"),
+    "crowd": ({"EMPTY"}, "scenery.crowds"),
+    "instance": ({"MESH"}, "scenery.instances"),
+    "building": ({"CURVE"}, "buildings"),
+    "area": ({"CURVE"}, "areas"),
 }
-INTERNAL = ("_i", "_set")        # keys of an object's `stj` property that the exporter reads and does not write
+RING_KEY = {"building": "footprint", "area": "polygon"}        # the field of the entry that a closed curve holds
+# records that live in the scene as an empty whose `stj` property is the entry: category -> (path, "list" | "dict")
+RECORDS = {"structure": ("structures", "list"), "animated": ("animated_objects", "list"),
+           "prototype": ("scenery.prototypes", "dict"), "emitter": ("audio.emitters", "list"),
+           "crowd": ("scenery.crowds", "list")}
+HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "instance", "building", "area") + tuple(RECORDS)
+INTERNAL = ("_i", "_set", "_shared")        # keys of an object's `stj` property that the exporter reads and does not write
 MESH_ROLES = ("visual", "collision", "lod", "decal")
 GEO_KEYS = ("latitude", "longitude", "altitude", "proj", "vertical_datum")      # on the geo origin's `stj` property
 SUN_TOLERANCE = math.radians(0.5)        # a sun within this of the computed one follows date and time
@@ -115,6 +129,14 @@ def _pose(o, line=None):
     return {"position": [round(x, 4), round(y, 4), round(z, 4)], "heading": round(o["heading"], 6)}
 
 
+def _kept_position(stored, o):
+    """A stored position while the empty is still there, otherwise the empty's."""
+    x, y, z = o["location"]
+    if stored is not None and math.dist((x, y, z), stored) < 0.01:
+        return stored
+    return [round(x, 4), round(y, 4), round(z, 4)]
+
+
 def _look_at(o, stored, pos):
     """The look-at point: the stored one while the camera still faces it, else the point on its axis at the
     stored distance."""
@@ -145,14 +167,18 @@ def centerline_geometry(obj):
     if obj.get("cyclic"):
         cl["closed"] = True
     if obj.get("tangents_out"):
-        cl["tangents_out"] = [[round(c, 4) for c in t] for t in obj["tangents_out"]]
-        cl["tangents_in"] = [[round(c, 4) for c in t] for t in obj["tangents_in"]]
+        out = [[round(c, 4) for c in t] for t in obj["tangents_out"]]
+        if _stj_props(obj).get("_shared"):          # the document gave one tangent per point
+            cl["tangents"] = out
+        else:
+            cl["tangents_out"] = out
+            cl["tangents_in"] = [[round(c, 4) for c in t] for t in obj["tangents_in"]]
     return cl
 
 
 def reference_patch(obj):
     """The `reference.centerline` of a reference curve."""
-    return core.merge_patch(centerline_geometry(obj), _stj_props(obj))
+    return core.merge_patch(centerline_geometry(obj), _entity(obj))
 
 
 def _order(o):
@@ -170,13 +196,13 @@ def road_entry(o, ident):
     return {"id": ident, **props, "centerline": core.merge_patch(centerline_geometry(o), extras)}
 
 
-def edge_entry(o, ident, line):
+def edge_entry(o, ident, line, doc=None):
     """An edge from its object: the stored fields, unless the curve was moved, then side, range and offset
     from the curve."""
     stored = _entity(o)
     entry = {"id": ident, **stored}
     pts = o.get("points") or []
-    regen = edge_points(stored, line) if line is not None else None
+    regen = edge_points(stored, line, doc) if line is not None else None
     if line is None or not pts or regen is None or (len(regen) == len(pts) and
             all(math.dist(a, b) < 0.05 for a, b in zip(regen, pts))):
         return entry
@@ -273,7 +299,7 @@ def scene_patch(scene, base):
     timing, splits, grid, pits, spawns = {}, [], [], {}, []
     named.sort(key=lambda x: _order(x[1]) if x[0] == "OBJECT" else 1e9)
     for kind, o, (cat, ident, part) in named:
-        if kind != "OBJECT" or cat in ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge"):
+        if kind != "OBJECT" or cat in HANDLED:
             continue
         if cat == "timing":
             if line is None:
@@ -307,7 +333,7 @@ def scene_patch(scene, base):
         patch["junctions"] = [{"id": n[1], **_entity(o)} for o, n in junctions]
     edges = objs("edge")
     if edges:
-        patch["edges"] = [edge_entry(o, n[1], line) for o, n in edges]
+        patch["edges"] = [edge_entry(o, n[1], line, doc) for o, n in edges]
     cams = objs("camera")
     if cams:
         sets = {}
@@ -325,6 +351,42 @@ def scene_patch(scene, base):
             st = sets.setdefault(set_id, {"id": set_id, **(_stj_props(o).get("_set") or {}), "cameras": []})
             st["cameras"].append(entry)
         patch["cameras"] = {"sets": list(sets.values())}
+    for cat, (path, shape) in RECORDS.items():
+        found = objs(cat)
+        if not found:
+            continue
+        if shape == "list":
+            value = []
+            for o, n in found:
+                entry = {"id": n[1], **_entity(o)}
+                if cat == "emitter" and "position" in entry:
+                    entry["position"] = _kept_position(entry["position"], o)
+                value.append(entry)
+        else:
+            value = {n[1]: _entity(o) for o, n in found}
+        node = patch
+        *parents, leaf = path.split(".")
+        for key in parents:
+            node = node.setdefault(key, {})
+        node[leaf] = value
+    for cat, path in (("building", "buildings"), ("area", "areas")):
+        found = objs(cat)
+        if found:
+            patch[path] = [{"id": n[1], **_entity(o), RING_KEY[cat]: [[round(p[0], 4), round(p[1], 4)] for p in o["points"]]}
+                           for o, n in found]
+    sets = objs("instance")
+    if sets:
+        value = []
+        for o, n in sets:
+            pts, heads, scales = o.get("points") or [], o.get("headings") or [], o.get("scales") or []
+            rows = []
+            for k, p in enumerate(pts):
+                row = [round(p[0], 4), round(p[1], 4), round(p[2], 4), round(heads[k] if k < len(heads) else 0.0, 5)]
+                if k < len(scales) and scales[k] > 0:
+                    row.append(round(scales[k], 5))
+                rows.append(row)
+            value.append({**_entity(o), "transforms": rows})
+        patch.setdefault("scenery", {})["instances"] = value
     meshes = [(i, n) for k, i, n in named if k == "COLLECTION" and n[0] == "mesh"]
     if meshes:
         entries = []
@@ -395,7 +457,9 @@ def scene_from_document(doc, base_dir=None):
         if t_out:
             extra = {"tangents_out": [_vec3(t) for t in t_out], "tangents_in": [_vec3(t) for t in t_in]}
         obj("STJ::reference::centerline", "CURVE", cyclic=bool(cl.get("closed")),
-            points=[_vec3(p) for p in cl["points"]], **extra)
+            points=[_vec3(p) for p in cl["points"]], props=({"stj": {**({"_shared": True} if "tangents" in cl else {}),
+                            **({"closed": False} if cl.get("closed") is False else {})}}
+                   if ("tangents" in cl or cl.get("closed") is False) else {}), **extra)
         line = core.reference_line(doc)
         for key in ("points", "closed", "tangents", "tangents_out", "tangents_in"):
             cl.pop(key, None)
@@ -470,6 +534,136 @@ def scene_from_document(doc, base_dir=None):
         n = math.sqrt(sum(c * c for c in direction))
         direction = [c / n for c in direction]
         obj("STJ::sun::main", "LIGHT", location=[100.0 * c for c in direction], direction=direction, light_type="SUN")
+
+    def geometry_of(cl):
+        """(object fields, extras) of a centerline: the curve the object holds, and what stays in its property."""
+        t_out = cl.get("tangents_out") or cl.get("tangents")
+        t_in = cl.get("tangents_in") or t_out
+        more = {"tangents_out": [_vec3(t) for t in t_out], "tangents_in": [_vec3(t) for t in t_in]} if t_out else {}
+        extras = {k: v for k, v in cl.items() if k not in ("points", "closed", "tangents", "tangents_out", "tangents_in")}
+        if cl.get("closed") is False:
+            extras["closed"] = False                    # written as given, not left out
+        return {"cyclic": bool(cl.get("closed")), "points": [_vec3(p) for p in cl["points"]], **more}, extras
+
+    roads = base.get("roads")
+    if roads and all(isinstance(r, dict) and ID_RE.match(str(r.get("id", ""))) and "__" not in r["id"] and
+                     isinstance(r.get("centerline"), dict) and r["centerline"].get("points") for r in roads):
+        for i, r in enumerate(roads):
+            geo_, extras = geometry_of(r["centerline"])
+            stj = {k: v for k, v in r.items() if k not in ("id", "centerline")}
+            stj["_i"] = i
+            if extras:
+                stj["centerline"] = extras
+            if "tangents" in r["centerline"]:
+                stj["_shared"] = True
+            obj(f"STJ::road::{r['id']}", "CURVE", props={"stj": stj}, **geo_)
+        del base["roads"]
+
+    junctions = base.get("junctions")
+    if junctions and all(isinstance(j, dict) and ID_RE.match(str(j.get("id", ""))) and "__" not in j["id"] for j in junctions):
+        for i, j in enumerate(junctions):
+            try:
+                x, y, z = core.joint_point(doc, j)[:3]
+            except Exception:  # noqa: BLE001  (a junction whose roads are missing is the validator's finding)
+                x = y = z = 0.0
+            obj(f"STJ::junction::{j['id']}", location=(x, y, z), props={"stj": {**{k: v for k, v in j.items() if k != "id"}, "_i": i}})
+        del base["junctions"]
+
+    edges = base.get("edges")
+    if edges and line is not None and all(isinstance(e, dict) and ID_RE.match(str(e.get("id", ""))) and "__" not in e["id"]
+                                          and edge_points(e, line, doc) for e in edges):
+        for i, e in enumerate(edges):
+            obj(f"STJ::edge::{e['id']}", "CURVE", cyclic=False, points=edge_points(e, line, doc),
+                props={"stj": {**{k: v for k, v in e.items() if k != "id"}, "_i": i}})
+        del base["edges"]
+
+    sets = (base.get("cameras") or {}).get("sets") if isinstance(base.get("cameras"), dict) else None
+    if sets and set(base["cameras"]) == {"sets"} and all(
+            isinstance(st, dict) and ID_RE.match(str(st.get("id", ""))) and "__" not in st["id"] and st.get("cameras") and
+            all(isinstance(c, dict) and ID_RE.match(str(c.get("id", ""))) and "__" not in c["id"] and "position" in c
+                for c in st["cameras"]) for st in sets):
+        n = 0
+        for st in sets:
+            extra = {k: v for k, v in st.items() if k not in ("id", "cameras")}
+            for c in st["cameras"]:
+                pos = _vec3(c["position"])
+                if "look_at" in c:
+                    fwd = [c["look_at"][k] - pos[k] for k in range(3)]
+                    norm = math.sqrt(sum(v * v for v in fwd)) or 1.0
+                    fwd = [v / norm for v in fwd]
+                else:
+                    fwd = [1.0, 0.0, 0.0]
+                stj = {**{k: v for k, v in c.items() if k != "id"}, "_i": n}
+                if extra:
+                    stj["_set"] = extra
+                obj(f"STJ::camera::{st['id']}::{c['id']}", "CAMERA", location=pos, forward=fwd, props={"stj": stj})
+                n += 1
+        del base["cameras"]
+
+    def record_ok(e, key="id"):
+        return isinstance(e, dict) and ID_RE.match(str(e.get(key, ""))) and "__" not in str(e[key])
+
+    def record_objects(cat, name_of, value, pos_of=None):
+        for i, e in enumerate(value):
+            x, y, z = pos_of(e) if pos_of else (0.0, 0.0, 0.0)
+            obj(name_of(e), location=(x, y, z), props={"stj": {**{k: v for k, v in e.items() if k != "id"}, "_i": i}})
+
+    def midpoint(e):
+        try:
+            road = e.get("road")
+            ref = core.road_line(doc, road) if road and road != "reference" else line
+            return ref.point((e["s_start"] + e["s_end"]) / 2.0) if ref is not None else (0.0, 0.0, 0.0)
+        except Exception:  # noqa: BLE001
+            return (0.0, 0.0, 0.0)
+
+    for cat, path in (("building", "buildings"), ("area", "areas")):
+        items = base.get(path)
+        key = RING_KEY[cat]
+        if items and all(record_ok(e) and isinstance(e.get(key), list) and len(e[key]) >= 3 for e in items):
+            for i, e in enumerate(items):
+                z = float(e.get("z", 0.0)) if isinstance(e.get("z", 0.0), (int, float)) else 0.0
+                obj(f"STJ::{cat}::{e['id']}", "CURVE", cyclic=True, points=[[p[0], p[1], z] for p in e[key]],
+                    props={"stj": {**{k: v for k, v in e.items() if k not in ("id", key)}, "_i": i}})
+            del base[path]
+
+    structs = base.get("structures")
+    if structs and all(record_ok(e) for e in structs):
+        record_objects("structure", lambda e: f"STJ::structure::{e['id']}", structs, midpoint)
+        del base["structures"]
+    anim = base.get("animated_objects")
+    if anim and all(record_ok(e) for e in anim):
+        record_objects("animated", lambda e: f"STJ::animated::{e['id']}", anim)
+        del base["animated_objects"]
+    audio = base.get("audio")
+    emitters = audio.get("emitters") if isinstance(audio, dict) else None
+    if emitters and all(record_ok(e) for e in emitters):
+        record_objects("emitter", lambda e: f"STJ::emitter::{e['id']}", emitters,
+                       lambda e: _vec3(e["position"]) if "position" in e else (0.0, 0.0, 0.0))
+        del audio["emitters"]
+        if not audio:
+            del base["audio"]
+    scenery = base.get("scenery")
+    if isinstance(scenery, dict):
+        protos = scenery.get("prototypes")
+        if protos and all(ID_RE.match(str(k)) and "__" not in k and isinstance(v, dict) for k, v in protos.items()):
+            for i, (k, v) in enumerate(protos.items()):
+                obj(f"STJ::prototype::{k}", props={"stj": {**v, "_i": i}})
+            del scenery["prototypes"]
+        crowds = scenery.get("crowds")
+        if crowds and all(record_ok(e) for e in crowds):
+            record_objects("crowd", lambda e: f"STJ::crowd::{e['id']}", crowds)
+            del scenery["crowds"]
+        insts = scenery.get("instances")
+        if insts and all(isinstance(e, dict) and ID_RE.match(str(e.get("prototype", ""))) and e.get("transforms") and
+                         all(isinstance(t, list) and len(t) in (4, 5) for t in e["transforms"]) for e in insts):
+            for i, e in enumerate(insts):
+                t = e["transforms"]
+                obj(f"STJ::instance::{e['prototype']}_{i}", "MESH", points=[[r[0], r[1], r[2]] for r in t],
+                    headings=[r[3] for r in t], scales=[r[4] if len(r) == 5 else 0.0 for r in t],
+                    props={"stj": {**{k: v for k, v in e.items() if k != "transforms"}, "_i": i}})
+            del scenery["instances"]
+        if not scenery:
+            del base["scenery"]
 
     collections = []
     geometry = base.get("geometry")

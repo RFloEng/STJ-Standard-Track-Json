@@ -1200,6 +1200,29 @@ def point_in_polygon(poly, x, y):
     return inside
 
 
+def ring_area(ring):
+    """Signed area of a ring [[x, y], ...] (m2): positive when it runs counter-clockwise."""
+    return 0.5 * sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]))
+
+
+def ring_crosses_itself(ring):
+    """Whether two edges of a ring that are not neighbours cross."""
+    n = len(ring)
+    edges = [(ring[i], ring[(i + 1) % n]) for i in range(n)]
+
+    def side(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    for i in range(n):
+        for j in range(i + 2, n):
+            if i == 0 and j == n - 1:
+                continue
+            (a, b), (c, d) = edges[i], edges[j]
+            if side(a, b, c) * side(a, b, d) < 0 and side(c, d, a) * side(c, d, b) < 0:
+                return True
+    return False
+
+
 def storage_depth(surface):
     """surface.water.storage_depth, defaulting to half the macrotexture MPD (spec §6.9)."""
     w = surface.get("water") or {}

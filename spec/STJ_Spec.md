@@ -195,7 +195,7 @@ p_world = p + Rz(ψ) · diag(1, −1, −1) · p_SVJ
   "_metadata": {}, "track_info": {}, "reference": {}, "geometry": {}, "surfaces": {},
   "timing": {}, "race": {}, "environment": {}, "scenery": {},
   "edges": [], "cameras": {}, "layouts": [], "variants": [],
-  "water": {}, "audio": {}, "animated_objects": [],
+  "buildings": [], "areas": [], "water": {}, "audio": {}, "animated_objects": [],
   "dynamic": {}, "marshals": {}, "screens": [],
   "x_<engine>": {}
 }
@@ -714,6 +714,29 @@ Meshes are **OpenUSD** (`.usd`, `.usda`, `.usdc`, `.usdz`), the only mesh format
 - **Validation of USD is optional.** USD checks need the `pxr` module (`pip install usd-core`). Without it, USD meshes are reported as a NOTE ("not checked"), and STJ documents inside USD cannot be read.
 
 ---
+
+### 7.9 Names, tags, buildings and areas (v0.3)
+
+A track made from real-world data (OpenStreetMap, a cadastre, a survey) has names and identities that a plain geometry loses. STJ keeps them, without judging them (`proposals/stj_places_proposal.md`).
+
+**On roads, structures, junctions and edges.** Each may carry:
+- `name`: the street, bridge or junction name (roads and structures had it already);
+- `ref`: the public reference, such as a road number (`BV-1234`);
+- `tags {string: string}`: the source's own tags, kept as given (OpenStreetMap keys such as `highway`, `surface`, `maxspeed`, `addr:street`). STJ does not check the keys or the values;
+- `source {id, osm_id, key}`: where it came from. `id` names an entry of `provenance.sources[]` (or a scan source, §5.2); `osm_id` is `node/…`, `way/…` or `relation/…`; `key` is any other identifier in that source.
+
+**`buildings[]`** `{id, name, ref, class, footprint, holes, z, height, levels, roof, mesh, tags, source}`:
+- `footprint` is a ring `[[x, y], ...]` in world metres, without repeating the first point; `holes[]` are courtyards. Outer rings run counter-clockwise and holes clockwise, but readers accept either.
+- `height` is the height of the walls and `levels` the number of storeys; with neither, the validator notes that an engine has to guess. `z` is the elevation of the base; without it the building stands on the ground under the footprint.
+- `roof {shape, height, heading}`: `shape` is `flat`, `gabled`, `hipped`, `pyramidal`, `skillion`, `dome` or `other`.
+- `class` is `house`, `apartments`, `commercial`, `industrial`, `office`, `public`, `religious`, `garage`, `shed`, `farm`, `grandstand`, `pit_building`, `tower` or `other`.
+- `mesh {mesh_ref, prim}` points at an authored model; an engine uses it instead of extruding the footprint.
+
+**`areas[]`** `{id, name, class, polygon, holes, tags, source}`: a polygon of `residential`, `commercial`, `industrial`, `farmland`, `forest`, `grass`, `park`, `water`, `wetland`, `parking`, `paddock`, `spectator`, `quarry` or `other`. An area says what is there; scatter rules, ground layers (§8.7) and water bodies (§7.5) decide how it is drawn, and none of them changes.
+
+Buildings and areas are fixed in the world: a layout (§3.5) does not reverse or move them.
+
+The validator checks that a `source.id` exists (ERROR), that an `osm_id` comes from a source of kind `osm` (NOTE), that ids are unique, that rings have an area (WARN), do not cross themselves (WARN) and hold their holes (WARN), that a building has a height, levels or a mesh (NOTE) and plausible storeys (NOTE), and that `mesh_ref` exists (ERROR).
 
 ## 8. Scenery, sky, lighting and engine-native data
 

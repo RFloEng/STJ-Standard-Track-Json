@@ -3,6 +3,7 @@
     blender -b track.blend --python tools/blender/stj_blender.py -- lint
     blender -b track.blend --python tools/blender/stj_blender.py -- export <out_dir> [name]
     blender -b --factory-startup --python tools/blender/stj_blender.py -- import <track.stj.json|.usd> <out.blend>
+    blender -b track.blend --python tools/blender/stj_blender.py -- dump <scene.json>
 
 `lint` prints the findings and exits 1 when there is an ERROR. `export` writes <name>.stj.json (the document:
 the text block `track.stj.json` with the objects applied over it) and <name>.usd (Blender's USD export with
@@ -69,6 +70,15 @@ def read_scene(scene=None):
                  "props": _props(obj)}
         if obj.type == "CURVE":
             entry.update(_curve(obj))
+        elif obj.type == "MESH" and (profile.parse_name(obj.name) or ("",))[0] == "instance":
+            # an instance set: one vertex per instance, with the heading and the scale as point attributes
+            mesh = obj.data
+            entry["points"] = [_vec(obj.matrix_world @ v.co) for v in mesh.vertices]
+            for key, attr in (("headings", "stj_heading"), ("scales", "stj_scale")):
+                a = mesh.attributes.get(attr)
+                entry[key] = [float(d.value) for d in a.data] if a is not None else []
+        elif obj.type == "CAMERA":
+            entry["forward"] = _vec((-obj.matrix_world.to_3x3().col[2]).normalized())      # a camera looks along -Z
         elif obj.type == "LIGHT":
             z = obj.matrix_world.to_3x3().col[2]          # a Sun light shines along -Z, so +Z points at the sun
             entry.update({"light_type": obj.data.type, "direction": _vec(z.normalized())})
@@ -154,6 +164,17 @@ def build_scene(desc):
                     sp_pt.co = (p[0], p[1], p[2], 1.0)
             sp.use_cyclic_u = bool(o.get("cyclic"))
             ob = bpy.data.objects.new(o["name"], cu)
+        elif o["type"] == "MESH":
+            mesh = bpy.data.meshes.new(o["name"])
+            mesh.from_pydata([tuple(p) for p in o["points"]], [], [])
+            for attr, key in (("stj_heading", "headings"), ("stj_scale", "scales")):
+                a = mesh.attributes.new(attr, "FLOAT", "POINT")
+                a.data.foreach_set("value", o[key])
+            ob = bpy.data.objects.new(o["name"], mesh)
+        elif o["type"] == "CAMERA":
+            ob = bpy.data.objects.new(o["name"], bpy.data.cameras.new(o["name"]))
+            ob.location = o["location"]
+            ob.rotation_euler = Vector(o["forward"]).to_track_quat("-Z", "Y").to_euler()
         elif o["type"] == "LIGHT":
             light = bpy.data.lights.new(o["name"], o.get("light_type", "SUN"))
             ob = bpy.data.objects.new(o["name"], light)
@@ -205,6 +226,12 @@ def import_document(doc_path, out_blend):
     return 1 if any(f[0] == "ERROR" for f in findings) else 0
 
 
+def dump(path):
+    """The scene description as JSON (for comparing two .blend files)."""
+    Path(path).write_text(json.dumps(read_scene(), indent=1, sort_keys=True), encoding="utf-8")
+    return 0
+
+
 def main(argv):
     if not argv:
         print(__doc__)
@@ -213,6 +240,8 @@ def main(argv):
         return lint()
     if argv[0] == "export" and len(argv) >= 2:
         return export(argv[1], argv[2] if len(argv) > 2 else "track")
+    if argv[0] == "dump" and len(argv) >= 2:
+        return dump(argv[1])
     if argv[0] == "import" and len(argv) >= 3:
         return import_document(argv[1], argv[2])
     print(__doc__)

@@ -2611,5 +2611,91 @@ class DataSourcesAndLicences(unittest.TestCase):
         self.assertEqual(core.licence_summary(self.doc)["missing_attribution"], ["glo"])
 
 
+
+class NamesBuildingsAndAreas(unittest.TestCase):
+    """Names, tags and sources on roads and the like; buildings and areas (spec §7.9)."""
+
+    def setUp(self):
+        self.doc = core.load_document(STAGE)
+        self.doc["_metadata"]["provenance"] = {"type": "original", "sources": [
+            {"id": "osm", "kind": "osm", "reference": "overpass extract", "retrieved": "2026-10-01",
+             "licence": {"spdx": "ODbL-1.0", "attribution": "(c) OpenStreetMap contributors", "share_alike": True}}]}
+        for m in self.doc["geometry"].get("meshes", []):
+            m.pop("generated", None)
+        self.baseline = set(self.problems())
+
+    def problems(self):
+        rep = run(self.doc)
+        return messages(rep, "ERROR") + messages(rep, "WARN")
+
+    def new_problems(self):
+        return [m for m in self.problems() if m not in self.baseline]
+
+    def level(self, level):
+        return messages(run(self.doc), level)
+
+    def finding(self, level, fragment):
+        found = self.level(level)
+        self.assertTrue(any(fragment in m for m in found), f"no {level} containing {fragment!r} in {found}")
+
+    SQUARE = [[0, 0], [20, 0], [20, 10], [0, 10]]
+
+    def test_names_tags_and_sources_are_accepted(self):
+        road = self.doc["roads"][0]
+        road.update({"name": "Carrer Major", "ref": "BV-1234", "tags": {"highway": "residential", "maxspeed": "30"},
+                     "source": {"id": "osm", "osm_id": "way/123456"}})
+        self.doc["buildings"] = [{"id": "town_hall", "name": "Ajuntament", "class": "public", "footprint": self.SQUARE,
+                                  "height": 12.0, "levels": 3, "roof": {"shape": "gabled", "height": 3.0},
+                                  "tags": {"building": "civic", "addr:street": "Carrer Major"},
+                                  "source": {"id": "osm", "osm_id": "way/99"}}]
+        self.doc["areas"] = [{"id": "square", "name": "Plaça Major", "class": "park", "polygon": self.SQUARE,
+                              "holes": [[[5, 3], [8, 3], [8, 6], [5, 6]]], "tags": {"leisure": "park"}}]
+        self.assertEqual(self.new_problems(), [])
+
+    def test_tags_are_strings(self):
+        self.doc["roads"][0]["tags"] = {"maxspeed": 30}
+        self.assertTrue(any("tags" in m for m in self.level("ERROR")))
+
+    def test_unknown_source_on_a_road_and_a_building(self):
+        self.doc["roads"][0]["source"] = {"id": "nope"}
+        self.doc["buildings"] = [{"id": "b", "footprint": self.SQUARE, "height": 5.0, "source": {"id": "gone"}}]
+        self.finding("ERROR", "roads[0].source.id: unknown source 'nope'")
+        self.finding("ERROR", "buildings[0].source.id: unknown source 'gone'")
+
+    def test_osm_id_pattern(self):
+        self.doc["roads"][0]["source"] = {"id": "osm", "osm_id": "street/1"}
+        self.assertTrue(any("osm_id" in m for m in self.level("ERROR")))
+
+    def test_footprint_problems(self):
+        self.doc["buildings"] = [
+            {"id": "flat", "footprint": [[0, 0], [10, 0], [20, 0]], "height": 3.0},
+            {"id": "bow", "footprint": [[0, 0], [10, 10], [10, 0], [0, 5]], "height": 3.0},
+            {"id": "open", "footprint": self.SQUARE + [self.SQUARE[0]], "height": 3.0},
+            {"id": "outside_hole", "footprint": self.SQUARE, "holes": [[[50, 50], [55, 50], [55, 55]]], "height": 3.0}]
+        self.finding("WARN", "buildings[0].footprint: footprint has no area")
+        self.finding("WARN", "buildings[1].footprint: footprint crosses itself")
+        self.finding("NOTE", "buildings[2].footprint: footprint repeats its first point")
+        self.finding("WARN", "buildings[3].holes[0]: hole lies outside the footprint")
+
+    def test_a_building_without_height(self):
+        self.doc["buildings"] = [{"id": "unknown_height", "footprint": self.SQUARE}]
+        self.finding("NOTE", "no height, levels or mesh")
+        self.doc["buildings"] = [{"id": "tower", "footprint": self.SQUARE, "height": 90.0, "levels": 3}]
+        self.finding("NOTE", "m a level")
+
+    def test_building_mesh_must_exist(self):
+        self.doc["buildings"] = [{"id": "b", "footprint": self.SQUARE, "mesh": {"mesh_ref": "nope", "prim": "/b"}}]
+        self.finding("ERROR", "unknown mesh 'nope'")
+
+    def test_duplicate_ids(self):
+        self.doc["areas"] = [{"id": "a", "class": "park", "polygon": self.SQUARE},
+                             {"id": "a", "class": "water", "polygon": self.SQUARE}]
+        self.finding("ERROR", "duplicate area id")
+
+    def test_area_needs_a_known_class(self):
+        self.doc["areas"] = [{"id": "a", "class": "moon", "polygon": self.SQUARE}]
+        self.assertTrue(any("class" in m for m in self.level("ERROR")))
+
+
 if __name__ == "__main__":
     unittest.main()

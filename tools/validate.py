@@ -2540,6 +2540,64 @@ def check_material_drives(ctx):
             rep.warn(f"{p}.input", f"material '{md['material']}' has no interface input '{md['input']}' (inputs:{md['input']}): nothing reads it")
 
 
+def _ring_findings(rep, path, ring, what):
+    if ring[0] == ring[-1]:
+        rep.note(path, f"{what} repeats its first point at the end: a ring is closed without it")
+        ring = ring[:-1]
+    if len(ring) < 3 or abs(core.ring_area(ring)) < 1e-6:
+        rep.warn(path, f"{what} has no area")
+        return None
+    if len(ring) <= 5000 and core.ring_crosses_itself(ring):
+        rep.warn(path, f"{what} crosses itself")
+    return ring
+
+
+def check_places(ctx):
+    """Names, tags and sources of real-world things, and buildings and areas (spec §7.9)."""
+    rep, doc = ctx.rep, ctx.doc
+    prov = (doc.get("_metadata") or {}).get("provenance") or {}
+    known = {s["id"]: s for s in (prov.get("scan") or {}).get("sources", [])}
+    known.update({s["id"]: s for s in prov.get("sources", [])})
+    holders = [("roads", doc.get("roads", [])), ("structures", doc.get("structures", [])),
+               ("junctions", doc.get("junctions", [])), ("edges", doc.get("edges", [])),
+               ("buildings", doc.get("buildings", [])), ("areas", doc.get("areas", []))]
+    for key, items in holders:
+        for i, item in enumerate(items):
+            src = item.get("source") if isinstance(item, dict) else None
+            if not src:
+                continue
+            p = f"{key}[{i}].source"
+            if src["id"] not in known:
+                rep.error(f"{p}.id", f"unknown source '{src['id']}'")
+            elif "osm_id" in src and known[src["id"]].get("kind") not in (None, "osm"):
+                rep.note(p, f"osm_id given, but source '{src['id']}' is of kind '{known[src['id']].get('kind')}', not osm")
+    _dups(rep, "buildings", doc.get("buildings", []), "building")
+    _dups(rep, "areas", doc.get("areas", []), "area")
+    mesh_ids = {m["id"] for m in (doc.get("geometry") or {}).get("meshes", [])}
+    for i, b in enumerate(doc.get("buildings", [])):
+        p = f"buildings[{i}]"
+        outer = _ring_findings(rep, f"{p}.footprint", b["footprint"], "footprint")
+        for k, hole in enumerate(b.get("holes", [])):
+            ring = _ring_findings(rep, f"{p}.holes[{k}]", hole, "hole")
+            if ring and outer and not core.point_in_polygon(outer, *ring[0]):
+                rep.warn(f"{p}.holes[{k}]", "hole lies outside the footprint")
+        if not any(k in b for k in ("height", "levels", "mesh")):
+            rep.note(p, "no height, levels or mesh: an engine has to guess how tall this is")
+        if "height" in b and "levels" in b and not 1.5 <= b["height"] / b["levels"] <= 8.0:
+            rep.note(p, f"{b['height']} m for {b['levels']} level(s): {b['height'] / b['levels']:.1f} m a level")
+        if b.get("mesh") and b["mesh"]["mesh_ref"] not in mesh_ids:
+            rep.error(f"{p}.mesh.mesh_ref", f"unknown mesh '{b['mesh']['mesh_ref']}'")
+        if (b.get("roof") or {}).get("shape") == "flat" and (b["roof"].get("height") or 0) > 0:
+            rep.note(f"{p}.roof", "a flat roof with a height")
+    for i, a in enumerate(doc.get("areas", [])):
+        p = f"areas[{i}]"
+        outer = _ring_findings(rep, f"{p}.polygon", a["polygon"], "polygon")
+        for k, hole in enumerate(a.get("holes", [])):
+            ring = _ring_findings(rep, f"{p}.holes[{k}]", hole, "hole")
+            if ring and outer and not core.point_in_polygon(outer, *ring[0]):
+                rep.warn(f"{p}.holes[{k}]", "hole lies outside the polygon")
+
+
 def check_structures(ctx):
     """Bridges, tunnels, underpasses and galleries (spec §7.1)."""
     rep, doc = ctx.rep, ctx.doc
@@ -2739,6 +2797,7 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     check_scan(ctx)
     check_cross_section(ctx)
     check_structures(ctx)
+    check_places(ctx)
     check_assets(ctx)
     check_visual_materials(ctx)
     check_material_drives(ctx)

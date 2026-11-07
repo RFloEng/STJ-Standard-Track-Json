@@ -38,6 +38,16 @@
       "items": { "$ref": "#/definitions/screen" },
       "description": "Scoreboards and big screens (spec §8.8)."
     },
+    "buildings": {
+      "type": "array",
+      "description": "Buildings by footprint and height, with the names and tags real-world data gives them (spec §7.9).",
+      "items": { "$ref": "#/definitions/building" }
+    },
+    "areas": {
+      "type": "array",
+      "description": "Land-use, park, water and parking areas as polygons, with names and tags (spec §7.9).",
+      "items": { "$ref": "#/definitions/area" }
+    },
     "edges": {
       "type": "array",
       "description": "Kerbs, verges and barriers described by what they are, along the base reference line, so each engine can rebuild them with its own assets (spec §7.3).",
@@ -395,6 +405,94 @@
         }
       }
     },
+    "tags": {
+      "type": "object",
+      "description": "Free key-value tags as the source gives them (OpenStreetMap keys such as highway, surface, maxspeed, building, addr:street). Values are strings; STJ does not check the keys.",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "type": "string" }
+    },
+    "entity_source": {
+      "type": "object",
+      "description": "Where a thing came from: an entry of provenance.sources[] (or a scan source) and the identifier inside that source.",
+      "required": ["id"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id", "description": "A provenance.sources[] or provenance.scan.sources[] id." },
+        "osm_id": { "type": "string", "pattern": "^(node|way|relation)/[0-9]+$", "description": "OpenStreetMap element, such as way/123456." },
+        "key": { "type": "string", "description": "Any other identifier in the source (a cadastral reference, a game object name)." }
+      }
+    },
+    "ring": {
+      "type": "array",
+      "description": "A closed ring [[x, y], ...] in world metres, without repeating the first point at the end. Outer rings run counter-clockwise, holes clockwise, but readers accept either.",
+      "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+      "minItems": 3
+    },
+    "building": {
+      "type": "object",
+      "description": "A building by its footprint, so an engine can extrude it or replace it with its own model (spec §7.9). `mesh` points at an authored model when there is one.",
+      "required": ["id", "footprint"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "ref": { "type": "string", "description": "The public reference, such as a house number." },
+        "class": {
+          "type": "string",
+          "enum": ["house", "apartments", "commercial", "industrial", "office", "public", "religious", "garage", "shed", "farm", "grandstand", "pit_building", "tower", "other"],
+          "description": "What kind of building, for the choice of model and texture."
+        },
+        "footprint": { "$ref": "#/definitions/ring" },
+        "holes": { "type": "array", "items": { "$ref": "#/definitions/ring" }, "description": "Courtyards." },
+        "z": { "type": "number", "description": "Elevation of the base (m). Absent: the ground under the footprint." },
+        "height": { "type": "number", "exclusiveMinimum": 0, "description": "Height of the walls (m), without the roof." },
+        "levels": { "type": "integer", "minimum": 1, "description": "Number of storeys, for when no height is known." },
+        "roof": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "shape": { "type": "string", "enum": ["flat", "gabled", "hipped", "pyramidal", "skillion", "dome", "other"] },
+            "height": { "type": "number", "minimum": 0, "description": "Height of the roof above the walls (m)." },
+            "heading": { "type": "number", "description": "Direction of the ridge or the slope (rad, counter-clockwise from +X)." }
+          }
+        },
+        "mesh": {
+          "type": "object",
+          "required": ["mesh_ref", "prim"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "mesh_ref": { "$ref": "#/definitions/id" },
+            "prim": { "type": "string", "pattern": "^/" }
+          },
+          "description": "Where the building is already modelled."
+        },
+        "tags": { "$ref": "#/definitions/tags" },
+        "source": { "$ref": "#/definitions/entity_source" }
+      }
+    },
+    "area": {
+      "type": "object",
+      "description": "A land-use, park, water or parking area as a polygon (spec §7.9). It describes what is there; scatter, ground layers and water bodies decide how it is drawn.",
+      "required": ["id", "class", "polygon"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "class": {
+          "type": "string",
+          "enum": ["residential", "commercial", "industrial", "farmland", "forest", "grass", "park", "water", "wetland", "parking", "paddock", "spectator", "quarry", "other"]
+        },
+        "polygon": { "$ref": "#/definitions/ring" },
+        "holes": { "type": "array", "items": { "$ref": "#/definitions/ring" } },
+        "tags": { "$ref": "#/definitions/tags" },
+        "source": { "$ref": "#/definitions/entity_source" }
+      }
+    },
     "structure": {
       "type": "object",
       "description": "A stretch of road that is a bridge, a tunnel, an underpass or a gallery (spec §7.1). Rain shelter, reverb and the terrain rule follow from its kind unless the file says otherwise.",
@@ -404,6 +502,9 @@
       "properties": {
         "id": { "$ref": "#/definitions/id" },
         "name": { "type": "string" },
+        "ref": { "type": "string", "description": "The public reference of the thing, such as a road number (C-17) or a building number." },
+        "tags": { "$ref": "#/definitions/tags" },
+        "source": { "$ref": "#/definitions/entity_source" },
         "kind": {
           "type": "string",
           "enum": ["bridge", "tunnel", "underpass", "gallery", "other"],
@@ -562,6 +663,9 @@
       "properties": {
         "id": { "$ref": "#/definitions/id" },
         "name": { "type": "string" },
+        "ref": { "type": "string", "description": "The public reference of the thing, such as a road number (C-17) or a building number." },
+        "tags": { "$ref": "#/definitions/tags" },
+        "source": { "$ref": "#/definitions/entity_source" },
         "centerline": { "$ref": "#/definitions/centerline" },
         "drivable": { "type": "boolean", "default": true },
         "surface": { "$ref": "#/definitions/id", "description": "Surface of the road where no band, binding or template strip says otherwise." }
@@ -575,6 +679,10 @@
       "patternProperties": { "^x_": {}, "^_": {} },
       "properties": {
         "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "ref": { "type": "string", "description": "The public reference of the thing, such as a road number (C-17) or a building number." },
+        "tags": { "$ref": "#/definitions/tags" },
+        "source": { "$ref": "#/definitions/entity_source" },
         "kind": {
           "type": "string",
           "enum": ["at_grade", "grade_separated", "merge", "split", "roundabout"],
@@ -1752,6 +1860,10 @@
       "patternProperties": { "^x_": {}, "^_": {} },
       "properties": {
         "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "ref": { "type": "string", "description": "The public reference of the thing, such as a road number (C-17) or a building number." },
+        "tags": { "$ref": "#/definitions/tags" },
+        "source": { "$ref": "#/definitions/entity_source" },
         "side": { "type": "string", "enum": ["left", "right"] },
         "s_start": { "$ref": "#/definitions/s" },
         "s_end": {

@@ -50,6 +50,25 @@ name is ignored, so two objects with the same STJ name are an error.
 | `STJ::surface::<id>` | Material | surface binding | `<id>` should be in `surfaces.library`; otherwise a warning. |
 | `STJ::geo::origin` | Empty | `environment.geo_reference`, `north_heading`, `timezone`, `default_time` | At most one, at the frame origin (z = 0 is at `altitude`). Its custom property `stj` holds `latitude`, `longitude`, `altitude`, `proj`, `vertical_datum` (→ `geo_reference`), `timezone`, `date` and `local_time` (→ `default_time`). Its **heading points at true north** (the arrow shows north): it gives `north_heading`, written only when it differs from the document's value, or from +Y when the document has none. Latitude and longitude out of range are an error. |
 | `STJ::sun::<id>` | Sun light | `environment.lighting.sun.direction` | At most one. The direction towards the sun is the light's +Z axis. The sun follows date and time (from the geo origin) and nothing is written while it stays within 0.5° of the computed position (`stj_core.sun_direction`). A sun moved away from it is written as a fixed `direction`, with a note, because the file then no longer follows the clock. Any other light type is an error. |
+| `STJ::road::<id>` | Curve | `roads[]` | The curve gives `centerline.points`, `closed` and tangents, as the reference curve does. The `stj` property holds the other fields of the road (`name`, `drivable`, `surface`, …); its key `centerline` holds the other fields of the centerline (`width`, `cross_section`, …). |
+| `STJ::junction::<id>` | Empty | `junctions[]` | The `stj` property is the junction (`kind`, `through`, `roads`, `height`, `mesh`). The empty sits at the joint point for display; moving it changes nothing, because the joint follows the roads. |
+| `STJ::edge::<id>` | Curve | `edges[]` | A curve along the reference line at the edge's `t`. The `stj` property is the edge (`side`, `s_start`, `s_end`, `kind`, `style`, …). While the curve is where the property puts it, the property is written as it is; once the curve is moved, `side`, `s_start`, `s_end` and `t` are read from the curve. |
+| `STJ::camera::<set>::<id>` | Camera | `cameras.sets[]` | At the camera's `position`, looking at `look_at` when it has one. The `stj` property is the camera (`kind`, `fov`, `active`, …). A camera that is moved or turned writes its new `position` and `look_at`. |
+| `STJ::building::<id>`, `STJ::area::<id>` | Curve (closed) | `buildings[]`, `areas[]` | A closed curve through the footprint (or the polygon) at the building's `z`; the curve gives the ring, and the `stj` property holds everything else (`name`, `class`, `holes`, `height`, `tags`, `source`, …). Pulling a corner out changes the footprint. |
+| `STJ::structure::<id>` | Empty | `structures[]` | The `stj` property is the structure. The empty sits at the middle of its `s` range on its road, for display; the structure follows its road, so moving the empty changes nothing. |
+| `STJ::animated::<id>` | Empty | `animated_objects[]` | The `stj` property is the entry (`kind`, `target`, `playback`, `speed_by`, …). |
+| `STJ::prototype::<id>` | Empty | `scenery.prototypes.<id>` | The `stj` property is the prototype (`class`, `collision`, `breakable`, `mesh`, `physics`, …). The physics stays in the property: it is not mapped to a Blender Rigid Body yet. |
+| `STJ::instance::<prototype>_<n>` | Mesh (vertices only) | `scenery.instances[]` | One vertex per instance: its position. The point attributes `stj_heading` and `stj_scale` (0 = no scale given) hold the other two numbers of each transform. The `stj` property holds `prototype`, `when`, `cull_distance`, `source`, … |
+| `STJ::emitter::<id>` | Empty | `audio.emitters[]` | At the emitter's `position`; the `stj` property is the rest of the entry. A moved empty writes its new position. |
+| `STJ::crowd::<id>` | Empty | `scenery.crowds[]` | The `stj` property is the crowd (`prototype`, `area`, `density`, `behaviour`, `when`). |
+| collection `STJ::mesh::<id>` | Collection | `geometry.meshes[]` | The mesh objects inside are exported to one USD file by Blender's USD exporter. The `stj` property holds `roles` (required) and the rest of the entry (`uri`, `lod`, `decal`, `chunk`, `baked`, …); `uri` defaults to `<id>.usd`. |
+
+**Order and exactness.** Blender sorts objects by name, so the order of a list in the document is kept in the
+`_i` key of the object's `stj` property (roads, junctions, edges, cameras). The keys `_i`, `_set` and `_shared`
+are the profile's own and are never written to the document. A pose or a gate imported from a document keeps
+its original form in `stj` (`pose`, `s`) and is written back in that form while the object has not moved; once
+it moves, it is written as a world pose or a new `s`. This is what makes import then export give the document
+back exactly.
 
 **Heading** is the angle of the empty's local X axis in the world, counter-clockwise from +X (rad), the STJ
 `heading`. An empty's arrow shows the direction a vehicle faces.
@@ -64,8 +83,9 @@ blender -b track.blend --python tools/blender/stj_blender.py -- export <out_dir>
 ```
 
 `lint` reports ERROR, WARN and NOTE and exits 1 on an error. `export` runs the lint, refuses on an error,
-and writes `<name>.stj.json` (the document) and `<name>.usd` (Blender's USD export, with the document in the
-root layer's `customLayerData["stj"]`, spec §7.8). The decisions are in `tools/blender/stj_profile.py`, which
+and writes `<name>.stj.json` (the document), `<name>.usd` (the track stage: Z up, metres, and the document in
+the root layer's `customLayerData["stj"]`, spec §7.8) and one USD file per mesh collection, at its `uri`
+(Blender's USD exporter, with the preview surface and MaterialX). The decisions are in `tools/blender/stj_profile.py`, which
 does not need Blender and is tested without it.
 
 ## 6. Import
@@ -93,12 +113,20 @@ document, except that poses given as `s`, `t` come back as world poses.
 ## 7. Conformance
 
 `examples/make_blender_reference.py` builds `test_ring_profile.blend`, which uses every row of section 4. A
-translator is conformant when reading that file gives the Test Ring document, and when importing a document
-and exporting it again gives the document back (`tests/test_blender_profile.py` runs both when Blender is
-available).
+translator is conformant when:
+
+- reading that file gives the Test Ring document;
+- importing a document and exporting it again gives the document back, exactly, for the example documents
+  (the Test Ring, the Test Ring GP and the stage Coll de Prova);
+- exporting the reference `.blend`, importing the result and comparing the two scenes (`stj_blender.py dump`)
+  gives the same objects at the same places.
+
+`tests/test_blender_profile.py` runs all three when Blender is available. Mesh files go through Blender's USD
+import and export, so their geometry and materials are kept but the files are not byte for byte the same (nested
+custom properties and per-corner attributes are dropped by Blender, `docs/blender_mapping.md` section 4).
 
 ## 8. Not in version 0.1
 
-Meshes and collision collections, roads and junctions, structures,
-scatter, cameras, edges, audio, physics and the sky. Their conventions are in `docs/blender_mapping.md`; each
+Scatter rules, ground layers, terrain, water, the sky, screens, marshals and the rest of the sections of the document (they stay in the text block).
+Prototype physics and animation are carried as data, not yet as Blender Rigid Body and actions. Their conventions are in `docs/blender_mapping.md`; each
 becomes normative when it is probed and has a row here.
