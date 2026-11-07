@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools" / "blender"))
+sys.path.insert(0, str(ROOT / "examples"))
 import stj_core as core  # noqa: E402
 import stj_profile as profile  # noqa: E402
 import validate  # noqa: E402
@@ -125,6 +126,139 @@ class SceneToDocument(unittest.TestCase):
         self.assertEqual([f"{w}: {m}" for lv, w, m in rep.items if lv == "ERROR"], [])
 
 
+class DocumentToScene(unittest.TestCase):
+    """Import: a document becomes a scene description, and the scene gives the document back."""
+
+    def doc(self):
+        import make_examples
+        return make_examples.test_ring()
+
+    def test_round_trip_of_the_test_ring_is_exact(self):
+        doc = self.doc()
+        back = profile.apply_scene(profile.scene_from_document(doc))
+        for key in ("reference", "timing", "race", "surfaces", "environment"):
+            self.assertEqual(back[key], doc[key], key)
+        self.assertEqual(back, doc)
+
+    def test_a_moved_object_overrides_the_stored_pose_and_gate(self):
+        desc = profile.scene_from_document(self.doc())
+        grid1 = next(o for o in desc["objects"] if o["name"] == "STJ::grid::1")
+        grid1["location"][0] += 3.0
+        gate = next(o for o in desc["objects"] if o["name"] == "STJ::timing::start_finish")
+        gate["location"][0] += 3.0
+        back = profile.apply_scene(desc)
+        self.assertIn("position", back["race"]["grid"][0]["pose"])          # a world pose now
+        self.assertNotEqual(back["timing"]["start_finish"]["s"], 150.0)
+
+    def test_the_scene_has_the_profile_names_and_no_errors(self):
+        desc = profile.scene_from_document(self.doc())
+        names = {o["name"] for o in desc["objects"]}
+        self.assertIn("STJ::reference::centerline", names)
+        self.assertIn("STJ::timing::start_finish", names)
+        self.assertIn("STJ::grid::1", names)
+        self.assertEqual({m["name"] for m in desc["materials"]}, {"STJ::surface::asphalt", "STJ::surface::kerb", "STJ::surface::grass"})
+        self.assertEqual(levels(profile.lint_scene(desc), "ERROR"), [])
+        base = json.loads(desc["texts"][profile.BASE_TEXT])
+        self.assertNotIn("points", base["reference"]["centerline"])
+        self.assertNotIn("grid", base.get("race", {}))
+
+    def test_what_a_scene_cannot_hold_stays_in_the_text_block(self):
+        doc = self.doc()
+        doc["timing"]["split_points"] = [{"id": "a", "name": "Named split", "s": 300.0}]
+        doc["race"]["spawns"] = [{"id": "free", "pose": {"s": 10.0, "t": 0.0, "x_note": 1}}]
+        desc = profile.scene_from_document(doc)
+        base = json.loads(desc["texts"][profile.BASE_TEXT])
+        self.assertEqual(base["timing"]["split_points"], doc["timing"]["split_points"])
+        self.assertEqual(base["race"]["spawns"], doc["race"]["spawns"])
+        self.assertEqual(profile.apply_scene(desc)["timing"]["split_points"], doc["timing"]["split_points"])
+
+    def test_tangents_are_kept_for_a_bezier_curve(self):
+        doc = self.doc()
+        cl = doc["reference"]["centerline"]
+        cl["tangents"] = [[10.0, 0.0, 0.0]] * len(cl["points"])
+        desc = profile.scene_from_document(doc)
+        self.assertEqual(len(desc["objects"][0]["tangents_out"]), len(cl["points"]))
+        back = profile.apply_scene(desc)["reference"]["centerline"]
+        self.assertEqual(back["tangents_out"], back["tangents_in"])
+        self.assertNotIn("tangents", back)
+
+
+class PlaceAndSun(unittest.TestCase):
+    """The geo origin (coordinates, height, time, north) and the sun light (spec/STJ_Blender_Profile.md §4)."""
+
+    ENV = {"geo_reference": {"latitude": 41.0, "longitude": 0.0, "altitude": 312.5, "vertical_datum": "EGM2008"},
+           "north_heading": 1.2, "timezone": "UTC", "default_time": {"date": "2026-12-21", "local_time": "12:00"}}
+
+    def doc(self):
+        d = json.loads(json.dumps(BASE))
+        d["environment"] = json.loads(json.dumps(self.ENV))
+        return d
+
+    def test_sun_position_from_place_and_time(self):
+        e, n, u = core.sun_enu(0.0, 0.0, __import__("datetime").datetime(2026, 3, 20, 12, 0))
+        self.assertGreater(u, 0.998)                                    # equinox noon on the equator: overhead
+        e, n, u = core.sun_enu(41.0, 0.0, __import__("datetime").datetime(2026, 12, 21, 12, 0))
+        self.assertAlmostEqual(math.degrees(math.asin(u)), 25.6, delta=0.3)      # 90 - 41 - 23.4
+        self.assertLess(n, -0.85)                                       # in the south
+
+    def test_sun_direction_follows_north_heading(self):
+        d = self.doc()
+        x, y, z = core.sun_direction(d)
+        self.assertAlmostEqual(x * math.cos(1.2) + y * math.sin(1.2), -0.9, delta=0.02)   # south
+        d["environment"]["lighting"] = {"sun": {"direction": [0, 0, 1]}}
+        self.assertEqual(core.sun_direction(d), (0.0, 0.0, 1.0))                     # a fixed sun wins
+        del d["environment"]["lighting"], d["environment"]["default_time"]
+        self.assertIsNone(core.sun_direction(d))
+
+    def test_import_makes_a_geo_origin_and_a_sun(self):
+        desc = profile.scene_from_document(self.doc())
+        by = {o["name"]: o for o in desc["objects"]}
+        geo = by["STJ::geo::origin"]
+        self.assertEqual(geo["heading"], 1.2)
+        self.assertEqual(geo["props"]["stj"]["altitude"], 312.5)
+        self.assertEqual(geo["props"]["stj"]["local_time"], "12:00")
+        sun = by["STJ::sun::main"]
+        self.assertEqual(sun["type"], "LIGHT")
+        self.assertAlmostEqual(math.sqrt(sum(c * c for c in sun["direction"])), 1.0)
+        base = json.loads(desc["texts"][profile.BASE_TEXT])
+        self.assertEqual(base["environment"], {"north_heading": 1.2})
+
+    def test_import_then_apply_gives_the_environment_back(self):
+        doc = self.doc()
+        back = profile.apply_scene(profile.scene_from_document(doc))
+        self.assertEqual(back["environment"], doc["environment"])            # the sun follows the time: no direction written
+        self.assertEqual(levels(profile.lint_scene(profile.scene_from_document(doc)), "ERROR"), [])
+
+    def test_a_moved_sun_becomes_a_fixed_direction(self):
+        desc = profile.scene_from_document(self.doc())
+        sun = next(o for o in desc["objects"] if o["name"] == "STJ::sun::main")
+        sun["direction"] = [0.0, 0.0, 1.0]
+        doc = profile.apply_scene(desc)
+        self.assertEqual(doc["environment"]["lighting"]["sun"]["direction"], [0.0, 0.0, 1.0])
+        self.assertTrue(any("will not follow date and time" in m for m in levels(profile.lint_scene(desc), "NOTE")))
+
+    def test_the_geo_origin_in_blender_overrides_the_text_block(self):
+        s = scene()
+        s["objects"].append({"name": "STJ::geo::origin", "type": "EMPTY", "location": [0, 0, 0], "heading": math.pi / 2,
+                             "collections": [], "props": {"stj": {"latitude": 10.0, "longitude": 20.0, "altitude": 5.0}}})
+        env = profile.apply_scene(s)["environment"]
+        self.assertEqual(env["geo_reference"], {"latitude": 10.0, "longitude": 20.0, "altitude": 5.0})
+        self.assertNotIn("north_heading", env)                                # +Y north is the default
+
+    def test_bad_geo_and_sun_objects(self):
+        s = scene()
+        s["objects"] += [{"name": "STJ::geo::origin", "type": "EMPTY", "location": [0, 0, 0], "heading": 0.0,
+                          "collections": [], "props": {"stj": {"latitude": 95.0}}},
+                         {"name": "STJ::sun::a", "type": "LIGHT", "light_type": "POINT", "location": [0, 0, 5], "heading": 0.0,
+                          "collections": [], "props": {}, "direction": [0, 0, 1]},
+                         {"name": "STJ::sun::b", "type": "LIGHT", "light_type": "SUN", "location": [0, 0, 5], "heading": 0.0,
+                          "collections": [], "props": {}, "direction": [0, 0, 1]}]
+        found = " | ".join(levels(profile.lint_scene(s), "ERROR"))
+        self.assertIn("latitude must be", found)
+        self.assertIn("a sun must be a Sun light", found)
+        self.assertIn("more than one sun", found)
+
+
 class Checker(unittest.TestCase):
     def test_a_clean_scene_has_no_errors(self):
         self.assertEqual(levels(profile.lint_scene(scene()), "ERROR"), [])
@@ -214,6 +348,87 @@ class InBlender(unittest.TestCase):
             self.assertEqual([g["position"] for g in doc["race"]["grid"]], [1, 2, 3, 4])
             if core.have_pxr():
                 self.assertEqual(core.load_document(Path(d) / "out" / "ring.usd"), doc)        # the document is in the USD
+
+    def test_import_then_export_gives_the_document_back(self):
+        import make_examples
+        doc = make_examples.test_ring()
+        script = str(ROOT / "tools" / "blender" / "stj_blender.py")
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "ring.stj.json"
+            src.write_text(json.dumps(doc), encoding="utf-8")
+            blend = Path(d) / "ring.blend"
+            r = self.run_blender("--python", script, "--", "import", str(src), str(blend))
+            self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-800:])
+            self.assertTrue(blend.is_file())
+            r = subprocess.run([find_blender(), "-b", str(blend), "--python", script, "--", "export", str(Path(d) / "out"), "ring"],
+                               capture_output=True, text=True, timeout=300)
+            self.assertEqual(r.returncode, 0, r.stdout[-800:])
+            back = json.loads((Path(d) / "out" / "ring.stj.json").read_text(encoding="utf-8"))
+            self.assertEqual(back["reference"]["centerline"]["points"], doc["reference"]["centerline"]["points"])
+            self.assertAlmostEqual(back["timing"]["start_finish"]["s"], 150.0, delta=0.01)
+            self.assertEqual(back["timing"]["sectors"], doc["timing"]["sectors"])
+            self.assertEqual(len(back["race"]["grid"]), 4)
+
+    def test_coordinates_height_and_sun_survive_the_round_trip(self):
+        doc = json.loads(json.dumps(PlaceAndSun.ENV))
+        import make_examples
+        full = make_examples.test_ring()
+        full["environment"].update(doc)
+        script = str(ROOT / "tools" / "blender" / "stj_blender.py")
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "ring.stj.json"
+            src.write_text(json.dumps(full), encoding="utf-8")
+            blend = Path(d) / "ring.blend"
+            r = self.run_blender("--python", script, "--", "import", str(src), str(blend))
+            self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-800:])
+            r = subprocess.run([find_blender(), "-b", str(blend), "--python", script, "--", "export", str(Path(d) / "out"), "ring"],
+                               capture_output=True, text=True, timeout=300)
+            self.assertEqual(r.returncode, 0, r.stdout[-800:])
+            back = json.loads((Path(d) / "out" / "ring.stj.json").read_text(encoding="utf-8"))
+            env = back["environment"]
+            self.assertEqual(env["geo_reference"], full["environment"]["geo_reference"])
+            self.assertAlmostEqual(env["north_heading"], 1.2, places=5)
+            self.assertEqual(env["default_time"], full["environment"]["default_time"])
+            self.assertNotIn("lighting", env)        # the sun was not moved, so it still follows date and time
+
+    def test_meshes_round_trip_through_collections(self):
+        from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade
+        import make_examples
+        doc = make_examples.test_ring()
+        script = str(ROOT / "tools" / "blender" / "stj_blender.py")
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            stage = Usd.Stage.CreateNew(str(d / "road.usda"))
+            UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+            UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+            mesh = UsdGeom.Mesh.Define(stage, "/road/STJ__collision__road")
+            mesh.CreatePointsAttr([Gf.Vec3f(0, 0, 0), Gf.Vec3f(10, 0, 0), Gf.Vec3f(10, 10, 0), Gf.Vec3f(0, 10, 0)])
+            mesh.CreateFaceVertexCountsAttr([4])
+            mesh.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+            mat = UsdShade.Material.Define(stage, "/road/Looks/STJ__surface__asphalt")
+            sh = UsdShade.Shader.Define(stage, "/road/Looks/STJ__surface__asphalt/Preview")
+            sh.CreateIdAttr("UsdPreviewSurface")
+            sh.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(0.3, 0.3, 0.3))
+            mat.CreateSurfaceOutput().ConnectToSource(sh.ConnectableAPI(), "surface")
+            UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(mat)
+            stage.GetRootLayer().Save()
+            doc["geometry"] = {"meshes": [{"id": "road", "uri": "road.usda", "roles": ["collision", "visual"]}]}
+            (d / "ring.stj.json").write_text(json.dumps(doc), encoding="utf-8")
+            blend = d / "ring.blend"
+            r = self.run_blender("--python", script, "--", "import", str(d / "ring.stj.json"), str(blend))
+            self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-800:])
+            r = subprocess.run([find_blender(), "-b", str(blend), "--python", script, "--", "export", str(d / "out"), "ring"],
+                               capture_output=True, text=True, timeout=300)
+            self.assertEqual(r.returncode, 0, r.stdout[-1500:])
+            back = json.loads((d / "out" / "ring.stj.json").read_text(encoding="utf-8"))
+            self.assertEqual(back["geometry"]["meshes"], doc["geometry"]["meshes"])
+            out_stage = Usd.Stage.Open(str(d / "out" / "road.usda"))
+            meshes = [p for p in out_stage.Traverse() if p.IsA(UsdGeom.Mesh)]
+            self.assertEqual(len(meshes), 1)
+            self.assertEqual(len(UsdGeom.Mesh(meshes[0]).GetPointsAttr().Get()), 4)
+            self.assertTrue(any(p.GetName() == "STJ__surface__asphalt" for p in out_stage.Traverse()))
+            rep = validate.validate(str(d / "out" / "ring.stj.json"))
+            self.assertEqual([f"{w}: {m}" for lv, w, m in rep.items if lv == "ERROR"], [])
 
 
 if __name__ == "__main__":

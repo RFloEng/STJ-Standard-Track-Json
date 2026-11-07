@@ -32,7 +32,12 @@ out.mkdir(parents=True, exist_ok=True)
 doc = make_examples.test_ring()
 pts = doc["reference"]["centerline"]["points"]
 line = core.ReferenceLine(pts, closed=True)
+doc["environment"].update({"geo_reference": {"latitude": 41.35, "longitude": 2.1, "altitude": 120.0, "vertical_datum": "EGM2008"},
+                           "timezone": "Europe/Madrid", "default_time": {"date": "2026-06-20", "local_time": "15:30"}})
 base = copy.deepcopy(doc)
+base["environment"].pop("geo_reference")
+base["environment"].pop("timezone")
+base["environment"].pop("default_time")
 del base["reference"]["centerline"]["points"]
 base["reference"]["centerline"].pop("closed", None)
 base.pop("timing")
@@ -100,6 +105,16 @@ x, y, z = line.point(100.0, -14.0)
 empty("STJ::pit::box1::garage", x, y, z, line.frame(100.0)[3])
 x, y, z = line.point(40.0, 0.0)
 empty("STJ::spawn::hotlap", x, y, z, line.frame(40.0)[3])
+
+# the place (coordinates, height, time, true north) and the sun, which follows the date and time
+geo = empty("STJ::geo::origin", 0.0, 0.0, 0.0, doc["environment"]["north_heading"])
+geo["stj"] = {**doc["environment"]["geo_reference"], "timezone": doc["environment"]["timezone"],
+              **doc["environment"]["default_time"]}
+sun_dir = Vector(core.sun_direction(doc)).normalized()
+sun = bpy.data.objects.new("STJ::sun::main", bpy.data.lights.new("STJ::sun::main", "SUN"))
+sun.location = sun_dir * 100.0
+sun.rotation_euler = sun_dir.to_track_quat("Z", "Y").to_euler()
+add(sun)
 
 # surfaces
 for sid in doc["surfaces"]["library"]:

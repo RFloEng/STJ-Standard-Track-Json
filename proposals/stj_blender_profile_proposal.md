@@ -1,8 +1,8 @@
 # Proposal: the STJ Blender profile and the official Blender translator
 
 Status: accepted (all five decisions as recommended). First slice implemented: profile 0.1
-(`spec/STJ_Blender_Profile.md`), export and lint (`tools/blender/`), the reference `.blend`. Still to do:
-import, meshes and collision collections, roads, and the other rows as they are probed.
+(`spec/STJ_Blender_Profile.md`), export, import and lint (`tools/blender/`), the reference `.blend`, the geo
+origin and the sun. Still to do: meshes and collision collections, roads, and the other rows as they are probed.
 Source: question from the repo owner: can a standard `.blend` be defined from the STJ entities, so that
 every conversion to and from Blender stays consistent between translators, and where should the
 STJ-to-Blender translator live?

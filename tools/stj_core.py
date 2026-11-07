@@ -544,6 +544,74 @@ def road_line(doc, road_id):
     return None
 
 
+# ── the sun (spec §8.3) ──────────────────────────────────────────────────────
+
+def sun_enu(latitude, longitude, utc):
+    """Unit vector towards the sun as (east, north, up), for a place (deg) and a UTC datetime.
+
+    The NOAA general solar position formulas (equation of time and declination from the fractional year):
+    good to about 0.1 deg, which is far finer than anything a track needs."""
+    day = utc.timetuple().tm_yday
+    gamma = 2.0 * math.pi / 365.0 * (day - 1 + (utc.hour - 12) / 24.0)
+    eqtime = 229.18 * (0.000075 + 0.001868 * math.cos(gamma) - 0.032077 * math.sin(gamma)
+                       - 0.014615 * math.cos(2 * gamma) - 0.040849 * math.sin(2 * gamma))
+    decl = (0.006918 - 0.399912 * math.cos(gamma) + 0.070257 * math.sin(gamma) - 0.006758 * math.cos(2 * gamma)
+            + 0.000907 * math.sin(2 * gamma) - 0.002697 * math.cos(3 * gamma) + 0.00148 * math.sin(3 * gamma))
+    minutes = utc.hour * 60 + utc.minute + utc.second / 60.0
+    hour_angle = math.radians((minutes + eqtime + 4.0 * longitude) / 4.0 - 180.0)
+    lat = math.radians(latitude)
+    east = -math.cos(decl) * math.sin(hour_angle)
+    north = math.sin(decl) * math.cos(lat) - math.cos(decl) * math.cos(hour_angle) * math.sin(lat)
+    up = math.sin(lat) * math.sin(decl) + math.cos(lat) * math.cos(decl) * math.cos(hour_angle)
+    return east, north, up
+
+
+def sun_utc(env):
+    """The UTC datetime of environment.default_time, or None. The zone is `timezone` (IANA) when it can be
+    loaded, otherwise the one the longitude implies (15 deg per hour)."""
+    import datetime
+    t = env.get("default_time") or {}
+    if "date" not in t or "local_time" not in t:
+        return None
+    try:
+        local = datetime.datetime.fromisoformat(f"{t['date']}T{t['local_time']}")
+    except ValueError:
+        return None
+    zone = None
+    if env.get("timezone"):
+        try:
+            import zoneinfo
+            zone = zoneinfo.ZoneInfo(env["timezone"])
+        except Exception:  # noqa: BLE001  (no tz database, or an unknown name)
+            zone = None
+    if zone is not None:
+        return local.replace(tzinfo=zone).astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    lon = (env.get("geo_reference") or {}).get("longitude")
+    if lon is None:
+        return None
+    return local - datetime.timedelta(hours=round(lon / 15.0))
+
+
+def sun_direction(doc):
+    """Unit vector from the ground towards the sun in STJ world axes, or None.
+
+    `environment.lighting.sun.direction` when the file fixes the sun; otherwise computed from `geo_reference`
+    (latitude and longitude), `north_heading` (default pi/2: +Y is north), `default_time` and `timezone`."""
+    env = doc.get("environment") or {}
+    fixed = ((env.get("lighting") or {}).get("sun") or {}).get("direction")
+    if fixed:
+        return tuple(float(c) for c in fixed)
+    geo = env.get("geo_reference") or {}
+    utc = sun_utc(env)
+    if utc is None or "latitude" not in geo or "longitude" not in geo:
+        return None
+    e, n, u = sun_enu(geo["latitude"], geo["longitude"], utc)
+    nh = env.get("north_heading", math.pi / 2)
+    nx, ny = math.cos(nh), math.sin(nh)                  # true north in world axes
+    ex, ey = math.sin(nh), -math.cos(nh)                 # east is clockwise from north
+    return (e * ex + n * nx, e * ey + n * ny, u)
+
+
 # ── data sources and licences (spec §5.2) ────────────────────────────────────
 
 ATTRIBUTION_LICENCES = ("cc-by", "odbl", "odc-by", "ogl", "etalab")        # SPDX prefixes that ask for a credit line

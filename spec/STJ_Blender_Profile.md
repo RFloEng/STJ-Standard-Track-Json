@@ -48,6 +48,8 @@ name is ignored, so two objects with the same STJ name are an error.
 | `STJ::pit::<id>`, `STJ::pit::<id>::garage` | Empty | `race.pit_boxes[]` | The pose of the box, and `garage_pose`. A box without a pose is dropped. |
 | `STJ::spawn::<id>` | Empty | `race.spawns[]` | The pose. |
 | `STJ::surface::<id>` | Material | surface binding | `<id>` should be in `surfaces.library`; otherwise a warning. |
+| `STJ::geo::origin` | Empty | `environment.geo_reference`, `north_heading`, `timezone`, `default_time` | At most one, at the frame origin (z = 0 is at `altitude`). Its custom property `stj` holds `latitude`, `longitude`, `altitude`, `proj`, `vertical_datum` (→ `geo_reference`), `timezone`, `date` and `local_time` (→ `default_time`). Its **heading points at true north** (the arrow shows north): it gives `north_heading`, written only when it differs from the document's value, or from +Y when the document has none. Latitude and longitude out of range are an error. |
+| `STJ::sun::<id>` | Sun light | `environment.lighting.sun.direction` | At most one. The direction towards the sun is the light's +Z axis. The sun follows date and time (from the geo origin) and nothing is written while it stays within 0.5° of the computed position (`stj_core.sun_direction`). A sun moved away from it is written as a fixed `direction`, with a note, because the file then no longer follows the clock. Any other light type is an error. |
 
 **Heading** is the angle of the empty's local X axis in the world, counter-clockwise from +X (rad), the STJ
 `heading`. An empty's arrow shows the direction a vehicle faces.
@@ -66,14 +68,37 @@ and writes `<name>.stj.json` (the document) and `<name>.usd` (Blender's USD expo
 root layer's `customLayerData["stj"]`, spec §7.8). The decisions are in `tools/blender/stj_profile.py`, which
 does not need Blender and is tested without it.
 
-## 6. Conformance
+## 6. Import
+
+```
+blender -b --factory-startup --python tools/blender/stj_blender.py -- import <track.stj.json|.usd> <out.blend>
+```
+
+`import` is the inverse of `export` (`scene_from_document` in `stj_profile.py`). From a document, or the
+document inside a USD, it builds a fresh `.blend` that follows sections 2 to 4:
+
+- the reference curve (a Bezier spline when the centerline has tangents, otherwise a poly spline), cyclic when
+  the line is `closed`;
+- empties for the timing lines and splits, the grid, the pit boxes with their garage and the spawns; a pose
+  given as `s`, `t` becomes a world position and heading;
+- the geo origin, with the coordinates, height, date, time and time zone, pointing at true north;
+- a Sun light at the position the date, time and place give (or at the fixed `direction`);
+- a material `STJ::surface::<id>` for each surface of the library;
+- the text block `track.stj.json`: the document without what the objects now hold.
+
+What an object cannot hold stays in the text block (a split with a name, a pose with extra keys, a timing
+line given by two end points, a geo reference with other keys). Importing and then exporting gives the same
+document, except that poses given as `s`, `t` come back as world poses.
+
+## 7. Conformance
 
 `examples/make_blender_reference.py` builds `test_ring_profile.blend`, which uses every row of section 4. A
-translator is conformant when reading that file gives the Test Ring document (`tests/test_blender_profile.py`
-runs the lint and the export on it when Blender is available).
+translator is conformant when reading that file gives the Test Ring document, and when importing a document
+and exporting it again gives the document back (`tests/test_blender_profile.py` runs both when Blender is
+available).
 
-## 7. Not in version 0.1
+## 8. Not in version 0.1
 
-Import (USD or document back to a scene), meshes and collision collections, roads and junctions, structures,
+Meshes and collision collections, roads and junctions, structures,
 scatter, cameras, edges, audio, physics and the sky. Their conventions are in `docs/blender_mapping.md`; each
 becomes normative when it is probed and has a row here.
