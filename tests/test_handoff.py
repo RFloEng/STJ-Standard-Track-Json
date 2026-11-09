@@ -196,6 +196,24 @@ class BuildingParts(Base):
         self.stage["buildings"][0]["parts"] = [{"id": "tower", "footprint": [[2, 2], [8, 2], [8, 8], [2, 8]], "z": 8.0, "height": 20.0}]
         self.assertEqual(self.errors(self.stage), [])
 
+    def test_floors_and_spaces(self):
+        self.stage["race"]["pit_boxes"] = [{"id": "box1", "pose": {"s": 20.0, "t": 5.0}}]
+        b = self.stage["buildings"][0]
+        b["floors"] = [{"id": "g", "index": 0, "z": 0.0, "height": 4.0, "spaces": [
+            {"id": "garage1", "class": "garage", "polygon": [[1, 1], [9, 1], [9, 9], [1, 9]], "vehicle_access": True, "pit_box": "box1"},
+            {"id": "tower", "class": "control", "polygon": [[10, 1], [19, 1], [19, 9], [10, 9]]}]}]
+        self.assertEqual(self.errors(self.stage), [])
+        b["floors"][0]["spaces"][0]["pit_box"] = "nope"
+        b["floors"].append({"id": "g2", "index": 0})
+        b["floors"][0]["spaces"][1]["id"] = "garage1"
+        b["floors"][0]["spaces"][1]["polygon"] = [[10, 1], [40, 1], [40, 9]]
+        rep = run(self.stage)
+        errs = messages(rep, "ERROR")
+        self.has(errs, "unknown pit box 'nope'")
+        self.has(errs, "duplicate space id 'garage1'")
+        self.has(messages(rep, "WARN"), "two floors with index 0")
+        self.has(messages(rep, "WARN"), "reaches outside the building's footprint")
+
     def test_part_findings(self):
         b = self.stage["buildings"][0]
         b["parts"] = [{"id": "a", "footprint": [[15, 2], [30, 2], [30, 8], [15, 8]], "height": 5.0},

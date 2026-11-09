@@ -482,6 +482,11 @@
           "description": "Where the building is already modelled."
         },
         "address": { "$ref": "#/definitions/address" },
+        "floors": {
+          "type": "array",
+          "description": "The floors of the building and the spaces on them (spec §7.9). Optional: STJ names what a sim needs (garages, control rooms), not a floor plan.",
+          "items": { "$ref": "#/definitions/building_floor" }
+        },
         "parts": {
           "type": "array",
           "description": "Parts of the building with their own footprint, base and height (a tower on a podium, a lower wing). The building's own footprint is the whole; the parts say how it rises (spec §7.9).",
@@ -502,6 +507,36 @@
         "postcode": { "type": "string" },
         "city": { "type": "string" },
         "country": { "type": "string", "description": "ISO 3166-1 alpha-2 code where known." }
+      }
+    },
+    "building_floor": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "index": { "type": "integer", "description": "0 at ground level, negative below." },
+        "z": { "type": "number", "description": "Elevation of the floor (m)." },
+        "height": { "type": "number", "exclusiveMinimum": 0, "description": "Floor to ceiling (m)." },
+        "spaces": { "type": "array", "items": { "$ref": "#/definitions/building_space" } }
+      }
+    },
+    "building_space": {
+      "type": "object",
+      "required": ["id", "class", "polygon"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "class": { "type": "string", "enum": ["garage", "workshop", "hospitality", "control", "office", "storage", "seating", "toilets", "circulation", "other"] },
+        "polygon": { "$ref": "#/definitions/ring" },
+        "holes": { "type": "array", "items": { "$ref": "#/definitions/ring" } },
+        "vehicle_access": { "type": "boolean", "description": "A vehicle can drive into it (a garage, a workshop)." },
+        "pit_box": { "$ref": "#/definitions/id", "description": "garage: the race.pit_boxes entry whose garage_pose is in this space." },
+        "tags": { "$ref": "#/definitions/tags" }
       }
     },
     "building_part": {

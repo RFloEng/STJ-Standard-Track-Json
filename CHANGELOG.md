@@ -4,6 +4,8 @@
 
 - **Blender profile: the rest of surfaces**: `STJ::surfaces::surfaces` carries `default`, `bindings`, `bands`, `maps`, `substitutions` and the other keys; only `environment`'s weather, season, climate and lighting stay in the text block.
 
+- **Buildings: floors and spaces** (spec §7.9): `floors[]` with `spaces[]` (garage, workshop, hospitality, control, office, storage, seating, toilets, circulation), `vehicle_access` and a link from a garage to its pit box. Optional and small; the Blender building curve carries it in its property.
+
 - **Buildings: address and parts** (spec §7.9): `address {housenumber, street, postcode, city, country}` and `parts[]` (own footprint, base, height, roof) with validator checks. The Blender building curve carries both in its property.
 
 - **Blender profile: surface library, track info, layouts, variants, emitter lines**: a surface material carries its library entry in `stj` (edit friction and the rest in Blender); `STJ::track_info::track_info`, `STJ::layout::<id>`, `STJ::variant::<id>` as records; line-source emitters as open curves.

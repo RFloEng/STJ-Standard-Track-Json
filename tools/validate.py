@@ -2751,6 +2751,32 @@ def check_places(ctx):
             rep.note(p, f"{b['height']} m for {b['levels']} level(s): {b['height'] / b['levels']:.1f} m a level")
         if b.get("mesh") and b["mesh"]["mesh_ref"] not in mesh_ids:
             rep.error(f"{p}.mesh.mesh_ref", f"unknown mesh '{b['mesh']['mesh_ref']}'")
+        floors = b.get("floors", [])
+        _dups(rep, f"{p}.floors", floors, "floor")
+        indexes = [f["index"] for f in floors if "index" in f]
+        for dup in {x for x in indexes if indexes.count(x) > 1}:
+            rep.warn(f"{p}.floors", f"two floors with index {dup}")
+        pit_ids = {x["id"] for x in (doc.get("race") or {}).get("pit_boxes", [])}
+        space_ids = []
+        for k, fl in enumerate(floors):
+            fp = f"{p}.floors[{k}]"
+            if "z" not in fl and "index" not in fl:
+                rep.note(fp, "no z and no index: the floor's place in the building is not stated")
+            for m, sp in enumerate(fl.get("spaces", [])):
+                sp_p = f"{fp}.spaces[{m}]"
+                space_ids.append(sp["id"])
+                ring = _ring_findings(rep, f"{sp_p}.polygon", sp["polygon"], "polygon")
+                if ring and outer and not all(core.point_in_polygon(outer, *q) or q in outer for q in ring):
+                    rep.warn(f"{sp_p}.polygon", "the space reaches outside the building's footprint")
+                if "pit_box" in sp:
+                    if sp["class"] != "garage":
+                        rep.warn(f"{sp_p}.pit_box", f"pit_box on a {sp['class']}: it belongs to a garage")
+                    if sp["pit_box"] not in pit_ids:
+                        rep.error(f"{sp_p}.pit_box", f"unknown pit box '{sp['pit_box']}'")
+                if sp["class"] == "garage" and "vehicle_access" not in sp:
+                    rep.note(sp_p, "a garage without vehicle_access: say whether a car can drive in")
+        for dup in {x for x in space_ids if space_ids.count(x) > 1}:
+            rep.error(f"{p}.floors", f"duplicate space id '{dup}'")
         parts = b.get("parts", [])
         _dups(rep, f"{p}.parts", parts, "building part")
         for k, part in enumerate(parts):

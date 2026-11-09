@@ -56,7 +56,9 @@ def with_places(doc):
     square = [[0.0, 0.0], [20.0, 0.0], [20.0, 10.0], [0.0, 10.0]]
     doc["buildings"] = [{"id": "hall", "name": "Ajuntament", "class": "public", "footprint": square,
                          "holes": [[[5.0, 3.0], [8.0, 3.0], [8.0, 6.0], [5.0, 6.0]]], "z": 12.5, "height": 12.0,
-                         "tags": {"building": "civic", "addr:street": "Carrer Major"}}]
+                         "tags": {"building": "civic", "addr:street": "Carrer Major"},
+                         "address": {"street": "Carrer Major", "housenumber": "1"},
+                         "floors": [{"id": "g", "index": 0, "spaces": [{"id": "hall1", "class": "other", "polygon": square}]}]}]
     doc["areas"] = [{"id": "square", "class": "park", "name": "Placa", "polygon": square}]
     doc["water"] = {"bodies": [{"id": "pond", "kind": "pond", "outline": [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0]]}]}
     doc["marshals"] = {"posts": [{"id": "p1", "kind": "marshal", "position": [1.0, 2.0, 3.0]}],
