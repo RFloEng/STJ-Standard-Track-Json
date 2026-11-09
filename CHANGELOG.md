@@ -2,7 +2,9 @@
 
 ## 0.3 (draft) — 2026-11-02
 
-- **Blender profile: the rest of surfaces**: `STJ::surfaces::surfaces` carries `default`, `bindings`, `bands`, `maps`, `substitutions` and the other keys; only `environment`'s weather, season, climate and lighting stay in the text block.
+- **Blender profile: the rest of the environment**: `STJ::environment::environment` carries weather, season, climate and lighting; every section of the document now has an object form.
+
+- **Blender profile: the rest of surfaces**: `STJ::surfaces::surfaces` carries `default`, `bindings`, `bands`, `maps`, `substitutions` and the other keys.
 
 - **Buildings: floors and spaces** (spec §7.9): `floors[]` with `spaces[]` (garage, workshop, hospitality, control, office, storage, seating, toilets, circulation), `vehicle_access` and a link from a garage to its pit box. Optional and small; the Blender building curve carries it in its property.
 

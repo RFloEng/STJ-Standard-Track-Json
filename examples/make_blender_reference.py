@@ -38,6 +38,8 @@ base = copy.deepcopy(doc)
 base["environment"].pop("geo_reference")
 base["environment"].pop("timezone")
 base["environment"].pop("default_time")
+base["environment"].pop("north_heading")        # the geo origin carries the heading
+env_rest = base.pop("environment")              # the rest of the environment goes on its own empty (below)
 del base["reference"]["centerline"]["points"]
 base["reference"]["centerline"].pop("closed", None)
 base.pop("timing")
@@ -130,6 +132,10 @@ if "track_info" in doc:                         # and the track info on its own 
     info = empty("STJ::track_info::track_info", 0.0, 0.0, 0.0, 0.0)
     info["stj"] = doc["track_info"]
     base.pop("track_info")
+
+if env_rest:
+    en = empty("STJ::environment::environment", 0.0, 0.0, 0.0, 0.0)
+    en["stj"] = env_rest
 
 # the base document
 text = bpy.data.texts.new(profile.BASE_TEXT)

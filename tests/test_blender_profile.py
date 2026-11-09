@@ -467,7 +467,7 @@ class PlaceAndSun(KeepExamples, unittest.TestCase):
         self.assertEqual(sun["type"], "LIGHT")
         self.assertAlmostEqual(math.sqrt(sum(c * c for c in sun["direction"])), 1.0)
         base = json.loads(desc["texts"][profile.BASE_TEXT])
-        self.assertEqual(base["environment"], {"north_heading": 1.2})
+        self.assertNotIn("environment", base)                              # the heading is on the geo origin
 
     def test_import_then_apply_gives_the_environment_back(self):
         doc = self.doc()

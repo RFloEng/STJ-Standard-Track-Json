@@ -149,10 +149,27 @@ def export(out_dir, name="track"):
     return 0
 
 
-def build_scene(desc):
-    """Create the objects, materials and text block of a scene description in a fresh, empty file."""
+def clear_scene():
+    """Empty the open file without reloading Blender's settings (an add-on stays enabled)."""
+    for coll in (bpy.data.objects, bpy.data.collections, bpy.data.meshes, bpy.data.curves, bpy.data.cameras,
+                 bpy.data.lights, bpy.data.materials, bpy.data.texts, bpy.data.images):
+        for item in list(coll):
+            coll.remove(item)
+    scene = bpy.context.scene
+    for key in list(scene.keys()):
+        del scene[key]
+
+
+def build_scene(desc, reset=True):
+    """Create the objects, materials and text block of a scene description in a fresh, empty file.
+
+    reset: reload Blender's factory settings first (the command line); False empties the open file instead,
+    which is what the add-on does."""
     from mathutils import Vector
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+    if reset:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+    else:
+        clear_scene()
     scene = bpy.context.scene
     scene[profile.PROFILE_PROP] = profile.PROFILE_VERSION
     root = bpy.data.collections.new("STJ")
