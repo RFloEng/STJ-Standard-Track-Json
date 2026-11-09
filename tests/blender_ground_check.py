@@ -103,7 +103,9 @@ tex = [gb.Texture(base_dir / l["albedo"]["uri"]) for l in layers]
 blend = gm.get("blend") or {}
 macros = [(gb.Texture(base_dir / m["uri"]), m.get("encoding", "grey_centred"), m.get("strength", 1.0), m.get("texcoord", "st"))
           for m in gm.get("macro", []) if "extent" not in m and m["kind"] != "wetness"]
-stl = mesh.uv_layers["st"].data if "st" in mesh.uv_layers else None
+masks_ = blend.get("mask") if blend.get("method") == "mask" else None
+masks_ = [masks_] if isinstance(masks_, dict) else (masks_ or [])
+mask_tex = [(gb.Texture(base_dir / mk["uri"]), mk) for mk in masks_]
 
 
 def locate(x, y):
@@ -161,8 +163,27 @@ for j in range(step // 2, size, step):
             hts.append(h if layer["albedo"].get("height_in_alpha") or layer["albedo"].get("alpha") == "height" else tex[li].mean_alpha)
             means.append(tex[li].mean_alpha)
             cons.append(layer.get("height_contrast", 1.0))
-        fb = core.ground_blend(weights, hts, means, cons, blend.get("method", "height"),
-                               blend.get("height_influence", 0.5), blend.get("depth", 0.2))
+        if blend.get("method") == "mask":
+            kvals = []
+            for mtex, mk in mask_tex:
+                if mk.get("projection", "world_xy") == "road":
+                    mu_ = sum(b * ruv[t].uv[0] for b, t in zip(bc, tri)) / mk["tile"]
+                    mv_ = sum(b * ruv[t].uv[1] for b, t in zip(bc, tri)) / mk["tile"]
+                else:
+                    mu_, mv_ = x / mk["tile"], y / mk["tile"]
+                mrgb, malpha = mtex.sample(mu_, mv_, data=True)
+                ch = mk.get("channel", "r")
+                kvals.append(malpha if ch == "a" else mrgb[{"r": 0, "g": 1, "b": 2, "gray": 0}[ch]])
+            order = sorted(range(len(lay)), key=lambda m: lay[m])
+            part = core.ground_blend([weights[m] for m in order], [hts[m] for m in order], [means[m] for m in order],
+                                     [cons[m] for m in order], "mask", masks=[kvals[lay[m] - 1] for m in order[1:]],
+                                     softness=blend.get("softness", core.MASK_DEFAULT_SOFTNESS))
+            fb = [0.0] * len(lay)
+            for m, share in zip(order, part):
+                fb[m] += share
+        else:
+            fb = core.ground_blend(weights, hts, means, cons, blend.get("method", "height"),
+                                   blend.get("height_influence", 0.5), blend.get("depth", 0.2))
         colour = tuple(sum(fi * c[ch] for fi, c in zip(fb, cols)) for ch in range(3))
         if macros:
             mean_base = core.ground_mean_colour(weights, [tex[li].mean_rgb for li in lay]) if any(

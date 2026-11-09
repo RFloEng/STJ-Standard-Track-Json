@@ -5,9 +5,8 @@ like one image. This builds the blend again as nodes on the ground material of t
 `stj_core.ground_blend` and `tools/ground_bake.py`, from the `ground` block, which stays the source of truth. The
 nodes are a view; the export never reads them.
 
-Supported: the `vertex_top3` encoding, the `height` and `linear` blends, the `world_xy`, `road` and texcoord
-projections, and `grey_centred`, `multiply` and `colour` macro maps over a UV map. Left out (and reported): the
-`mask` blend, macro maps over an extent, wetness maps, the normal/roughness/occlusion maps of the layers. A material
+Supported: the `vertex_top3` encoding, the `height`, `linear` and `mask` blends, the `world_xy`, `road` and texcoord
+projections, and `grey_centred`, `multiply` and `colour` macro maps over a UV map. Left out (and reported): macro maps over an extent, wetness maps, the normal/roughness/occlusion maps of the layers. A material
 with something left out that changes the colour keeps its preview surface.
 
 Blender only: run inside Blender (`import bpy`).
@@ -147,7 +146,7 @@ def build_ground_material(mat, doc, gm, base_dir, mesh_attrs, interpolation="Lin
         return ["only the vertex_top3 encoding with three index attributes is built"], False
     blend = gm.get("blend") or {}
     method = blend.get("method", "height")
-    if method not in ("height", "linear"):
+    if method not in ("height", "linear", "mask"):
         return [f"the '{method}' blend is not built: the preview surface stays"], False
     ground = doc["ground"]
     layers = [ground["layers"][lid] for lid in gm["palette"]]
@@ -193,8 +192,12 @@ def build_ground_material(mat, doc, gm, base_dir, mesh_attrs, interpolation="Lin
 
     cols_v = [c if hasattr(c, "node") else None for c in cols]
     const_cols = [c if not hasattr(c, "node") else (0.0, 0.0, 0.0) for c in cols]
+    if method == "mask":
+        colour = _mask_colour(b, blend, layers, idx, ws, cols_v, const_cols, base_dir, mesh_attrs, notes, interpolation)
+        if colour is None:
+            return notes + ["the mask blend needs one mask for each layer after the first: the preview surface stays"], False
     slot_c = []
-    for k in range(3):
+    for k in range(3 if method != "mask" else 0):          # the mask blend picks its own colours
         parts = []
         for j in range(len(layers)):
             mask = b.math("COMPARE", idx[k], float(j), 0.1)
@@ -205,7 +208,9 @@ def build_ground_material(mat, doc, gm, base_dir, mesh_attrs, interpolation="Lin
             total = b.vec("ADD", total, p)
         slot_c.append(total)
 
-    if method == "linear":
+    if method == "mask":
+        shares = None
+    elif method == "linear":
         tot = b.mx(b.add(b.add(ws[0], ws[1]), ws[2]), EPS)
         shares = [b.div(ws[k], tot) for k in range(3)]
     else:
@@ -219,10 +224,11 @@ def build_ground_material(mat, doc, gm, base_dir, mesh_attrs, interpolation="Lin
         keep = [b.mx(b.sub(sc[k], thr), 0.0) for k in range(3)]
         tot = b.add(b.add(keep[0], keep[1]), keep[2])
         shares = [b.div(keep[k], tot) for k in range(3)]
-    colour = None
-    for k in range(3):
-        term = b.vec("SCALE", slot_c[k], scale=shares[k])
-        colour = term if colour is None else b.vec("ADD", colour, term)
+    if shares is not None:
+        colour = None
+        for k in range(3):
+            term = b.vec("SCALE", slot_c[k], scale=shares[k])
+            colour = term if colour is None else b.vec("ADD", colour, term)
 
     # macro maps over a UV map, then the surface (as tools/ground_materialx.py does)
     ref = None
@@ -261,6 +267,61 @@ def build_ground_material(mat, doc, gm, base_dir, mesh_attrs, interpolation="Lin
     b.link(bsdf.outputs["BSDF"], out.inputs["Surface"])
     mat["stj_ground_nodes"] = True
     return notes, True
+
+
+def _mask_colour(b, blend, layers, idx, ws, cols_v, const_cols, base_dir, mesh_attrs, notes, interpolation):
+    """The mask blend (spec §8.7): the layers present, put in palette order, each laid over the ones before it through
+    its own mask. The same steps as `stj_core.ground_blend(method="mask")`. None when the masks do not fit."""
+    masks = blend.get("mask")
+    masks = [masks] if isinstance(masks, dict) else (masks or [])
+    n = len(layers)
+    if len(masks) != n - 1:
+        return None
+    softness = blend.get("softness", core.MASK_DEFAULT_SOFTNESS)
+    mvals = [0.5]                                    # the first layer's mask is never used
+    for j, mk in enumerate(masks):
+        uv = _uv(b, mk, mesh_attrs, notes, f"mask {j}")
+        if uv is None:
+            mvals.append(0.5)
+            continue
+        tex = _image(b, base_dir / mk["uri"], uv, colour=False, interpolation=interpolation)
+        ch = mk.get("channel", "r")
+        if ch == "a":
+            mvals.append(tex.outputs["Alpha"])
+        else:
+            sep = b.node("ShaderNodeSeparateColor")
+            b.link(tex.outputs["Color"], sep.inputs["Color"])
+            mvals.append(sep.outputs[{"r": "Red", "gray": "Red", "g": "Green", "b": "Blue"}[ch]])
+
+    def cswap(a, c):
+        """Put two (index, weight) slots in index order."""
+        gt = b.math("GREATER_THAN", a[0], c[0])
+        lo_w = b.add(a[1], b.mul(gt, b.sub(c[1], a[1])))
+        hi_w = b.add(c[1], b.mul(gt, b.sub(a[1], c[1])))
+        return (b.math("MINIMUM", a[0], c[0]), lo_w), (b.math("MAXIMUM", a[0], c[0]), hi_w)
+
+    sl = [(idx[k], ws[k]) for k in range(3)]
+    sl[0], sl[1] = cswap(sl[0], sl[1])
+    sl[1], sl[2] = cswap(sl[1], sl[2])
+    sl[0], sl[1] = cswap(sl[0], sl[1])
+    colours = []
+    for s_ in range(3):
+        total = None
+        for j in range(n):
+            src = cols_v[j] if cols_v[j] is not None else b.vec("ADD", const_cols[j], (0.0, 0.0, 0.0))
+            term = b.vec("SCALE", src, scale=b.math("COMPARE", sl[s_][0], float(j), 0.1))
+            total = term if total is None else b.vec("ADD", total, term)
+        colours.append(total)
+    run1 = b.mx(b.add(sl[0][1], sl[1][1]), EPS)
+    run2 = b.mx(b.add(run1, sl[2][1]), EPS)
+    shares = [None, b.div(sl[1][1], run1), b.div(sl[2][1], run2)]
+    colour = colours[0]
+    for s_ in (1, 2):
+        k = b.select(sl[s_][0], mvals)
+        t = b.math("ADD", b.div(b.sub(shares[s_], k), softness), 0.5, clamp=True)
+        diff = b.vec("SUBTRACT", colours[s_], colour)
+        colour = b.vec("ADD", colour, b.vec("SCALE", diff, scale=t))
+    return colour
 
 
 def _weighted_mean(b, idx, ws, mean_rgb):
