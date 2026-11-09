@@ -73,6 +73,7 @@ CATEGORIES = {
     "screen": ({"EMPTY"}, "screens"),
     "chunk": ({"EMPTY"}, "geometry.chunks"),
     "tiles": ({"EMPTY"}, "geometry.tiles"),
+    "dynamic": ({"EMPTY"}, "dynamic"),
 }
 RING_KEY = {"building": "footprint", "area": "polygon"}        # the field of the entry that a closed curve holds
 # records that live in the scene as an empty whose `stj` property is the entry: category -> (path, "list" | "dict")
@@ -86,7 +87,8 @@ RECORDS = {"structure": ("structures", "list"), "animated": ("animated_objects",
            "service": ("race.service_areas", "list"),
            "ground_layer": ("ground.layers", "dict"), "ground_material": ("ground.materials", "list_noid"),
            "sky": ("environment.sky", "object"), "screen": ("screens", "list"),
-           "chunk": ("geometry.chunks", "list"), "tiles": ("geometry.tiles", "object")}
+           "chunk": ("geometry.chunks", "list"), "tiles": ("geometry.tiles", "object"),
+           "dynamic": ("dynamic", "object")}
 # records that are a closed curve when they have the ring: category -> (field of the entry, numbers per point)
 RECORD_RING = {"water": ("outline", 2), "service": ("polygon", 3)}
 # records that sit at their `position` (shown there; a moved empty writes the new position)
