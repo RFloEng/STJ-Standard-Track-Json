@@ -250,6 +250,61 @@ class DocumentToScene(KeepExamples, unittest.TestCase):
         line["props"]["stj"]["speed"] = [10.0]
         self.assertTrue(any(l == "WARN" and "speed has 1 values" in m for l, _p, m in profile.lint_scene(desc)))
 
+    def test_pit_lane_path_is_a_curve(self):
+        import make_examples
+        doc = make_examples.test_ring_gp()
+        desc = profile.scene_from_document(doc)
+        lane = next(o for o in desc["objects"] if o["name"] == "STJ::pit_lane::pit_lane")
+        self.assertEqual(lane["type"], "CURVE")
+        self.assertEqual(profile.apply_scene(desc), doc)
+        lane["points"][2][1] += 1.5
+        out = profile.apply_scene(desc)["timing"]["pit_lane"]
+        self.assertEqual(out["path"][2][1], doc["timing"]["pit_lane"]["path"][2][1] + 1.5)
+        self.assertEqual(out["limit_start"], doc["timing"]["pit_lane"]["limit_start"])
+
+    def test_prototype_body_changes_only_what_moved(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        desc = profile.scene_from_document(doc)
+        body = next(o for o in desc["objects"] if o["name"] == "STJ::prototype::hay_bale::body")
+        self.assertEqual(body["rigid_body"]["type"], "ACTIVE")
+        self.assertEqual(body["dimensions"], [1.5, 1.5, 1.2])
+        self.assertEqual(profile.apply_scene(desc), doc)
+        body["rigid_body"]["mass"] = 300.0
+        phys = profile.apply_scene(desc)["scenery"]["prototypes"]["hay_bale"]["physics"]
+        self.assertEqual((phys["mass"], phys["mode"]), (300.0, "movable"))
+        body["rigid_body"]["type"] = "PASSIVE"                                   # a passive body is static
+        phys = profile.apply_scene(desc)["scenery"]["prototypes"]["hay_bale"]["physics"]
+        self.assertEqual(phys["mode"], "static")
+        self.assertEqual(phys["shape"], doc["scenery"]["prototypes"]["hay_bale"]["physics"]["shape"])
+        body["dimensions"][2] = 2.0
+        self.assertEqual(profile.apply_scene(desc)["scenery"]["prototypes"]["hay_bale"]["physics"]["shape"]["height"], 2.0)
+        desc["objects"].append({"name": "STJ::prototype::hay_bale::oops", "type": "EMPTY", "location": [0, 0, 0],
+                                "heading": 0, "collections": ["STJ"], "props": {}})
+        self.assertTrue(any(l == "ERROR" and "unknown part" in m for l, _p, m in profile.lint_scene(desc)))
+
+    def test_surfaces_in_materials_and_the_last_records(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        desc = profile.scene_from_document(doc)
+        mat = next(m for m in desc["materials"] if m["name"] == "STJ::surface::gravel_loose")
+        self.assertEqual(mat["props"]["stj"], doc["surfaces"]["library"]["gravel_loose"])
+        self.assertNotIn("gravel_loose", json.loads(desc["texts"]["track.stj.json"]).get("surfaces", {}).get("library", {}))
+        mat["props"]["stj"]["rolling_resistance"] = 0.07                          # edited on the material
+        back = profile.apply_scene(desc)
+        self.assertEqual(back["surfaces"]["library"]["gravel_loose"]["rolling_resistance"], 0.07)
+        self.assertEqual(back["surfaces"]["default"], doc["surfaces"]["default"])
+        names = {o["name"] for o in desc["objects"]}
+        for want in ("STJ::track_info::track_info", "STJ::layout::ss1_reverse", "STJ::variant::wet"):
+            self.assertIn(want, names)
+        doc2 = make_examples.coll_de_prova()
+        doc2["audio"]["emitters"].append({"id": "river", "kind": "water", "path": [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+                                          "x_game": {"event": "river"}})
+        desc2 = profile.scene_from_document(doc2)
+        river = next(o for o in desc2["objects"] if o["name"] == "STJ::emitter::river")
+        self.assertEqual(river["type"], "CURVE")
+        self.assertEqual(profile.apply_scene(desc2), doc2)
+
     def test_terrain_lint(self):
         import make_examples
         desc = profile.scene_from_document(make_examples.coll_de_prova(), ROOT / "examples")
@@ -653,6 +708,37 @@ class InBlender(KeepExamples, unittest.TestCase):
             back = json.loads((d / "out" / "t.stj.json").read_text(encoding="utf-8"))
             self.assertEqual(back["geometry"]["terrain"], doc["geometry"]["terrain"])
             self.assertFalse((d / "out" / "terrain").exists())                 # untouched: nothing rewritten
+
+    def test_rigid_body_edits_reach_the_document(self):
+        import make_examples
+        script = str(ROOT / "tools" / "blender" / "stj_blender.py")
+        doc = make_examples.coll_de_prova()
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "t.stj.json").write_text(json.dumps(doc), encoding="utf-8")
+            r = self.run_blender("--python", script, "--", "import", str(d / "t.stj.json"), str(d / "t.blend"))
+            self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-500:])
+            edit = d / "edit.py"
+            edit.write_text(chr(10).join([
+                "import bpy",
+                "o = bpy.data.objects['STJ::prototype::hay_bale::body']",
+                "assert o.rigid_body.mass == 250.0 and o.rigid_body.collision_shape == 'CYLINDER'",
+                "o.rigid_body.mass = 400.0",
+                "o.scale.z = 2.0",
+                "bpy.ops.wm.save_mainfile()"]), encoding="utf-8")
+            r = subprocess.run([find_blender(), "-b", str(d / "t.blend"), "--python", str(edit)],
+                               capture_output=True, text=True, timeout=300)
+            self.assertEqual(r.returncode, 0, r.stdout[-1500:])
+            r = subprocess.run([find_blender(), "-b", str(d / "t.blend"), "--python", script, "--", "export", str(d / "out"), "t"],
+                               capture_output=True, text=True, timeout=300)
+            self.assertEqual(r.returncode, 0, r.stdout[-1500:])
+            back = json.loads((d / "out" / "t.stj.json").read_text(encoding="utf-8"))
+            phys = back["scenery"]["prototypes"]["hay_bale"]["physics"]
+            self.assertEqual(phys["mass"], 400.0)
+            self.assertAlmostEqual(phys["shape"]["height"], 2.4, places=3)
+            self.assertEqual(phys["shape"]["radius"], 0.75)
+            self.assertEqual(phys["friction"], 0.6)                              # untouched values stay as written
+            self.assertEqual(back["scenery"]["prototypes"]["birch_sapling"], doc["scenery"]["prototypes"]["birch_sapling"])
 
     def test_blend_to_document_to_blend_keeps_the_scene(self):
         script = str(ROOT / "tools" / "blender" / "stj_blender.py")

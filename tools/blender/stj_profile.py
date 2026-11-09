@@ -50,10 +50,11 @@ CATEGORIES = {
     "edge": ({"CURVE"}, "edges"),
     "marking": ({"CURVE"}, "markings"),
     "line": ({"CURVE"}, "race.racing_lines"),
+    "pit_lane": ({"CURVE"}, "timing.pit_lane"),
     "structure": ({"EMPTY"}, "structures"),
     "animated": ({"EMPTY"}, "animated_objects"),
-    "prototype": ({"EMPTY"}, "scenery.prototypes"),
-    "emitter": ({"EMPTY"}, "audio.emitters"),
+    "prototype": ({"EMPTY", "MESH"}, "scenery.prototypes"),
+    "emitter": ({"EMPTY", "CURVE"}, "audio.emitters"),
     "crowd": ({"EMPTY"}, "scenery.crowds"),
     "instance": ({"MESH"}, "scenery.instances"),
     "building": ({"CURVE"}, "buildings"),
@@ -75,6 +76,9 @@ CATEGORIES = {
     "chunk": ({"EMPTY"}, "geometry.chunks"),
     "tiles": ({"EMPTY"}, "geometry.tiles"),
     "dynamic": ({"EMPTY"}, "dynamic"),
+    "track_info": ({"EMPTY"}, "track_info"),
+    "layout": ({"EMPTY"}, "layouts"),
+    "variant": ({"EMPTY"}, "variants"),
 }
 RING_KEY = {"building": "footprint", "area": "polygon"}        # the field of the entry that a closed curve holds
 # records that live in the scene as an empty whose `stj` property is the entry: category -> (path, "list" | "dict")
@@ -89,13 +93,17 @@ RECORDS = {"structure": ("structures", "list"), "animated": ("animated_objects",
            "ground_layer": ("ground.layers", "dict"), "ground_material": ("ground.materials", "list_noid"),
            "sky": ("environment.sky", "object"), "screen": ("screens", "list"),
            "chunk": ("geometry.chunks", "list"), "tiles": ("geometry.tiles", "object"),
-           "dynamic": ("dynamic", "object")}
+           "dynamic": ("dynamic", "object"), "track_info": ("track_info", "object"),
+           "layout": ("layouts", "list"), "variant": ("variants", "list")}
 # records that are a closed curve when they have the ring: category -> (field of the entry, numbers per point)
 RECORD_RING = {"water": ("outline", 2), "service": ("polygon", 3)}
 # records that sit at their `position` (shown there; a moved empty writes the new position)
 AT_POSITION = {"emitter": "position", "probe": "position", "post": "position", "chunk": "origin"}
-HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "marking", "line", "instance", "building", "area", "terrain") + tuple(RECORDS)
-INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many", "_cols")        # keys of an object's `stj` property that the exporter reads and does not write
+HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "marking", "line", "pit_lane", "instance", "building", "area", "terrain") + tuple(RECORDS)
+INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many", "_cols", "_base")
+# a prototype's physics is shown by a proxy mesh `STJ::prototype::<id>::body` with a Rigid Body: STJ shape kind -> Blender collision shape
+SHAPE_TO_RB = {"box": "BOX", "sphere": "SPHERE", "cylinder": "CYLINDER", "capsule": "CAPSULE", "mesh": "CONVEX_HULL"}
+RB_TO_SHAPE = {v: k for k, v in SHAPE_TO_RB.items()}        # keys of an object's `stj` property that the exporter reads and does not write
 MESH_ROLES = ("visual", "collision", "lod", "decal")
 GEO_KEYS = ("latitude", "longitude", "altitude", "proj", "vertical_datum")      # on the geo origin's `stj` property
 SUN_TOLERANCE = math.radians(0.5)        # a sun within this of the computed one follows date and time
@@ -268,6 +276,76 @@ def terrain_files(scene):
     found, many = terrain_objects(scene)
     files = [terrain_entry(i, n[1], many)[1] for i, n in found]
     return [f for f in files if f]
+
+
+def _close(a, b, rel=1e-4):
+    return abs(a - b) <= rel * max(1.0, abs(a), abs(b))
+
+
+def body_dims(shape):
+    """Bounding dimensions (x, y, z) of a physics shape, for the proxy mesh."""
+    kind = shape.get("kind") if isinstance(shape, dict) else None
+    if kind == "box" and shape.get("size"):
+        return [float(c) for c in shape["size"]]
+    if kind == "sphere" and shape.get("radius"):
+        d = 2.0 * float(shape["radius"])
+        return [d, d, d]
+    if kind in ("cylinder", "capsule") and shape.get("radius") and shape.get("height"):
+        d = 2.0 * float(shape["radius"])
+        return [d, d, float(shape["height"])]
+    return [1.0, 1.0, 1.0]
+
+
+def body_base(physics):
+    """What the proxy body is set to on import: the Rigid Body values and the shape, to tell later what changed."""
+    shape = physics.get("shape") or {"kind": "mesh"}
+    return {"type": "PASSIVE" if physics.get("mode") == "static" else "ACTIVE",
+            "mass": float(physics.get("mass", 1.0)), "friction": float(physics.get("friction", 0.5)),
+            "restitution": float(physics.get("restitution", 0.0)),
+            "collision_shape": SHAPE_TO_RB.get(shape.get("kind"), "CONVEX_HULL"), "dimensions": body_dims(shape)}
+
+
+def physics_from_body(stored, o):
+    """The prototype's `physics` after the proxy body: the stored fields, with what was changed in Blender
+    (Rigid Body type, mass, friction, restitution, shape and size) written over them."""
+    rb = o.get("rigid_body")
+    if not rb:
+        return stored
+    base = _stj_props(o).get("_base")
+    cur = {"type": rb["type"], "mass": rb["mass"], "friction": rb["friction"], "restitution": rb["restitution"],
+           "collision_shape": rb["collision_shape"], "dimensions": o.get("dimensions") or [1.0, 1.0, 1.0]}
+    base = base or {"type": None, "mass": None, "friction": None, "restitution": None, "collision_shape": None, "dimensions": None}
+    phys = dict(stored or {})
+
+    def changed(key):
+        b = base.get(key)
+        return b is None or (not _close(cur[key], b) if isinstance(b, (int, float)) else cur[key] != b)
+    if changed("type"):
+        mode = phys.get("mode")
+        if cur["type"] == "PASSIVE":
+            phys["mode"] = "static"
+        elif mode in (None, "static"):
+            phys["mode"] = "movable"
+    for key in ("mass", "friction", "restitution"):
+        if changed(key) and not (key == "mass" and cur["type"] == "PASSIVE"):
+            phys[key] = round(cur[key], 6)
+    dims_changed = base.get("dimensions") is None or any(not _close(a, b) for a, b in zip(cur["dimensions"], base["dimensions"]))
+    if (changed("collision_shape") or dims_changed) and cur["collision_shape"] in RB_TO_SHAPE:
+        kind = RB_TO_SHAPE[cur["collision_shape"]]
+        dx, _dy, dz = (round(c, 4) for c in cur["dimensions"])
+        shape = dict(phys.get("shape") or {})
+        for k in ("size", "radius", "height"):
+            shape.pop(k, None)
+        shape["kind"] = kind
+        if kind == "box":
+            shape["size"] = [dx, round(cur["dimensions"][1], 4), dz]
+        elif kind == "sphere":
+            shape["radius"] = round(dx / 2.0, 4)
+        elif kind in ("cylinder", "capsule"):
+            shape.update({"radius": round(dx / 2.0, 4), "height": dz})
+        phys["shape"] = shape
+    phys.setdefault("mode", "movable" if cur["type"] == "ACTIVE" else "static")
+    return phys
 
 
 def _order(o):
@@ -486,9 +564,10 @@ def scene_patch(scene, base):
             st = sets.setdefault(set_id, {"id": set_id, **(_stj_props(o).get("_set") or {}), "cameras": []})
             st["cameras"].append(entry)
         patch["cameras"] = {"sets": list(sets.values())}
+    bodies = {n[1]: o for o, n in objs("prototype") if n[2] == "body"}
     for cat, (path, shape) in RECORDS.items():
-        found = objs(cat)
-        if not found:
+        found = [x for x in objs(cat) if x[1][2] is None]
+        if not found and not (cat == "prototype" and bodies):
             continue
         if shape == "list":
             value = []
@@ -498,6 +577,8 @@ def scene_patch(scene, base):
                     cols = _stj_props(o)["_cols"]              # width and depth per point; the last ones carry on
                     entry["path"] = [[round(c, 4) for c in p] + list(cols[min(k, len(cols) - 1)])
                                      for k, p in enumerate(o["points"])]
+                elif cat == "emitter" and o["type"] == "CURVE":
+                    entry["path"] = [[round(c, 4) for c in p] for p in o["points"]]
                 elif cat in RECORD_RING and o["type"] == "CURVE":
                     key, dim = RECORD_RING[cat]
                     entry[key] = [[round(c, 4) for c in p[:dim]] for p in o["points"]]
@@ -510,6 +591,12 @@ def scene_patch(scene, base):
             value = _entity(found[0][0])
         else:
             value = {n[1]: _entity(o) for o, n in found}
+            if cat == "prototype":
+                for ident, body in bodies.items():
+                    if ident in value:
+                        phys = physics_from_body(value[ident].get("physics"), body)
+                        if phys is not None:
+                            value[ident] = {**value[ident], "physics": phys}
         node = patch
         *parents, leaf = path.split(".")
         for key in parents:
@@ -537,6 +624,9 @@ def scene_patch(scene, base):
                 rows.append(row)
             value.append({**_entity(o), "transforms": rows})
         patch.setdefault("scenery", {})["instances"] = value
+    library = {n[1]: _entity(i) for k, i, n in named if k == "MATERIAL" and n[0] == "surface" and _stj_props(i)}
+    if library:
+        patch.setdefault("surfaces", {})["library"] = library
     meshes = [(i, n) for k, i, n in named if k == "COLLECTION" and n[0] == "mesh"]
     if meshes:
         entries = []
@@ -548,6 +638,10 @@ def scene_patch(scene, base):
     env = _environment_patch(named, base, patch)
     if env:
         patch["environment"] = core.merge_patch(patch.get("environment") or {}, env)
+    lanes = objs("pit_lane")
+    if lanes:
+        o = lanes[0][0]
+        timing["pit_lane"] = {**_entity(o), "path": [[round(c, 4) for c in p] for p in o["points"]]}
     if timing or splits:
         patch["timing"] = dict(timing)
         if splits:
@@ -643,6 +737,12 @@ def scene_from_document(doc, base_dir=None):
             for e in splits:
                 gate(e["id"], e)
             del timing["split_points"]
+        lane = timing.get("pit_lane")
+        if isinstance(lane, dict) and isinstance(lane.get("path"), list) and len(lane["path"]) >= 2 and all(
+                isinstance(p, list) and len(p) == 3 for p in lane["path"]):
+            obj("STJ::pit_lane::pit_lane", "CURVE", cyclic=False, points=[_vec3(p) for p in lane["path"]],
+                props={"stj": {k: v for k, v in lane.items() if k != "path"}})
+            del timing["pit_lane"]
         if not timing:
             del base["timing"]
 
@@ -786,6 +886,12 @@ def scene_from_document(doc, base_dir=None):
                     props={"stj": {**{k: v for k, v in e.items() if k not in ("id", "path")}, "_i": i,
                                    "_cols": [p[3:] for p in path]}})
                 continue
+            epath = e.get("path") if cat == "emitter" and "position" not in e else None
+            if isinstance(epath, list) and len(epath) >= 2 and all(
+                    isinstance(p, list) and len(p) == 3 and all(isinstance(c, (int, float)) for c in p) for p in epath):
+                obj(name_of(e), "CURVE", cyclic=False, points=[_vec3(p) for p in epath],
+                    props={"stj": {**{k: v for k, v in e.items() if k not in ("id", "path")}, "_i": i}})
+                continue
             ring_key, dim = RECORD_RING.get(cat, (None, 0))
             ring = e.get(ring_key) if ring_key else None
             if isinstance(ring, list) and len(ring) >= 3 and all(
@@ -874,6 +980,11 @@ def scene_from_document(doc, base_dir=None):
         if protos and all(ID_RE.match(str(k)) and "__" not in k and isinstance(v, dict) for k, v in protos.items()):
             for i, (k, v) in enumerate(protos.items()):
                 obj(f"STJ::prototype::{k}", props={"stj": {**v, "_i": i}})
+                if isinstance(v.get("physics"), dict) and v["physics"].get("mode"):
+                    base_rb = body_base(v["physics"])
+                    obj(f"STJ::prototype::{k}::body", "MESH", proxy=base_rb["collision_shape"], dimensions=list(base_rb["dimensions"]),
+                        rigid_body={x: base_rb[x] for x in ("type", "mass", "friction", "restitution", "collision_shape")},
+                        props={"stj": {"_base": {**base_rb, "dimensions": list(base_rb["dimensions"])}}})
             del scenery["prototypes"]
         crowds = scenery.get("crowds")
         if crowds and all(record_ok(e) for e in crowds):
@@ -941,8 +1052,19 @@ def scene_from_document(doc, base_dir=None):
                 del base["geometry"]
 
     library = (base.get("surfaces") or {}).get("library") or {}
-    materials = [{"name": f"STJ::surface::{sid}", "props": {}} for sid in library
-                 if ID_RE.match(sid) and "__" not in sid]
+    materials = []
+    for sid in list(library):
+        if ID_RE.match(sid) and "__" not in sid:
+            entry = library[sid]
+            if isinstance(entry, dict):
+                materials.append({"name": f"STJ::surface::{sid}", "props": {"stj": dict(entry)}})
+                del library[sid]                    # the material holds the surface now
+            else:
+                materials.append({"name": f"STJ::surface::{sid}", "props": {}})
+    if isinstance(base.get("surfaces"), dict) and "library" in base["surfaces"] and not library:
+        del base["surfaces"]["library"]
+        if not base["surfaces"]:
+            del base["surfaces"]
     return {"blender": None, "profile": PROFILE_VERSION, "objects": objects, "materials": materials, "collections": collections,
             "texts": {BASE_TEXT: json.dumps(base, indent=2, ensure_ascii=False)}, "scene_props": {}}
 
@@ -987,6 +1109,10 @@ def lint_scene(scene, base=None):
             continue
         types, _fills = CATEGORIES[cat]
         actual = kind if kind in ("MATERIAL", "COLLECTION") else item["type"]
+        if cat == "prototype":
+            types = {"MESH"} if part == "body" else {"EMPTY"}
+            if part not in (None, "body"):
+                f.append(("ERROR", label, f"unknown part '{part}': a prototype has no part or 'body'"))
         if actual not in types:
             f.append(("ERROR", label, f"category '{cat}' is for {'/'.join(sorted(types))}, this is {actual}"))
         if not ID_RE.match(ident):

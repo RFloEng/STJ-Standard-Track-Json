@@ -117,8 +117,15 @@ sun.rotation_euler = sun_dir.to_track_quat("Z", "Y").to_euler()
 add(sun)
 
 # surfaces
-for sid in doc["surfaces"]["library"]:
-    bpy.data.materials.new(f"STJ::surface::{sid}")
+for sid, entry in doc["surfaces"]["library"].items():
+    mat = bpy.data.materials.new(f"STJ::surface::{sid}")
+    mat.use_fake_user = True
+    mat["stj"] = entry                          # the library entry lives on the material (profile section 4)
+base["surfaces"].pop("library")
+if "track_info" in doc:                         # and the track info on its own empty
+    info = empty("STJ::track_info::track_info", 0.0, 0.0, 0.0, 0.0)
+    info["stj"] = doc["track_info"]
+    base.pop("track_info")
 
 # the base document
 text = bpy.data.texts.new(profile.BASE_TEXT)

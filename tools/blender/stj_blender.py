@@ -80,6 +80,12 @@ def read_scene(scene=None):
         elif obj.type == "MESH" and (profile.parse_name(obj.name) or ("",))[0] == "terrain":
             m = obj.matrix_world
             entry["points"] = [_vec(m @ v.co) for v in obj.data.vertices]
+        elif obj.type == "MESH" and (profile.parse_name(obj.name) or ("",))[0] == "prototype":
+            rb = obj.rigid_body                     # the proxy body of a prototype (a Rigid Body, or none)
+            if rb is not None:
+                entry["rigid_body"] = {"type": rb.type, "mass": rb.mass, "friction": rb.friction,
+                                       "restitution": rb.restitution, "collision_shape": rb.collision_shape}
+            entry["dimensions"] = _vec(obj.dimensions)
         elif obj.type == "CAMERA":
             entry["forward"] = _vec((-obj.matrix_world.to_3x3().col[2]).normalized())      # a camera looks along -Z
         elif obj.type == "LIGHT":
@@ -174,12 +180,27 @@ def build_scene(desc):
             ob = bpy.data.objects.new(o["name"], cu)
         elif o["type"] == "MESH":
             mesh = bpy.data.meshes.new(o["name"])
+            if o.get("proxy"):                 # the proxy body of a prototype's physics
+                import bmesh
+                bm = bmesh.new()
+                dx, dy, dz = o["dimensions"]
+                if o["proxy"] == "SPHERE":
+                    bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=8, radius=0.5)
+                elif o["proxy"] in ("CYLINDER", "CAPSULE"):
+                    bmesh.ops.create_cone(bm, cap_ends=True, segments=16, radius1=0.5, radius2=0.5, depth=1.0)
+                else:
+                    bmesh.ops.create_cube(bm, size=1.0)
+                for v in bm.verts:
+                    v.co = (v.co.x * dx, v.co.y * dy, v.co.z * dz + dz / 2.0)      # the base centre is the origin
+                bm.to_mesh(mesh)
+                bm.free()
             faces = []
             if o.get("grid"):                  # a terrain: a regular grid, row 0 at the north edge
                 nx, ny = o["grid"]
                 faces = [(j * nx + i, (j + 1) * nx + i, (j + 1) * nx + i + 1, j * nx + i + 1)
                          for j in range(ny - 1) for i in range(nx - 1)]
-            mesh.from_pydata([tuple(p) for p in o["points"]], [], faces)
+            if "points" in o:
+                mesh.from_pydata([tuple(p) for p in o["points"]], [], faces)
             for attr, key in (("stj_heading", "headings"), ("stj_scale", "scales")):
                 if key in o:
                     a = mesh.attributes.new(attr, "FLOAT", "POINT")
@@ -202,6 +223,13 @@ def build_scene(desc):
         for k, v in o.get("props", {}).items():
             ob[k] = v
         root.objects.link(ob)
+        if o.get("rigid_body"):
+            bpy.context.view_layer.objects.active = ob
+            ob.select_set(True)
+            bpy.ops.rigidbody.object_add()
+            for attr, value in o["rigid_body"].items():
+                setattr(ob.rigid_body, attr, value)
+            ob.select_set(False)
     for c in desc.get("collections", []):
         coll = bpy.data.collections.new(c["name"])
         scene.collection.children.link(coll)
@@ -223,8 +251,10 @@ def build_scene(desc):
                         else:
                             mat.name = target
     for m in desc["materials"]:
-        if m["name"] not in bpy.data.materials:
-            bpy.data.materials.new(m["name"])
+        mat = bpy.data.materials.get(m["name"]) or bpy.data.materials.new(m["name"])
+        mat.use_fake_user = True                   # a surface that no mesh uses yet must still be saved
+        for k, v in m.get("props", {}).items():
+            mat[k] = v
     for name, text in desc["texts"].items():
         bpy.data.texts.new(name).write(text)
 

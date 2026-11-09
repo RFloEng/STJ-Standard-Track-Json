@@ -2,6 +2,12 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender profile: surface library, track info, layouts, variants, emitter lines**: a surface material carries its library entry in `stj` (edit friction and the rest in Blender); `STJ::track_info::track_info`, `STJ::layout::<id>`, `STJ::variant::<id>` as records; line-source emitters as open curves.
+
+- **Blender profile: prototype physics as a Rigid Body**: `STJ::prototype::<id>::body`, a proxy mesh with a Rigid Body (type, mass, friction, restitution, collision shape, size) for each prototype with `physics`. Only what changed since import reaches the document; verified in Blender 5.2 by changing a mass and a scale. Animation stays with the mesh files' time samples.
+
+- **Blender profile: pit lane**: `STJ::pit_lane::pit_lane` carries `timing.pit_lane` with its path as a curve.
+
 - **Blender profile: racing lines and water paths**: `STJ::line::<id>` (race, qualifying, pit and AI side lines as curves; the checker warns when `speed` or `width` no longer match the points) and open curves for water bodies with a `path`.
 
 - **Blender profile: dynamic**: `STJ::dynamic::dynamic` carries the `dynamic` block.
