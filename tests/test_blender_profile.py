@@ -66,6 +66,8 @@ def with_places(doc):
                         "dash": {"length": 3.0, "gap": 6.0}, "colour": "yellow"},
                        {"id": "zebra", "kind": "crosswalk", "s_start": 50.0, "s_end": 53.0, "t_min": -3.5, "t_max": 3.5,
                         "style": "zebra"}]
+    doc["geometry"]["chunks"] = [{"id": "c1", "s_start": 0.0, "s_end": 400.0, "origin": [10.0, 20.0, 0.0], "meshes": []}]
+    doc["geometry"]["tiles"] = {"size": 256.0, "origin": [0.0, 0.0, 0.0], "items": [{"index": [0, 0], "meshes": []}]}
     doc["environment"]["probes"] = [{"id": "pr", "kind": "box", "position": [1.0, 1.0, 1.0]}]
     return doc
 
@@ -283,6 +285,12 @@ class DocumentToScene(KeepExamples, unittest.TestCase):
         self.assertAlmostEqual(moved["t"], doc["markings"][0]["t"] + 1.5, delta=0.2)
         for p in centre["points"]:
             p[1] -= 1.5
+        chunk = next(o for o in desc["objects"] if o["name"] == "STJ::chunk::c1")
+        self.assertEqual(chunk["location"], [10.0, 20.0, 0.0])
+        chunk["location"][0] += 5.0                                             # a moved chunk writes its origin
+        self.assertEqual(profile.apply_scene(desc)["geometry"]["chunks"][0]["origin"][0], 15.0)
+        chunk["location"][0] -= 5.0
+        self.assertIn("STJ::tiles::tiles", names)
         pond = next(o for o in desc["objects"] if o["name"] == "STJ::water::pond")
         svc = next(o for o in desc["objects"] if o["name"] == "STJ::service::service_park")
         self.assertEqual((pond["type"], svc["type"]), ("CURVE", "CURVE"))

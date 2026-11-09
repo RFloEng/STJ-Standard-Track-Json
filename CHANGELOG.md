@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender profile: chunks and tiles**: `STJ::chunk::<id>` (at its `origin`) and `STJ::tiles::tiles`.
+
 - **Blender profile: ground, sky and screens**: `STJ::ground_layer::<id>`, `STJ::ground_material::<mesh>_<n>`, `STJ::sky::sky` and `STJ::screen::<id>` carry `ground.layers`, `ground.materials`, `environment.sky` and `screens` as records; the Test Ring GP and Coll de Prova documents still round trip exactly.
 
 - **Portals and retaining walls**: `structures[].portals {start, end}` (style, height, mesh) for the mouths of tunnels, underpasses and galleries; edge styles `retaining_wall` and `parapet`. No new Blender row: structures and edges already carry them.
