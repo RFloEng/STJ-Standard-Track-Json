@@ -61,6 +61,11 @@ def with_places(doc):
     doc["water"] = {"bodies": [{"id": "pond", "kind": "pond", "outline": [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0]]}]}
     doc["marshals"] = {"posts": [{"id": "p1", "kind": "marshal", "position": [1.0, 2.0, 3.0]}],
                        "sectors": [{"id": "s1", "s_start": 0.0, "s_end": 50.0}]}
+    doc["roads"][0].update({"road_class": "residential", "speed_limit": 8.3, "lanes": 2})
+    doc["markings"] = [{"id": "centre", "kind": "centre_line", "s_start": 10.0, "s_end": 90.0, "t": 0.0, "style": "dashed",
+                        "dash": {"length": 3.0, "gap": 6.0}, "colour": "yellow"},
+                       {"id": "zebra", "kind": "crosswalk", "s_start": 50.0, "s_end": 53.0, "t_min": -3.5, "t_max": 3.5,
+                        "style": "zebra"}]
     doc["environment"]["probes"] = [{"id": "pr", "kind": "box", "position": [1.0, 1.0, 1.0]}]
     return doc
 
@@ -254,6 +259,16 @@ class DocumentToScene(KeepExamples, unittest.TestCase):
         names = {o["name"] for o in desc["objects"]}
         for want in ("STJ::water::pond", "STJ::post::p1", "STJ::sector::s1", "STJ::probe::pr", "STJ::scatter::forest_fill"):
             self.assertIn(want, names)
+        centre = next(o for o in desc["objects"] if o["name"] == "STJ::marking::centre")
+        zebra = next(o for o in desc["objects"] if o["name"] == "STJ::marking::zebra")
+        self.assertFalse(centre["cyclic"])
+        self.assertEqual((zebra["cyclic"], len(zebra["points"])), (True, 4))
+        for p in centre["points"]:
+            p[1] += 1.5                                                         # slide the line sideways
+        moved = profile.apply_scene(desc)["markings"][0]
+        self.assertAlmostEqual(moved["t"], doc["markings"][0]["t"] + 1.5, delta=0.2)
+        for p in centre["points"]:
+            p[1] -= 1.5
         pond = next(o for o in desc["objects"] if o["name"] == "STJ::water::pond")
         svc = next(o for o in desc["objects"] if o["name"] == "STJ::service::service_park")
         self.assertEqual((pond["type"], svc["type"]), ("CURVE", "CURVE"))

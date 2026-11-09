@@ -31,7 +31,7 @@ what an engine needs to pick a model or a texture; the real meaning stays in the
 
 ## Left open
 
-- Roads' class and speed as typed fields (they stay in `tags` for now; gap list B2 asked for an enum).
+- ~~Roads' class and speed as typed fields~~ Done later: `road_class`, `speed_limit`, `lanes`, `oneway`, and road `markings[]` (spec §7.10).
 - Building parts (a roof level on top of a lower block), addresses as fields, and indoor data.
 - Mapping areas to ground layers, scatter and water automatically.
 - Retaining walls, portals, road markings and the rest of gap list sections B to D.

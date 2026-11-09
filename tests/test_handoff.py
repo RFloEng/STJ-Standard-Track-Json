@@ -149,6 +149,41 @@ class PositionRefs(Base):
         self.assertEqual(self.errors(self.stage), [])
 
 
+class Markings(Base):
+    def marks(self, *ms):
+        self.stage["markings"] = list(ms)
+        return self.errors(self.stage)
+
+    LINE = {"id": "centre", "kind": "centre_line", "s_start": 10.0, "s_end": 90.0, "t": 0.0, "style": "dashed",
+            "dash": {"length": 3.0, "gap": 6.0}, "colour": "yellow", "width": 0.12}
+    PATCH = {"id": "zebra", "kind": "crosswalk", "s_start": 50.0, "s_end": 53.0, "t_min": -3.5, "t_max": 3.5, "style": "zebra"}
+
+    def test_valid_markings_and_road_fields(self):
+        self.assertEqual(self.marks(self.LINE, self.PATCH), [])
+        self.stage["roads"][0].update({"road_class": "residential", "speed_limit": 8.3, "lanes": 2, "oneway": False})
+        self.assertEqual(self.errors(self.stage), [])
+
+    def test_geometry_rules(self):
+        self.has(self.marks({**self.LINE, "t_min": -1.0, "t_max": 1.0}), "not both")
+        self.has(self.marks({**self.PATCH, "t_min": 2.0, "t_max": 1.0}), "t_min must be smaller")
+        self.has(self.marks({"id": "x", "kind": "centre_line", "s_start": 0.0, "s_end": 5.0}), "")        # schema: no t
+        self.has(self.marks(self.LINE, self.LINE), "duplicate marking id")
+        self.has(self.marks({**self.LINE, "road": "nope"}), "unknown road")
+        self.has(self.marks({**self.LINE, "s_end": 1e6}), "beyond")
+        self.has(self.marks({**self.LINE, "surface": "nope"}), "unknown surface")
+
+    def test_kind_warnings(self):
+        rep = run({**self.stage, "markings": [{**self.PATCH, "kind": "centre_line"}, {"id": "a", "kind": "arrow", "s_start": 1.0,
+                                                                                     "s_end": 3.0, "t_min": -1.0, "t_max": 1.0}]})
+        warns = messages(rep, "WARN")
+        self.has(warns, "a centre_line is a line")
+        self.has(warns, "an arrow needs a direction")
+
+    def test_speed_limit_in_ms(self):
+        self.stage["roads"][0]["speed_limit"] = 90.0
+        self.has(messages(run(self.stage), "WARN"), "speeds are in m/s")
+
+
 class OverrideOps(unittest.TestCase):
     DOC = {"edges": [{"id": "a", "kind": "kerb"}, {"id": "b", "kind": "wall"}], "race": {"grid": [{"position": 1}]}}
 

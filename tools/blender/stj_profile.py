@@ -48,6 +48,7 @@ CATEGORIES = {
     "junction": ({"EMPTY"}, "junctions"),
     "camera": ({"CAMERA"}, "cameras.sets"),
     "edge": ({"CURVE"}, "edges"),
+    "marking": ({"CURVE"}, "markings"),
     "structure": ({"EMPTY"}, "structures"),
     "animated": ({"EMPTY"}, "animated_objects"),
     "prototype": ({"EMPTY"}, "scenery.prototypes"),
@@ -81,7 +82,7 @@ RECORDS = {"structure": ("structures", "list"), "animated": ("animated_objects",
 RECORD_RING = {"water": ("outline", 2), "service": ("polygon", 3)}
 # records that sit at their `position` (shown there; a moved empty writes the new position)
 AT_POSITION = ("emitter", "probe", "post")
-HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "instance", "building", "area", "terrain") + tuple(RECORDS)
+HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "marking", "instance", "building", "area", "terrain") + tuple(RECORDS)
 INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many")        # keys of an object's `stj` property that the exporter reads and does not write
 MESH_ROLES = ("visual", "collision", "lod", "decal")
 GEO_KEYS = ("latitude", "longitude", "altitude", "proj", "vertical_datum")      # on the geo origin's `stj` property
@@ -313,6 +314,48 @@ def edge_points(edge, line, doc=None, step=5.0):
             for k in range(n + 1)]
 
 
+def marking_points(m, doc, step=5.0):
+    """The curve of a marking along its road: a line at `t`, or the four corners of a patch. None when it
+    cannot be drawn (no road, no range)."""
+    line = core.road_line(doc, m.get("road", "reference"))
+    if line is None or "s_start" not in m or "s_end" not in m:
+        return None
+    a, b = m["s_start"], m["s_end"]
+    span = (b - a) % line.length if line.closed and b < a else b - a
+
+    def at(k, t):
+        s = a + span * k
+        return [round(c, 4) for c in line.point(s % line.length if line.closed else s, t)]
+    if "t" in m:
+        n = max(1, int(math.ceil(span / step)))
+        return [at(k / n, m["t"]) for k in range(n + 1)]
+    if "t_min" in m and "t_max" in m:
+        return [at(0, m["t_min"]), at(1, m["t_min"]), at(1, m["t_max"]), at(0, m["t_max"])]
+    return None
+
+
+def marking_entry(o, ident, doc):
+    """A marking from its object: the stored fields, unless the curve was moved, then range and offsets are
+    read from the curve."""
+    stored = _entity(o)
+    entry = {"id": ident, **stored}
+    pts = o.get("points") or []
+    regen = marking_points(stored, doc)
+    line = core.road_line(doc, stored.get("road", "reference"))
+    if line is None or not pts or regen is None or (len(regen) == len(pts) and
+            all(math.dist(a, b) < 0.05 for a, b in zip(regen, pts))):
+        return entry
+    proj = [line.project(p[0], p[1]) for p in pts]
+    entry["s_start"] = round(min(q[0] for q in proj) if "t" not in stored else proj[0][0], 3)
+    entry["s_end"] = round(max(q[0] for q in proj) if "t" not in stored else proj[-1][0], 3)
+    if "t" in stored:
+        entry["t"] = round(sum(q[1] for q in proj) / len(proj), 3)
+    else:
+        entry["t_min"] = round(min(q[1] for q in proj), 3)
+        entry["t_max"] = round(max(q[1] for q in proj), 3)
+    return entry
+
+
 def _angle_between(a, b):
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
@@ -410,6 +453,10 @@ def scene_patch(scene, base):
     edges = objs("edge")
     if edges:
         patch["edges"] = [edge_entry(o, n[1], line, doc) for o, n in edges]
+    marks = objs("marking")
+    if marks:
+        now = core.merge_patch(doc, patch)
+        patch["markings"] = [marking_entry(o, n[1], now) for o, n in marks]
     cams = objs("camera")
     if cams:
         sets = {}
@@ -659,6 +706,14 @@ def scene_from_document(doc, base_dir=None):
             obj(f"STJ::edge::{e['id']}", "CURVE", cyclic=False, points=edge_points(e, line, doc),
                 props={"stj": {**{k: v for k, v in e.items() if k != "id"}, "_i": i}})
         del base["edges"]
+
+    marks = base.get("markings")
+    if marks and all(isinstance(m, dict) and ID_RE.match(str(m.get("id", ""))) and "__" not in m["id"]
+                     and marking_points(m, doc) for m in marks):
+        for i, m in enumerate(marks):
+            obj(f"STJ::marking::{m['id']}", "CURVE", cyclic="t" not in m, points=marking_points(m, doc),
+                props={"stj": {**{k: v for k, v in m.items() if k != "id"}, "_i": i}})
+        del base["markings"]
 
     sets = (base.get("cameras") or {}).get("sets") if isinstance(base.get("cameras"), dict) else None
     if sets and set(base["cameras"]) == {"sets"} and all(

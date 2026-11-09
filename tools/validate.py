@@ -700,6 +700,63 @@ def check_edges(ctx, path="edges"):
             rep.note(f"{p}.restitution", "restitution only matters for barriers")
 
 
+LINE_MARKINGS = ("centre_line", "lane_line", "edge_line")
+PATCH_MARKINGS = ("stop_line", "crosswalk", "arrow", "chevron", "hatching")
+
+
+def check_markings(ctx):
+    """Road markings (spec 7.10): the road exists, s lies on it, line or patch geometry fits the kind."""
+    rep, doc = ctx.rep, ctx.doc
+    marks = doc.get("markings") or []
+    ids = [m["id"] for m in marks]
+    for dup in {x for x in ids if ids.count(x) > 1}:
+        rep.error("markings", f"duplicate marking id '{dup}'")
+    for i, m in enumerate(marks):
+        p = f"markings[{i}]"
+        road = m.get("road", "reference")
+        line = core.road_line(doc, road)
+        if line is None:
+            rep.error(f"{p}.road", f"unknown road '{road}'" if road != "reference" else "no reference line")
+        elif road != "reference":
+            for key in ("s_start", "s_end"):
+                if m[key] > line.length + TOL:
+                    rep.error(f"{p}.{key}", f"{m[key]:.2f} m is beyond road '{road}' ({line.length:.2f} m)")
+            if m["s_end"] < m["s_start"] and not line.closed:
+                rep.error(p, "s_end before s_start on an open road")
+        else:
+            ok = check_s(ctx, f"{p}.s_start", m["s_start"]) & check_s(ctx, f"{p}.s_end", m["s_end"])
+            if ok and m["s_end"] < m["s_start"] and not ctx.lapped():
+                rep.error(p, "s_end before s_start on an open reference line")
+        has_line, has_patch = "t" in m, "t_min" in m or "t_max" in m
+        if has_line and has_patch:
+            rep.error(p, "give t (a line) or t_min and t_max (a patch), not both")
+        elif has_patch and not ("t_min" in m and "t_max" in m):
+            rep.error(p, "a patch needs both t_min and t_max")
+        elif "t_min" in m and m["t_min"] >= m["t_max"]:
+            rep.error(p, "t_min must be smaller than t_max")
+        if m["kind"] in LINE_MARKINGS and has_patch:
+            rep.warn(p, f"a {m['kind']} is a line: give t")
+        if m["kind"] in PATCH_MARKINGS and has_line:
+            rep.warn(p, f"a {m['kind']} is a patch: give t_min and t_max")
+        if m["kind"] == "arrow" and "direction" not in m:
+            rep.warn(p, "an arrow needs a direction")
+        if m["kind"] == "text" and "text" not in m:
+            rep.warn(p, "a text marking needs text")
+        if m.get("style") in ("dashed", "dotted") and "dash" not in m:
+            rep.note(p, "dashed without dash lengths: a tool picks its own")
+        if "dash" in m and m.get("style") not in ("dashed", "dotted"):
+            rep.warn(f"{p}.dash", "dash lengths on a line that is not dashed or dotted")
+        if m.get("width", 0) > 5:
+            rep.warn(f"{p}.width", f"{m['width']} m wide: lengths are in metres")
+        if "surface" in m:
+            ctx.used_surfaces.add(m["surface"])
+            if m["surface"] not in ctx.surface_ids:
+                rep.error(f"{p}.surface", f"unknown surface '{m['surface']}'")
+    for i, r in enumerate(doc.get("roads", [])):
+        if r.get("speed_limit", 0) > 70:
+            rep.warn(f"roads[{i}].speed_limit", f"{r['speed_limit']} m/s: speeds are in m/s")
+
+
 def check_cameras(ctx):
     rep = ctx.rep
     sets = (ctx.doc.get("cameras") or {}).get("sets", [])
@@ -2895,6 +2952,7 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     origin = check_timing(ctx)
     check_race(ctx, origin)
     check_edges(ctx)
+    check_markings(ctx)
     check_cameras(ctx)
     check_environment(ctx)
     check_scenery(ctx)

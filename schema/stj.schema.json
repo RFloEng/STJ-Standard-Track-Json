@@ -53,6 +53,11 @@
       "description": "Kerbs, verges and barriers described by what they are, along the base reference line, so each engine can rebuild them with its own assets (spec §7.3).",
       "items": { "$ref": "#/definitions/edge" }
     },
+    "markings": {
+      "type": "array",
+      "description": "Paint on the road: lines, stop lines, crossings, arrows, hatching (spec §7.10).",
+      "items": { "$ref": "#/definitions/marking" }
+    },
     "cameras": { "$ref": "#/definitions/cameras" },
     "layouts": {
       "type": "array",
@@ -673,6 +678,14 @@
         "tags": { "$ref": "#/definitions/tags" },
         "source": { "$ref": "#/definitions/entity_source" },
         "centerline": { "$ref": "#/definitions/centerline" },
+        "road_class": {
+          "type": "string",
+          "enum": ["motorway", "trunk", "primary", "secondary", "tertiary", "residential", "service", "track", "path", "other"],
+          "description": "The class of the road, after the OpenStreetMap `highway` values, so a tool does not have to read tags to know it (spec §7.1)."
+        },
+        "speed_limit": { "type": "number", "exclusiveMinimum": 0, "description": "Posted limit (m/s)." },
+        "lanes": { "type": "integer", "minimum": 1, "description": "Number of lanes, both directions." },
+        "oneway": { "type": "boolean", "default": false, "description": "Traffic runs only in the direction of increasing s." },
         "drivable": { "type": "boolean", "default": true },
         "surface": { "$ref": "#/definitions/id", "description": "Surface of the road where no band, binding or template strip says otherwise." }
       }
@@ -2124,6 +2137,40 @@
           "description": "Car or class the notes were made for. Severities are vehicle-specific."
         },
         "notes": { "type": "array", "items": {"$ref": "#/definitions/pacenote"} }
+      }
+    },
+    "marking": {
+      "type": "object",
+      "description": "A road marking along a road, by s and t (spec §7.10). A line has `t`; a patch (stop line, crossing, arrows, hatching) has t_min and t_max.",
+      "required": ["id", "kind", "s_start", "s_end"],
+      "anyOf": [{"required": ["t"]}, {"required": ["t_min", "t_max"]}],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string" },
+        "tags": { "$ref": "#/definitions/tags" },
+        "source": { "$ref": "#/definitions/entity_source" },
+        "kind": { "type": "string", "enum": ["centre_line", "lane_line", "edge_line", "stop_line", "crosswalk", "arrow", "chevron", "hatching", "text", "other"] },
+        "road": { "type": "string", "default": "reference", "description": "A roads[] id, or 'reference' (the default)." },
+        "s_start": { "$ref": "#/definitions/s" },
+        "s_end": { "$ref": "#/definitions/s", "description": "May be smaller than s_start on a closed reference line (crosses s = 0)." },
+        "t": { "type": "number", "description": "A line: lateral offset (m) of its centre, positive left." },
+        "t_min": { "type": "number", "description": "A patch: its right edge (m)." },
+        "t_max": { "type": "number", "description": "A patch: its left edge (m)." },
+        "width": { "type": "number", "exclusiveMinimum": 0, "description": "Line width (m)." },
+        "style": { "type": "string", "enum": ["solid", "dashed", "double", "dotted", "zebra", "ladder"] },
+        "colour": { "type": "string", "enum": ["white", "yellow", "red", "blue", "other"], "default": "white" },
+        "dash": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": { "length": {"type": "number", "exclusiveMinimum": 0}, "gap": {"type": "number", "minimum": 0} },
+          "description": "Dashed and dotted lines: the length of a dash and the gap after it (m)."
+        },
+        "direction": { "type": "string", "enum": ["straight", "left", "right", "straight_left", "straight_right", "u_turn"], "description": "arrow: where it points, for a driver going in the direction of s." },
+        "text": { "type": "string", "description": "text: the characters painted (KEEP CLEAR, a speed)." },
+        "surface": { "$ref": "#/definitions/id", "description": "The surface of the paint (class painted_line)." }
       }
     },
     "pacenote_set": {

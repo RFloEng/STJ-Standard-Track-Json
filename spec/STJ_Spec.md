@@ -254,7 +254,7 @@ p_world = p + Rz(ψ) · diag(1, −1, −1) · p_SVJ
   "_metadata": {}, "track_info": {}, "reference": {}, "geometry": {}, "surfaces": {},
   "timing": {}, "race": {}, "environment": {}, "scenery": {},
   "edges": [], "cameras": {}, "layouts": [], "variants": [],
-  "buildings": [], "areas": [], "water": {}, "audio": {}, "animated_objects": [],
+  "buildings": [], "areas": [], "markings": [], "water": {}, "audio": {}, "animated_objects": [],
   "dynamic": {}, "marshals": {}, "screens": [],
   "x_<engine>": {}
 }
@@ -801,6 +801,18 @@ A track made from real-world data (OpenStreetMap, a cadastre, a survey) has name
 Buildings and areas are fixed in the world: a layout (§3.5) does not reverse or move them.
 
 The validator checks that a `source.id` exists (ERROR), that an `osm_id` comes from a source of kind `osm` (NOTE), that ids are unique, that rings have an area (WARN), do not cross themselves (WARN) and hold their holes (WARN), that a building has a height, levels or a mesh (NOTE) and plausible storeys (NOTE), and that `mesh_ref` exists (ERROR).
+
+### 7.10 Road class, limits and markings (v0.3)
+
+**On `roads[]`:** `road_class` (`motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `residential`, `service`, `track`, `path`, `other`, after the OpenStreetMap `highway` values), `speed_limit` (m/s), `lanes` (both directions) and `oneway` (traffic only towards increasing s). They are the typed form of what `tags` held until now; the tags stay as they are.
+
+**`markings[]`** `{id, name, kind, road, s_start, s_end, t | t_min + t_max, width, style, colour, dash, direction, text, surface, tags, source}`:
+- `kind`: `centre_line`, `lane_line`, `edge_line` (lines, with `t`), or `stop_line`, `crosswalk`, `arrow`, `chevron`, `hatching` (patches, with `t_min` and `t_max`), `text`, `other`.
+- `road` is a `roads[]` id, `reference` by default. `t` is positive to the left. `s_end` may be smaller than `s_start` on a closed line.
+- `style`: `solid`, `dashed`, `double`, `dotted`, `zebra`, `ladder`; `dash {length, gap}` for dashed and dotted lines; `colour`: `white` (default), `yellow`, `red`, `blue`, `other`.
+- `arrow` takes `direction` (`straight`, `left`, `right`, `straight_left`, `straight_right`, `u_turn`) for a driver going the way s increases; `text` takes the characters. `surface` is the paint's surface (class `painted_line`).
+
+The validator checks that the road exists and `s` lies on it (ERROR), that a marking is a line or a patch and not both (ERROR), that the kind fits the geometry (WARN), and that `surface` exists (ERROR). A road marking never changes the grip: the road's surface and the bands decide that, and `surface` is only there for engines that draw the paint as its own layer.
 
 ## 8. Scenery, sky, lighting and engine-native data
 
