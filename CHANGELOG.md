@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Portals and retaining walls**: `structures[].portals {start, end}` (style, height, mesh) for the mouths of tunnels, underpasses and galleries; edge styles `retaining_wall` and `parapet`. No new Blender row: structures and edges already carry them.
+
 - **Road class, limits and markings** (spec §7.10): `road_class`, `speed_limit`, `lanes` and `oneway` on roads; top-level `markings[]` (centre, lane and edge lines, stop lines, crossings, arrows, chevrons, hatching, text) located by road, `s` and `t`. The validator checks the road, `s`, geometry per kind and surfaces. Blender profile row `STJ::marking::<id>`: an open curve for a line, a closed four-corner curve for a patch; moving it writes new `s` and `t`.
 
 - **Blender profile: ring curves for water and service areas**: a water body with an `outline` and every service area is a closed curve; pulling a corner changes the outline or polygon.

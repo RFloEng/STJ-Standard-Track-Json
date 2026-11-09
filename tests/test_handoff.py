@@ -184,6 +184,30 @@ class Markings(Base):
         self.has(messages(run(self.stage), "WARN"), "speeds are in m/s")
 
 
+class Portals(Base):
+    def setUp(self):
+        super().setUp()
+        self.st = {"id": "tun", "kind": "tunnel", "s_start": 100.0, "s_end": 160.0, "clearance": 5.0}
+        self.stage["structures"] = [self.st]
+
+    def test_portals_and_walls(self):
+        self.st["portals"] = {"start": {"style": "arch", "height": 5.5}, "end": {"style": "flat"}}
+        self.stage["edges"] = [{"id": "wall1", "side": "left", "s_start": 10.0, "s_end": 50.0, "kind": "barrier",
+                                "style": "retaining_wall", "height": 2.0}]
+        self.assertEqual(self.errors(self.stage), [])
+        self.assertNotIn("is not a barrier style", " ".join(messages(run(self.stage), "WARN")))
+
+    def test_portal_findings(self):
+        self.st["kind"] = "bridge"
+        self.st["portals"] = {"start": {"style": "arch"}}
+        self.has(messages(run(self.stage), "WARN"), "portals belong to a tunnel")
+        self.st["kind"] = "tunnel"
+        self.st["portals"] = {"end": {"height": 3.0, "mesh": {"mesh_ref": "nope"}}}
+        rep = run(self.stage)
+        self.has(messages(rep, "WARN"), "lower than the clearance")
+        self.has([m for m in messages(rep, "ERROR")], "unknown mesh 'nope'")
+
+
 class OverrideOps(unittest.TestCase):
     DOC = {"edges": [{"id": "a", "kind": "kerb"}, {"id": "b", "kind": "wall"}], "race": {"grid": [{"position": 1}]}}
 

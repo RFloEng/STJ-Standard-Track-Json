@@ -666,7 +666,7 @@ EDGE_STYLES = {
     "kerb": {"flat", "raised", "rumble", "sausage", "negative", "other"},
     "verge": {"grass", "gravel_trap", "paved_runoff", "other"},
     "barrier": {"wall", "armco", "tyre_wall", "tecpro", "fence", "debris_fence", "tape", "hay_bale", "concrete_block",
-                "rock", "earth_bank", "snow_bank", "other"},
+                "rock", "earth_bank", "snow_bank", "retaining_wall", "parapet", "other"},
 }
 
 
@@ -2790,6 +2790,18 @@ def check_structures(ctx):
                 rep.error(f"{p}.mesh.mesh_ref", f"unknown mesh '{st['mesh']['mesh_ref']}'")
             else:
                 _mesh_has(ctx, rep, f"{p}.mesh", st["mesh"]["mesh_ref"], nodes=[st["mesh"]["prim"]])
+        for end, portal in (st.get("portals") or {}).items():
+            pp = f"{p}.portals.{end}"
+            if st["kind"] not in ("tunnel", "underpass", "gallery"):
+                rep.warn(pp, f"portals belong to a tunnel, underpass or gallery, not a {st['kind']}")
+            if "height" in portal and "clearance" in st and portal["height"] < st["clearance"] - 0.01:
+                rep.warn(f"{pp}.height", f"opening {portal['height']} m is lower than the clearance {st['clearance']} m")
+            pm = portal.get("mesh")
+            if pm:
+                if pm["mesh_ref"] not in ctx.meshes:
+                    rep.error(f"{pp}.mesh.mesh_ref", f"unknown mesh '{pm['mesh_ref']}'")
+                elif "prim" in pm:
+                    _mesh_has(ctx, rep, f"{pp}.mesh", pm["mesh_ref"], nodes=[pm["prim"]])
         if "carried_by" in st:
             if st["carried_by"] not in ids:
                 rep.error(f"{p}.carried_by", f"unknown structure '{st['carried_by']}'")

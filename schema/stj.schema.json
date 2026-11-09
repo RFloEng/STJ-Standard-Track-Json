@@ -535,7 +535,33 @@
             "prim": { "type": "string", "pattern": "^/", "description": "USD prim path of the deck, walls or ceiling." }
           }
         },
-        "carried_by": { "$ref": "#/definitions/id", "description": "An underpass: the structure it passes under." }
+        "carried_by": { "$ref": "#/definitions/id", "description": "An underpass: the structure it passes under." },
+        "portals": {
+          "type": "object",
+          "description": "The mouths of a tunnel, underpass or gallery: how the entrance at s_start and the exit at s_end are built (spec §7.1).",
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": {
+            "start": { "$ref": "#/definitions/portal" },
+            "end": { "$ref": "#/definitions/portal" }
+          }
+        }
+      }
+    },
+    "portal": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "style": { "type": "string", "enum": ["flat", "arch", "cut_and_cover", "open_gallery", "other"], "description": "flat: a vertical wall with the opening. arch: an arched mouth. cut_and_cover: the roof ends in a cutting with side walls. open_gallery: columns or a half-open front." },
+        "height": { "type": "number", "exclusiveMinimum": 0, "description": "Height of the opening (m); default: the structure's clearance." },
+        "mesh": {
+          "type": "object",
+          "required": ["mesh_ref"],
+          "additionalProperties": false,
+          "patternProperties": { "^_": {} },
+          "properties": { "mesh_ref": { "$ref": "#/definitions/id" }, "prim": { "type": "string", "pattern": "^/" } }
+        }
       }
     },
     "asset": {
@@ -1950,9 +1976,11 @@
             "rock",
             "earth_bank",
             "snow_bank",
+            "retaining_wall",
+            "parapet",
             "other"
           ],
-          "description": "kerb: flat, raised, rumble, sausage, negative. verge: grass, gravel_trap, paved_runoff. barrier: wall, armco, tyre_wall, tecpro, fence, debris_fence, tape, hay_bale, concrete_block, rock, earth_bank, snow_bank."
+          "description": "kerb: flat, raised, rumble, sausage, negative. verge: grass, gravel_trap, paved_runoff. barrier: wall, armco, tyre_wall, tecpro, fence, debris_fence, tape, hay_bale, concrete_block, rock, earth_bank, snow_bank, retaining_wall (holds back the ground beside the road; height is above the road), parapet (the wall along a bridge deck)."
         },
         "t": {
           "type": "number",

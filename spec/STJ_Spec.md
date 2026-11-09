@@ -804,6 +804,8 @@ The validator checks that a `source.id` exists (ERROR), that an `osm_id` comes f
 
 ### 7.10 Road class, limits and markings (v0.3)
 
+**Portals and retaining walls.** A tunnel, underpass or gallery may describe its mouths: `structures[].portals {start, end}`, each `{style, height, mesh}` with `style` one of `flat`, `arch`, `cut_and_cover`, `open_gallery`, `other` (WARN on any other kind of structure). A retaining wall is an edge: `kind: barrier`, `style: retaining_wall`, with `height` above the road; `parapet` is the wall along a bridge deck. Edges already carry side, range, offset, height and a mesh.
+
 **On `roads[]`:** `road_class` (`motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `residential`, `service`, `track`, `path`, `other`, after the OpenStreetMap `highway` values), `speed_limit` (m/s), `lanes` (both directions) and `oneway` (traffic only towards increasing s). They are the typed form of what `tags` held until now; the tags stay as they are.
 
 **`markings[]`** `{id, name, kind, road, s_start, s_end, t | t_min + t_max, width, style, colour, dash, direction, text, surface, tags, source}`:
