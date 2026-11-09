@@ -185,6 +185,14 @@ World coordinates stay the default. Where it helps to say "5 m left of the road 
 
 A field that a later version replaces is **deprecated for one minor version first**: it stays valid, the validator warns, and the changelog names its successor. The version after that may remove it, and the migrator rewrites old files. Nothing is removed in a patch version.
 
+### 3.11 Compatibility
+
+Three things can differ between a document and a reader, and they are kept apart:
+
+- **Backward compatibility.** A reader of a later version reads every document of an earlier one. Minor versions only add optional features; a field leaves only after the deprecation above, and `tools/migrate.py` rewrites old files.
+- **Forward compatibility.** A reader of an earlier version meets a document of a later one. It SHOULD ignore keys it does not know (`x_<engine>` keys always), and it MUST NOT pass the document off as checked: it says that the version is newer than it knows. The schema lists the versions it knows, so `tools/validate.py` rejects a version it does not.
+- **Semantic compatibility.** The same structure can mean something different. A minor version never changes what an existing field means; a change of meaning is a new field, with the old one deprecated. A document that declares an older version but uses newer features gets a warning (`_metadata.version`).
+
 ---
 
 ## 4. Units and frames

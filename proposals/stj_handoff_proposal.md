@@ -29,3 +29,8 @@ owner. Parts of it were stale or proposed a wholesale rename and restructure; on
   the Blender round trips are untouched. The Blender profile leaves a camera or emitter that has a `position_ref` in the
   text block.
 - Pace notes keep `s`; a note at a position in another frame would need a different model and was left out.
+
+## Added after the second review
+
+- Compatibility (backward, forward, semantic) is now spec section 3.11.
+- The definition of done (schema, spec text, example, validator check, migration, test together) is stated in the README.

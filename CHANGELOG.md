@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Compatibility and definition of done** (from the owner handoff, second review): spec §3.11 separates backward, forward and semantic compatibility; the README states what finishes a format change (schema, spec text, example, validator check, migration, test).
+
 - **Blender profile: the layout of a file is part of the profile**: every translator puts the objects in `STJ Track`, `STJ Roads`, `STJ Race`, `STJ Scenery`, `STJ Ground` and `STJ Cameras and audio` under `STJ`, so a track looks the same whoever made it (table and rules in the profile, `stj_profile.GROUPS` in code). The check gives a NOTE (`layout`) for objects outside their collection; the export ignores collections. The reference `.blend` follows the layout.
 
 - **Blender: the mask blend as nodes**: the ground importer now builds the `mask` blend too (layers put in palette order, each over the ones before it through its own mask, with the red, green, blue or alpha channel and the world or road projection). Checked against `ground_blend` in a Blender 5.2 render, as the other blends are. Only a mask blend without one mask per layer keeps the preview surface.

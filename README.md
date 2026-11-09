@@ -247,6 +247,8 @@ tests/      unittest suite
 
 Contributions are welcome. A change to the standard starts as a proposal in `proposals/`, with examples and validator checks.
 
+**Definition of done.** A change to the format is finished when all of these exist together, where they apply: the schema, the spec text, an example, a validator check, the migration behaviour (what happens to older files) and a test. A schema that merely validates is not enough.
+
 ## License
 
 Apache License 2.0, the same as SVJ. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
