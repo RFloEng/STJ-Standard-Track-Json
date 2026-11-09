@@ -58,6 +58,10 @@ def with_places(doc):
                          "holes": [[[5.0, 3.0], [8.0, 3.0], [8.0, 6.0], [5.0, 6.0]]], "z": 12.5, "height": 12.0,
                          "tags": {"building": "civic", "addr:street": "Carrer Major"}}]
     doc["areas"] = [{"id": "square", "class": "park", "name": "Placa", "polygon": square}]
+    doc["water"] = {"bodies": [{"id": "pond", "kind": "pond", "outline": [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0]]}]}
+    doc["marshals"] = {"posts": [{"id": "p1", "kind": "marshal", "position": [1.0, 2.0, 3.0]}],
+                       "sectors": [{"id": "s1", "s_start": 0.0, "s_end": 50.0}]}
+    doc["environment"]["probes"] = [{"id": "pr", "kind": "box", "position": [1.0, 1.0, 1.0]}]
     return doc
 
 
@@ -247,6 +251,13 @@ class DocumentToScene(KeepExamples, unittest.TestCase):
         self.assertIn("STJ::building::hall", names)
         self.assertIn("STJ::area::square", names)
         self.assertEqual(profile.apply_scene(desc), doc)
+        names = {o["name"] for o in desc["objects"]}
+        for want in ("STJ::water::pond", "STJ::post::p1", "STJ::sector::s1", "STJ::probe::pr", "STJ::scatter::forest_fill"):
+            self.assertIn(want, names)
+        probe = next(o for o in desc["objects"] if o["name"] == "STJ::probe::pr")
+        probe["location"][0] += 4.0                                             # a moved probe writes its position
+        self.assertEqual(profile.apply_scene(desc)["environment"]["probes"][0]["position"][0], 5.0)
+        probe["location"][0] -= 4.0
         hall = next(o for o in desc["objects"] if o["name"] == "STJ::building::hall")
         hall["points"][2][0] += 5.0                                         # pull a corner out
         self.assertEqual(profile.apply_scene(desc)["buildings"][0]["footprint"][2], [25.0, 10.0])

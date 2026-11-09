@@ -57,12 +57,28 @@ CATEGORIES = {
     "building": ({"CURVE"}, "buildings"),
     "area": ({"CURVE"}, "areas"),
     "terrain": ({"MESH"}, "geometry.terrain, geometry.terrains"),
+    "water": ({"EMPTY"}, "water.bodies"),
+    "scatter": ({"EMPTY"}, "scenery.scatter"),
+    "sector": ({"EMPTY"}, "marshals.sectors"),
+    "post": ({"EMPTY"}, "marshals.posts"),
+    "marshal_vehicle": ({"EMPTY"}, "marshals.vehicles"),
+    "restricted": ({"EMPTY"}, "marshals.restricted_zones"),
+    "audio_zone": ({"EMPTY"}, "audio.zones"),
+    "probe": ({"EMPTY"}, "environment.probes"),
+    "service": ({"EMPTY"}, "race.service_areas"),
 }
 RING_KEY = {"building": "footprint", "area": "polygon"}        # the field of the entry that a closed curve holds
 # records that live in the scene as an empty whose `stj` property is the entry: category -> (path, "list" | "dict")
 RECORDS = {"structure": ("structures", "list"), "animated": ("animated_objects", "list"),
            "prototype": ("scenery.prototypes", "dict"), "emitter": ("audio.emitters", "list"),
-           "crowd": ("scenery.crowds", "list")}
+           "crowd": ("scenery.crowds", "list"),
+           "water": ("water.bodies", "list"), "scatter": ("scenery.scatter", "list"),
+           "sector": ("marshals.sectors", "list"), "post": ("marshals.posts", "list"),
+           "marshal_vehicle": ("marshals.vehicles", "list"), "restricted": ("marshals.restricted_zones", "list"),
+           "audio_zone": ("audio.zones", "list"), "probe": ("environment.probes", "list"),
+           "service": ("race.service_areas", "list")}
+# records that sit at their `position` (shown there; a moved empty writes the new position)
+AT_POSITION = ("emitter", "probe", "post")
 HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "instance", "building", "area", "terrain") + tuple(RECORDS)
 INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many")        # keys of an object's `stj` property that the exporter reads and does not write
 MESH_ROLES = ("visual", "collision", "lod", "decal")
@@ -417,7 +433,7 @@ def scene_patch(scene, base):
             value = []
             for o, n in found:
                 entry = {"id": n[1], **_entity(o)}
-                if cat == "emitter" and "position" in entry:
+                if cat in AT_POSITION and "position" in entry:
                     entry["position"] = _kept_position(entry["position"], o)
                 value.append(entry)
         else:
@@ -459,7 +475,7 @@ def scene_patch(scene, base):
         patch.setdefault("geometry", {})["meshes"] = entries
     env = _environment_patch(named, base, patch)
     if env:
-        patch["environment"] = env
+        patch["environment"] = core.merge_patch(patch.get("environment") or {}, env)
     if timing or splits:
         patch["timing"] = dict(timing)
         if splits:
@@ -472,7 +488,7 @@ def scene_patch(scene, base):
     if spawns:
         race["spawns"] = spawns
     if race:
-        patch["race"] = race
+        patch["race"] = core.merge_patch(patch.get("race") or {}, race)
     return patch, findings
 
 
@@ -704,6 +720,27 @@ def scene_from_document(doc, base_dir=None):
         del audio["emitters"]
         if not audio:
             del base["audio"]
+    for cat, (path, _kind) in RECORDS.items():
+        if cat in ("structure", "animated", "prototype", "emitter", "crowd"):
+            continue                                    # handled above and below
+        *parents, leaf = path.split(".")
+        holder = base
+        for key in parents:
+            holder = holder.get(key) if isinstance(holder, dict) else None
+        items = holder.get(leaf) if isinstance(holder, dict) else None
+        if items and all(record_ok(e) for e in items):
+            record_objects(cat, lambda e, cat=cat: f"STJ::{cat}::{e['id']}", items,
+                           (lambda e: _vec3(e["position"]) if isinstance(e.get("position"), list) else (0.0, 0.0, 0.0))
+                           if cat in AT_POSITION else None)
+            del holder[leaf]
+            node = base
+            trail = []
+            for key in parents:
+                trail.append((node, key))
+                node = node[key]
+            for owner, key in reversed(trail):
+                if not owner[key]:
+                    del owner[key]
     scenery = base.get("scenery")
     if isinstance(scenery, dict):
         protos = scenery.get("prototypes")

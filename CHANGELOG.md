@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender profile: more records** (`water`, `scatter`, `sector`, `post`, `marshal_vehicle`, `restricted`, `audio_zone`, `probe`, `service`): list entries carried as empties with the entry in `stj`; probes and marshal posts follow their empty. The patch merges `race` and `environment` instead of replacing them.
+
 - **Blender profile: terrain** (`STJ::terrain::<id>`): a heightmap becomes a grid mesh on import and is sculpted in Blender; an untouched terrain exports as it was, an edited one writes its heightmap again (png16 or raw_f32) with new height range. `stj_core.png_bytes`.
 
 - **Handoff additions** (`proposals/stj_handoff_proposal.md`; from a third-party v0.4 restructure proposal, taking only what is additive and keeping the current names):
