@@ -254,6 +254,12 @@ class DocumentToScene(KeepExamples, unittest.TestCase):
         names = {o["name"] for o in desc["objects"]}
         for want in ("STJ::water::pond", "STJ::post::p1", "STJ::sector::s1", "STJ::probe::pr", "STJ::scatter::forest_fill"):
             self.assertIn(want, names)
+        pond = next(o for o in desc["objects"] if o["name"] == "STJ::water::pond")
+        svc = next(o for o in desc["objects"] if o["name"] == "STJ::service::service_park")
+        self.assertEqual((pond["type"], svc["type"]), ("CURVE", "CURVE"))
+        pond["points"][1][0] += 2.0                                             # pull a corner of the pond
+        self.assertEqual(profile.apply_scene(desc)["water"]["bodies"][0]["outline"][1], [7.0, 0.0])
+        pond["points"][1][0] -= 2.0
         probe = next(o for o in desc["objects"] if o["name"] == "STJ::probe::pr")
         probe["location"][0] += 4.0                                             # a moved probe writes its position
         self.assertEqual(profile.apply_scene(desc)["environment"]["probes"][0]["position"][0], 5.0)

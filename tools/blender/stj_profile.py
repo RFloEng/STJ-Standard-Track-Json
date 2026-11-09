@@ -57,7 +57,7 @@ CATEGORIES = {
     "building": ({"CURVE"}, "buildings"),
     "area": ({"CURVE"}, "areas"),
     "terrain": ({"MESH"}, "geometry.terrain, geometry.terrains"),
-    "water": ({"EMPTY"}, "water.bodies"),
+    "water": ({"EMPTY", "CURVE"}, "water.bodies"),
     "scatter": ({"EMPTY"}, "scenery.scatter"),
     "sector": ({"EMPTY"}, "marshals.sectors"),
     "post": ({"EMPTY"}, "marshals.posts"),
@@ -65,7 +65,7 @@ CATEGORIES = {
     "restricted": ({"EMPTY"}, "marshals.restricted_zones"),
     "audio_zone": ({"EMPTY"}, "audio.zones"),
     "probe": ({"EMPTY"}, "environment.probes"),
-    "service": ({"EMPTY"}, "race.service_areas"),
+    "service": ({"CURVE"}, "race.service_areas"),
 }
 RING_KEY = {"building": "footprint", "area": "polygon"}        # the field of the entry that a closed curve holds
 # records that live in the scene as an empty whose `stj` property is the entry: category -> (path, "list" | "dict")
@@ -77,6 +77,8 @@ RECORDS = {"structure": ("structures", "list"), "animated": ("animated_objects",
            "marshal_vehicle": ("marshals.vehicles", "list"), "restricted": ("marshals.restricted_zones", "list"),
            "audio_zone": ("audio.zones", "list"), "probe": ("environment.probes", "list"),
            "service": ("race.service_areas", "list")}
+# records that are a closed curve when they have the ring: category -> (field of the entry, numbers per point)
+RECORD_RING = {"water": ("outline", 2), "service": ("polygon", 3)}
 # records that sit at their `position` (shown there; a moved empty writes the new position)
 AT_POSITION = ("emitter", "probe", "post")
 HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "instance", "building", "area", "terrain") + tuple(RECORDS)
@@ -433,6 +435,9 @@ def scene_patch(scene, base):
             value = []
             for o, n in found:
                 entry = {"id": n[1], **_entity(o)}
+                if cat in RECORD_RING and o["type"] == "CURVE":
+                    key, dim = RECORD_RING[cat]
+                    entry[key] = [[round(c, 4) for c in p[:dim]] for p in o["points"]]
                 if cat in AT_POSITION and "position" in entry:
                     entry["position"] = _kept_position(entry["position"], o)
                 value.append(entry)
@@ -684,6 +689,14 @@ def scene_from_document(doc, base_dir=None):
     def record_objects(cat, name_of, value, pos_of=None):
         for i, e in enumerate(value):
             x, y, z = pos_of(e) if pos_of else (0.0, 0.0, 0.0)
+            ring_key, dim = RECORD_RING.get(cat, (None, 0))
+            ring = e.get(ring_key) if ring_key else None
+            if isinstance(ring, list) and len(ring) >= 3 and all(
+                    isinstance(p, list) and len(p) == dim and all(isinstance(c, (int, float)) for c in p) for p in ring):
+                z0 = float(e["level"]) if dim == 2 and isinstance(e.get("level"), (int, float)) else 0.0
+                obj(name_of(e), "CURVE", cyclic=True, points=[[p[0], p[1], p[2] if dim == 3 else z0] for p in ring],
+                    props={"stj": {**{k: v for k, v in e.items() if k not in ("id", ring_key)}, "_i": i}})
+                continue
             obj(name_of(e), location=(x, y, z), props={"stj": {**{k: v for k, v in e.items() if k != "id"}, "_i": i}})
 
     def midpoint(e):

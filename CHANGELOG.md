@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender profile: ring curves for water and service areas**: a water body with an `outline` and every service area is a closed curve; pulling a corner changes the outline or polygon.
+
 - **Blender profile: more records** (`water`, `scatter`, `sector`, `post`, `marshal_vehicle`, `restricted`, `audio_zone`, `probe`, `service`): list entries carried as empties with the entry in `stj`; probes and marshal posts follow their empty. The patch merges `race` and `environment` instead of replacing them.
 
 - **Blender profile: terrain** (`STJ::terrain::<id>`): a heightmap becomes a grid mesh on import and is sculpted in Blender; an untouched terrain exports as it was, an edited one writes its heightmap again (png16 or raw_f32) with new height range. `stj_core.png_bytes`.
