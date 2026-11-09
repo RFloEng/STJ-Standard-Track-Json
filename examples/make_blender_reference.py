@@ -122,6 +122,10 @@ for sid, entry in doc["surfaces"]["library"].items():
     mat.use_fake_user = True
     mat["stj"] = entry                          # the library entry lives on the material (profile section 4)
 base["surfaces"].pop("library")
+rest = base.pop("surfaces")                     # and the rest of the surfaces block on its own empty
+if rest:
+    sf = empty("STJ::surfaces::surfaces", 0.0, 0.0, 0.0, 0.0)
+    sf["stj"] = rest
 if "track_info" in doc:                         # and the track info on its own empty
     info = empty("STJ::track_info::track_info", 0.0, 0.0, 0.0, 0.0)
     info["stj"] = doc["track_info"]

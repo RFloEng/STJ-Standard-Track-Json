@@ -481,8 +481,52 @@
           },
           "description": "Where the building is already modelled."
         },
+        "address": { "$ref": "#/definitions/address" },
+        "parts": {
+          "type": "array",
+          "description": "Parts of the building with their own footprint, base and height (a tower on a podium, a lower wing). The building's own footprint is the whole; the parts say how it rises (spec §7.9).",
+          "items": { "$ref": "#/definitions/building_part" }
+        },
         "tags": { "$ref": "#/definitions/tags" },
         "source": { "$ref": "#/definitions/entity_source" }
+      }
+    },
+    "address": {
+      "type": "object",
+      "description": "A postal address, as written. STJ does not check it.",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "housenumber": { "type": "string" },
+        "street": { "type": "string" },
+        "postcode": { "type": "string" },
+        "city": { "type": "string" },
+        "country": { "type": "string", "description": "ISO 3166-1 alpha-2 code where known." }
+      }
+    },
+    "building_part": {
+      "type": "object",
+      "required": ["id", "footprint"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "footprint": { "$ref": "#/definitions/ring" },
+        "holes": { "type": "array", "items": { "$ref": "#/definitions/ring" } },
+        "z": { "type": "number", "description": "Elevation of the part's base (m); above the building's base for a part that sits on another." },
+        "height": { "type": "number", "exclusiveMinimum": 0, "description": "Height of the part's walls (m)." },
+        "levels": { "type": "integer", "minimum": 1 },
+        "roof": { "$ref": "#/definitions/building_roof" }
+      }
+    },
+    "building_roof": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "shape": { "type": "string", "enum": ["flat", "gabled", "hipped", "pyramidal", "skillion", "dome", "other"] },
+        "height": { "type": "number", "minimum": 0 },
+        "heading": { "type": "number" }
       }
     },
     "area": {

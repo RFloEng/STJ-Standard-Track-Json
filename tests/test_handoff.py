@@ -184,6 +184,28 @@ class Markings(Base):
         self.has(messages(run(self.stage), "WARN"), "speeds are in m/s")
 
 
+class BuildingParts(Base):
+    SQUARE = [[0, 0], [20, 0], [20, 10], [0, 10]]
+
+    def setUp(self):
+        super().setUp()
+        self.stage["buildings"] = [{"id": "hall", "footprint": self.SQUARE, "height": 8.0,
+                                    "address": {"housenumber": "4", "street": "Carrer Major", "city": "Coll", "country": "ES"}}]
+
+    def test_address_and_parts(self):
+        self.stage["buildings"][0]["parts"] = [{"id": "tower", "footprint": [[2, 2], [8, 2], [8, 8], [2, 8]], "z": 8.0, "height": 20.0}]
+        self.assertEqual(self.errors(self.stage), [])
+
+    def test_part_findings(self):
+        b = self.stage["buildings"][0]
+        b["parts"] = [{"id": "a", "footprint": [[15, 2], [30, 2], [30, 8], [15, 8]], "height": 5.0},
+                      {"id": "a", "footprint": [[1, 1], [2, 1], [2, 2]]}]
+        rep = run(self.stage)
+        self.has(messages(rep, "ERROR"), "duplicate building part id 'a'")
+        self.has(messages(rep, "WARN"), "reaches outside the building's footprint")
+        self.has(messages(rep, "NOTE"), "no height or levels")
+
+
 class Portals(Base):
     def setUp(self):
         super().setUp()

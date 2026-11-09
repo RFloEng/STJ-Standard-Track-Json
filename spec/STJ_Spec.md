@@ -798,6 +798,8 @@ A track made from real-world data (OpenStreetMap, a cadastre, a survey) has name
 
 **`areas[]`** `{id, name, class, polygon, holes, tags, source}`: a polygon of `residential`, `commercial`, `industrial`, `farmland`, `forest`, `grass`, `park`, `water`, `wetland`, `parking`, `paddock`, `spectator`, `quarry` or `other`. An area says what is there; scatter rules, ground layers (§8.7) and water bodies (§7.5) decide how it is drawn, and none of them changes.
 
+**Address and parts (v0.3).** A building may carry `address {housenumber, street, postcode, city, country}`, kept as written, and `parts[]`: `{id, footprint, holes, z, height, levels, roof}`, each a volume of its own (a tower on a podium, a lower wing). The building's `footprint` is the whole; a part's `z` is its base, above the building's base for a part that sits on another. The validator checks the part rings like the building's (WARN for a part that reaches outside the footprint; NOTE without a height or levels).
+
 Buildings and areas are fixed in the world: a layout (§3.5) does not reverse or move them.
 
 The validator checks that a `source.id` exists (ERROR), that an `osm_id` comes from a source of kind `osm` (NOTE), that ids are unique, that rings have an area (WARN), do not cross themselves (WARN) and hold their holes (WARN), that a building has a height, levels or a mesh (NOTE) and plausible storeys (NOTE), and that `mesh_ref` exists (ERROR).

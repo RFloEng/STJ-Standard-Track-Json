@@ -2751,6 +2751,19 @@ def check_places(ctx):
             rep.note(p, f"{b['height']} m for {b['levels']} level(s): {b['height'] / b['levels']:.1f} m a level")
         if b.get("mesh") and b["mesh"]["mesh_ref"] not in mesh_ids:
             rep.error(f"{p}.mesh.mesh_ref", f"unknown mesh '{b['mesh']['mesh_ref']}'")
+        parts = b.get("parts", [])
+        _dups(rep, f"{p}.parts", parts, "building part")
+        for k, part in enumerate(parts):
+            pp = f"{p}.parts[{k}]"
+            ring = _ring_findings(rep, f"{pp}.footprint", part["footprint"], "footprint")
+            for h, hole in enumerate(part.get("holes", [])):
+                hr = _ring_findings(rep, f"{pp}.holes[{h}]", hole, "hole")
+                if hr and ring and not core.point_in_polygon(ring, *hr[0]):
+                    rep.warn(f"{pp}.holes[{h}]", "hole lies outside the footprint")
+            if ring and outer and not all(core.point_in_polygon(outer, *q) or q in outer for q in ring):
+                rep.warn(f"{pp}.footprint", "the part reaches outside the building's footprint")
+            if not any(key in part for key in ("height", "levels")):
+                rep.note(pp, "no height or levels: an engine has to guess how tall this part is")
         if (b.get("roof") or {}).get("shape") == "flat" and (b["roof"].get("height") or 0) > 0:
             rep.note(f"{p}.roof", "a flat roof with a height")
     for i, a in enumerate(doc.get("areas", [])):

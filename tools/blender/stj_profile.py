@@ -79,6 +79,7 @@ CATEGORIES = {
     "track_info": ({"EMPTY"}, "track_info"),
     "layout": ({"EMPTY"}, "layouts"),
     "variant": ({"EMPTY"}, "variants"),
+    "surfaces": ({"EMPTY"}, "surfaces (default, bindings, bands, maps, …)"),
 }
 RING_KEY = {"building": "footprint", "area": "polygon"}        # the field of the entry that a closed curve holds
 # records that live in the scene as an empty whose `stj` property is the entry: category -> (path, "list" | "dict")
@@ -94,7 +95,8 @@ RECORDS = {"structure": ("structures", "list"), "animated": ("animated_objects",
            "sky": ("environment.sky", "object"), "screen": ("screens", "list"),
            "chunk": ("geometry.chunks", "list"), "tiles": ("geometry.tiles", "object"),
            "dynamic": ("dynamic", "object"), "track_info": ("track_info", "object"),
-           "layout": ("layouts", "list"), "variant": ("variants", "list")}
+           "layout": ("layouts", "list"), "variant": ("variants", "list"),
+           "surfaces": ("surfaces", "object")}
 # records that are a closed curve when they have the ring: category -> (field of the entry, numbers per point)
 RECORD_RING = {"water": ("outline", 2), "service": ("polygon", 3)}
 # records that sit at their `position` (shown there; a moved empty writes the new position)
@@ -937,7 +939,7 @@ def scene_from_document(doc, base_dir=None):
         if not audio:
             del base["audio"]
     for cat, (path, _kind) in RECORDS.items():
-        if cat in ("structure", "animated", "prototype", "emitter", "crowd"):
+        if cat in ("structure", "animated", "prototype", "emitter", "crowd", "surfaces"):
             continue                                    # handled above and below
         *parents, leaf = path.split(".")
         holder = base
@@ -1063,8 +1065,11 @@ def scene_from_document(doc, base_dir=None):
                 materials.append({"name": f"STJ::surface::{sid}", "props": {}})
     if isinstance(base.get("surfaces"), dict) and "library" in base["surfaces"] and not library:
         del base["surfaces"]["library"]
-        if not base["surfaces"]:
-            del base["surfaces"]
+    if isinstance(base.get("surfaces"), dict) and base["surfaces"]:
+        obj("STJ::surfaces::surfaces", props={"stj": dict(base["surfaces"])})      # default, bindings, bands, maps, …
+        del base["surfaces"]
+    elif "surfaces" in base and not base["surfaces"]:
+        del base["surfaces"]
     return {"blender": None, "profile": PROFILE_VERSION, "objects": objects, "materials": materials, "collections": collections,
             "texts": {BASE_TEXT: json.dumps(base, indent=2, ensure_ascii=False)}, "scene_props": {}}
 
