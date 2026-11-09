@@ -110,7 +110,7 @@ It writes `report_usd.json`.
 | Per-vertex attribute (`_STJ_DENSITY`) | ✓ `vertex` primvar | ✓ | ✓ |
 | Per-corner FLOAT2 attribute | ✗ dropped (only the UV map is written) | ✓ (`faceVarying` primvars) | – |
 | Materials per face | ✓ one GeomSubset per material | ✓ | ✓ |
-| Principled BSDF | ✓ UsdPreviewSurface **and** a MaterialX network (OpenPBR) | ✓ | ✓ |
+| Principled BSDF | ✓ UsdPreviewSurface **and** a MaterialX network (OpenPBR) | ✓ | ✓ the preview surface only (checked in 5.2 with `tools/ground_materialx.py` output: 4 nodes, an image and a Principled BSDF; the MaterialX network is ignored). The importer in `tools/blender/stj_ground.py` rebuilds the layered ground as Blender nodes instead |
 | Procedural texture nodes (noise, colour ramp) | ✗ not translated into MaterialX | ✓ MaterialX can express them | – |
 | Simple custom properties (string, number) | ✓ `userProperties:*` on objects and materials | ✓ any typed attribute (`stj:*`) | ✓ back as custom properties |
 | **Nested custom properties** (the `stj` dictionaries) | ✗ **dropped** | ✓ as typed attributes or JSON strings | – |

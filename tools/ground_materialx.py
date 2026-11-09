@@ -2,7 +2,8 @@
 Ground to MaterialX
 ===================
 Writes the layered ground of a track (spec §8.7) as a MaterialX network on the ground material of its USD
-mesh, so Blender and USD viewers show the real layers and blend instead of a baked image. The network is
+mesh, so USD viewers that read MaterialX show the real layers and blend instead of a baked image. Blender's USD
+import reads only the UsdPreviewSurface fallback of the material and ignores the network (checked in 5.2). The network is
 a **derived view**: the `ground` block stays the source of truth, and where the two disagree the block wins.
 Needs the pxr module: pip install usd-core.
 

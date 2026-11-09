@@ -200,7 +200,8 @@ Other tools:
 | `tools/stj_core.py` | Loading, `$ref`, RFC 7396 merge patch, the reference line (chainage, Hermite), USD and PNG reading, terrain sampling. It also holds the reference implementations of conditions, line states, the water-film depth, the ground blend and the evolution laws. |
 | `tools/ribbon_usd.py` | A USD collision ribbon from a centerline, surface bands and the road profile and banking, one GeomSubset per surface |
 | `tools/ground_bake.py` | Layered ground baked into an image, with the stamp that marks the image as a cache of the recipe |
-| `tools/ground_materialx.py` | Writes the layered ground as a MaterialX network on the ground material, so Blender and USD viewers show the real layers instead of a bake |
+| `tools/ground_materialx.py` | Writes the layered ground as a MaterialX network on the ground material, so USD viewers that read MaterialX (usdview, Omniverse) show the real layers instead of a bake. Blender 5.2 imports only the preview-surface fallback of that material, not the MaterialX network |
+| `tools/blender/stj_ground.py` | Rebuilds the layered ground as Blender shader nodes on import (height and linear blends, projections, macro maps); checked pixel by pixel against the reference maths |
 | `tools/las_dtm.py` | Grids the ground points of a LiDAR tile into a heightmap, with no-data cells and the records of where it came from. LAS, or LAZ and COPC with the optional `laspy`. |
 | `tools/canonicalize.py`, `tools/migrate.py` | Canonical form for diffs, and version migration ([spec §3.9, §3.10](spec/STJ_Spec.md#39-canonical-form-v03)) |
 | `tools/blender/` | The [STJ Blender profile](spec/STJ_Blender_Profile.md) translator (`stj_blender.py`: import, lint and export of a `.blend`; `stj_profile.py`: the rules, no Blender needed) and the probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md) |

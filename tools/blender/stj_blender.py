@@ -292,7 +292,15 @@ def build_scene(desc, reset=True):
 
 def import_document(doc_path, out_blend):
     doc = core.load_document(doc_path)
-    build_scene(profile.scene_from_document(doc, Path(doc_path).resolve().parent))
+    base_dir = Path(doc_path).resolve().parent
+    build_scene(profile.scene_from_document(doc, base_dir))
+    try:
+        import stj_ground
+        for mat, notes in stj_ground.build_ground(doc, base_dir).items():
+            for note in notes:
+                print(f"ground '{mat}': {note}")
+    except Exception as e:  # noqa: BLE001  (the nodes are a view: a failure must not lose the import)
+        print(f"ground: nodes not built ({type(e).__name__}: {e})")
     bpy.ops.wm.save_as_mainfile(filepath=str(out_blend))
     findings = profile.lint_scene(read_scene())
     for line in profile.format_findings(findings):

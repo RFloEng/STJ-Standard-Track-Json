@@ -568,7 +568,6 @@ def find_blender():
     return None
 
 
-@unittest.skipUnless(find_blender(), "Blender not found (set STJ_BLENDER)")
 class RealDocuments(unittest.TestCase):
     """Three things real converted tracks showed, and the converters' own output when it is next to this repository."""
 
@@ -601,6 +600,7 @@ class RealDocuments(unittest.TestCase):
             self.assertEqual(profile.apply_scene(desc), doc, str(f))
 
 
+@unittest.skipUnless(find_blender(), "Blender not found (set STJ_BLENDER)")
 class InBlender(KeepExamples, unittest.TestCase):
     """Builds the reference .blend, lints it, exports it and checks the result."""
 

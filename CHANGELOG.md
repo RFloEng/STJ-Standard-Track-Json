@@ -2,6 +2,10 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender: the layered ground as shader nodes**: importing a document rebuilds each ground material as Blender nodes (`tools/blender/stj_ground.py`): vertex_top3 indices and weights, the height and linear blends, world, road and texcoord projections, and the grey_centred, multiply and colour macro maps. Rendered in Blender 5.2 and compared pixel by pixel with the reference maths (`tests/test_blender_ground.py`): identical. The `mask` blend and wetness maps are not built and keep the preview surface.
+
+- **Corrected: MaterialX ground in Blender**: Blender 5.2 imports only the preview-surface fallback of a material and ignores the MaterialX network written by `tools/ground_materialx.py`; the README, `docs/blender_mapping.md` and the tool's header said it showed the layers, and now say what was checked.
+
 - **Blender profile: real converted stages round-trip exactly**: 37 documents from the sim converters (Richard Burns Rally and WRC Generations) now come back identical through the profile, and the RBR stages through Blender 5.2 itself. Three things were fixed: `null` values inside records, a negative (mirror) instance scale, and a timing gate whose `s` is not the arc length; coordinates far from the origin are written as imported when unmoved (Blender holds 32-bit floats).
 
 - **Blender profile: speakers and sky**: point audio emitters import as Speaker objects, and a document with a sky gets a World with a Sky Texture node (view only; the data stays on `STJ::sky::sky`).
