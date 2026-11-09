@@ -103,7 +103,7 @@ RECORD_RING = {"water": ("outline", 2), "service": ("polygon", 3)}
 # records that sit at their `position` (shown there; a moved empty writes the new position)
 AT_POSITION = {"emitter": "position", "probe": "position", "post": "position", "chunk": "origin"}
 HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "marking", "line", "pit_lane", "instance", "building", "area", "terrain") + tuple(RECORDS)
-INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many", "_cols", "_base")
+INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many", "_cols", "_base", "_orig")
 # a prototype's physics is shown by a proxy mesh `STJ::prototype::<id>::body` with a Rigid Body: STJ shape kind -> Blender collision shape
 SHAPE_TO_RB = {"box": "BOX", "sphere": "SPHERE", "cylinder": "CYLINDER", "capsule": "CAPSULE", "mesh": "CONVEX_HULL"}
 RB_TO_SHAPE = {v: k for k, v in SHAPE_TO_RB.items()}        # keys of an object's `stj` property that the exporter reads and does not write
@@ -149,6 +149,18 @@ def base_document(scene):
     return json.loads(text)
 
 
+def _r(v):
+    """A coordinate for the document: four decimals, fewer where a 32-bit float (Blender's) cannot hold them, so a
+    value that went through Blender comes back as it was written (a 3-decimal 2527.638 is not 2527.6379)."""
+    if v == 0 or v != v:
+        return v
+    ulp = 2.0 ** (math.floor(math.log2(abs(v))) - 23)
+    d = 4
+    while d > 0 and ulp > 0.9 * 10.0 ** -d:
+        d -= 1
+    return round(v, d)
+
+
 def world_pose(p, line):
     """(x, y, z, heading) of a pose, or None when it has keys a scene cannot hold."""
     if set(p) <= {"position", "heading"} and "position" in p and "heading" in p:
@@ -169,7 +181,7 @@ def _pose(o, line=None):
         w = world_pose(stored, line)
         if w is not None and math.dist((x, y, z), w[:3]) < 0.01 and                 abs(math.atan2(math.sin(o["heading"] - w[3]), math.cos(o["heading"] - w[3]))) < 1e-4:
             return stored
-    return {"position": [round(x, 4), round(y, 4), round(z, 4)], "heading": round(o["heading"], 6)}
+    return {"position": [_r(x), _r(y), _r(z)], "heading": round(o["heading"], 6)}
 
 
 def _kept_position(stored, o):
@@ -177,7 +189,7 @@ def _kept_position(stored, o):
     x, y, z = o["location"]
     if stored is not None and math.dist((x, y, z), stored) < 0.01:
         return stored
-    return [round(x, 4), round(y, 4), round(z, 4)]
+    return [_r(x), _r(y), _r(z)]
 
 
 def _look_at(o, stored, pos):
@@ -189,7 +201,7 @@ def _look_at(o, stored, pos):
     if _angle_between(f, to) < math.radians(0.5):
         return stored
     n = math.sqrt(sum(c * c for c in f)) or 1.0
-    return [round(pos[i] + f[i] / n * d, 4) for i in range(3)]
+    return [_r(pos[i] + f[i] / n * d) for i in range(3)]
 
 
 def _wrap(ds, line):
@@ -204,18 +216,37 @@ def _stj_props(o):
     return p if isinstance(p, dict) else {}
 
 
+def _snap(o, rows, key="points", dim=None):
+    """Rows of coordinates for the document. Blender keeps 32-bit floats, so a row that is still where the import put it
+    (within what a 32-bit float can lose) is written as it was imported; a row that was moved is rounded."""
+    orig = _stj_props(o).get("_orig")
+    orig = orig.get(key) if isinstance(orig, dict) else None
+    out = []
+    for k, row in enumerate(rows):
+        row = list(row[:dim]) if dim else list(row)
+        was = orig[k] if isinstance(orig, list) and k < len(orig) else None
+        pt = o["points"][k] if k < len(o.get("points") or []) else row          # a tangent is a difference of coordinates: its
+        big = max([abs(c) for c in pt] + [abs(c) for c in row] + [1e-30])    # error follows the size of the coordinates
+        tol = max(2e-4, (12.0 if key != "points" else 4.0) * 2.0 ** (math.floor(math.log2(big)) - 23))
+        if was is not None and len(was) >= len(row) and all(abs(a - b) <= tol for a, b in zip(row, was)):
+            out.append(list(was[:len(row)]))
+        else:
+            out.append([_r(c) for c in row])
+    return out
+
+
 def centerline_geometry(obj):
     """The `points`, `closed` and Hermite tangents of a curve object."""
-    cl = {"points": [[round(c, 4) for c in p] for p in obj["points"]]}
+    cl = {"points": _snap(obj, obj["points"])}
     if obj.get("cyclic"):
         cl["closed"] = True
     if obj.get("tangents_out"):
-        out = [[round(c, 4) for c in t] for t in obj["tangents_out"]]
+        out = _snap(obj, obj["tangents_out"], "tangents_out")
         if _stj_props(obj).get("_shared"):          # the document gave one tangent per point
             cl["tangents"] = out
         else:
             cl["tangents_out"] = out
-            cl["tangents_in"] = [[round(c, 4) for c in t] for t in obj["tangents_in"]]
+            cl["tangents_in"] = _snap(obj, obj["tangents_in"], "tangents_in")
     return cl
 
 
@@ -403,7 +434,7 @@ def edge_points(edge, line, doc=None, step=5.0):
     span = (b - a) % line.length if line.closed and b < a else b - a
     n = max(1, int(math.ceil(span / step)))
     t = edge_t(edge, line, doc)
-    return [[round(c, 4) for c in line.point((a + span * k / n) % line.length if line.closed else a + span * k / n, t)]
+    return [[_r(c) for c in line.point((a + span * k / n) % line.length if line.closed else a + span * k / n, t)]
             for k in range(n + 1)]
 
 
@@ -418,7 +449,7 @@ def marking_points(m, doc, step=5.0):
 
     def at(k, t):
         s = a + span * k
-        return [round(c, 4) for c in line.point(s % line.length if line.closed else s, t)]
+        return [_r(c) for c in line.point(s % line.length if line.closed else s, t)]
     if "t" in m:
         n = max(1, int(math.ceil(span / step)))
         return [at(k / n, m["t"]) for k in range(n + 1)]
@@ -519,7 +550,10 @@ def scene_patch(scene, base):
             s, t = line.project(o["location"][0], o["location"][1])
             props = _stj_props(o)
             stored = props.get("s")
-            same = stored is not None and abs(_wrap(s - stored, line)) < 0.05      # the gate has not been moved
+            same = False                                    # the gate has not been moved: it stands where its stored s puts it
+            if stored is not None:
+                px, py = line.point(stored)[:2]
+                same = math.hypot(o["location"][0] - px, o["location"][1] - py) < 0.05
             entry = {"s": stored if same else round(s, 3)}
             entry.update({k: v for k, v in props.items() if k in ("t_min", "t_max")})
             if ident in TIMING_LINES:
@@ -560,7 +594,7 @@ def scene_patch(scene, base):
             pos = cam.pop("position", None)
             x, y, z = o["location"]
             if pos is None or math.dist((x, y, z), pos) >= 0.01:
-                pos = [round(x, 4), round(y, 4), round(z, 4)]
+                pos = [_r(x), _r(y), _r(z)]
             entry = {"id": cam_id, **cam, "position": pos}
             if "look_at" in cam and o.get("forward"):
                 entry["look_at"] = _look_at(o, cam["look_at"], pos)
@@ -578,13 +612,13 @@ def scene_patch(scene, base):
                 entry = {"id": n[1], **_entity(o)}
                 if cat == "water" and o["type"] == "CURVE" and "_cols" in _stj_props(o):
                     cols = _stj_props(o)["_cols"]              # width and depth per point; the last ones carry on
-                    entry["path"] = [[round(c, 4) for c in p] + list(cols[min(k, len(cols) - 1)])
+                    entry["path"] = [[_r(c) for c in p] + list(cols[min(k, len(cols) - 1)])
                                      for k, p in enumerate(o["points"])]
                 elif cat == "emitter" and o["type"] == "CURVE":
-                    entry["path"] = [[round(c, 4) for c in p] for p in o["points"]]
+                    entry["path"] = _snap(o, o["points"])
                 elif cat in RECORD_RING and o["type"] == "CURVE":
                     key, dim = RECORD_RING[cat]
-                    entry[key] = [[round(c, 4) for c in p[:dim]] for p in o["points"]]
+                    entry[key] = _snap(o, o["points"], dim=dim)
                 if cat in AT_POSITION and AT_POSITION[cat] in entry:
                     entry[AT_POSITION[cat]] = _kept_position(entry[AT_POSITION[cat]], o)
                 value.append(entry)
@@ -608,7 +642,7 @@ def scene_patch(scene, base):
     for cat, path in (("building", "buildings"), ("area", "areas")):
         found = objs(cat)
         if found:
-            patch[path] = [{"id": n[1], **_entity(o), RING_KEY[cat]: [[round(p[0], 4), round(p[1], 4)] for p in o["points"]]}
+            patch[path] = [{"id": n[1], **_entity(o), RING_KEY[cat]: _snap(o, o["points"], dim=2)}
                            for o, n in found]
     found, many = terrain_objects(scene)
     if found:
@@ -621,8 +655,8 @@ def scene_patch(scene, base):
             pts, heads, scales = o.get("points") or [], o.get("headings") or [], o.get("scales") or []
             rows = []
             for k, p in enumerate(pts):
-                row = [round(p[0], 4), round(p[1], 4), round(p[2], 4), round(heads[k] if k < len(heads) else 0.0, 5)]
-                if k < len(scales) and scales[k] > 0:
+                row = [_r(p[0]), _r(p[1]), _r(p[2]), round(heads[k] if k < len(heads) else 0.0, 5)]
+                if k < len(scales) and scales[k] != 0:
                     row.append(round(scales[k], 5))
                 rows.append(row)
             value.append({**_entity(o), "transforms": rows})
@@ -644,7 +678,7 @@ def scene_patch(scene, base):
     lanes = objs("pit_lane")
     if lanes:
         o = lanes[0][0]
-        timing["pit_lane"] = {**_entity(o), "path": [[round(c, 4) for c in p] for p in o["points"]]}
+        timing["pit_lane"] = {**_entity(o), "path": _snap(o, o["points"])}
     if timing or splits:
         patch["timing"] = dict(timing)
         if splits:
@@ -654,7 +688,7 @@ def scene_patch(scene, base):
     if lines:
         race["racing_lines"] = []
         for o, n in lines:
-            entry = {"id": n[1], **_entity(o), "points": [[round(c, 4) for c in p] for p in o["points"]]}
+            entry = {"id": n[1], **_entity(o), "points": _snap(o, o["points"])}
             if o.get("cyclic"):
                 entry["closed"] = True
             race["racing_lines"].append(entry)
@@ -669,11 +703,23 @@ def scene_patch(scene, base):
     return patch, findings
 
 
+NULL_TOKEN = "__null__"
+
+
+def _swap_null(value, old, new):
+    """`value` with every `old` (a null, or the token that stands for it) replaced by `new`."""
+    if isinstance(value, dict):
+        return {k: _swap_null(v, old, new) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_swap_null(v, old, new) for v in value]
+    return new if (value is None if old is None else value == old) else value
+
+
 def apply_scene(scene, base=None):
     """The document the scene describes: the base document with the objects' patch applied over it."""
     base = base if base is not None else base_document(scene)
     patch, _ = scene_patch(scene, base)
-    return core.merge_patch(base or {}, patch)
+    return _swap_null(core.merge_patch(base or {}, patch), NULL_TOKEN, None)
 
 
 # ── document -> scene description (import) ──────────────────────────────────
@@ -702,6 +748,12 @@ def scene_from_document(doc, base_dir=None):
         entry = {"name": name, "type": otype, "location": [float(c) for c in location], "heading": float(heading),
                  "collections": ["STJ"], "props": props or {}}
         entry.update(more)
+        if otype == "CURVE" and more.get("points"):          # the imported coordinates, to write them back as they were
+            orig = {"points": [list(map(float, p)) for p in more["points"]]}
+            for k in ("tangents_out", "tangents_in"):
+                if more.get(k):
+                    orig[k] = [list(map(float, t)) for t in more[k]]
+            entry["props"] = {**entry["props"], "stj": {**(entry["props"].get("stj") or {}), "_orig": orig}}
         objects.append(entry)
 
     cl = (base.get("reference") or {}).get("centerline")
@@ -1075,6 +1127,9 @@ def scene_from_document(doc, base_dir=None):
         del base["surfaces"]
     elif "surfaces" in base and not base["surfaces"]:
         del base["surfaces"]
+    for holder in objects + materials:                  # a custom property cannot hold null, and a patch would read it as "remove"
+        if holder.get("props"):
+            holder["props"] = _swap_null(holder["props"], None, NULL_TOKEN)
     return {"blender": None, "profile": PROFILE_VERSION, "objects": objects, "materials": materials, "collections": collections,
             "texts": {BASE_TEXT: json.dumps(base, indent=2, ensure_ascii=False)}, "scene_props": {}}
 

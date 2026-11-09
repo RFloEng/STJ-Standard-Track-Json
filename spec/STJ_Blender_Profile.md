@@ -76,11 +76,17 @@ name is ignored, so two objects with the same STJ name are an error.
 | collection `STJ::mesh::<id>` | Collection | `geometry.meshes[]` | The mesh objects inside are exported to one USD file by Blender's USD exporter. The `stj` property holds `roles` (required) and the rest of the entry (`uri`, `lod`, `decal`, `chunk`, `baked`, …); `uri` defaults to `<id>.usd`. |
 
 **Order and exactness.** Blender sorts objects by name, so the order of a list in the document is kept in the
-`_i` key of the object's `stj` property (roads, junctions, edges, cameras). The keys `_i`, `_set` and `_shared`
+`_i` key of the object's `stj` property (roads, junctions, edges, cameras). The keys `_i`, `_set`, `_shared` and `_orig`
 are the profile's own and are never written to the document. A pose or a gate imported from a document keeps
 its original form in `stj` (`pose`, `s`) and is written back in that form while the object has not moved; once
 it moves, it is written as a world pose or a new `s`. This is what makes import then export give the document
 back exactly.
+
+Blender stores coordinates as 32-bit floats, so a coordinate far from the origin (2527.638) comes back as
+2527.6379. A curve therefore keeps the coordinates it was imported with in `stj._orig` (points and tangents), and
+a point that is still where the import put it, within what a 32-bit float can lose, is written as it was imported;
+a moved point is rounded to four decimals, or fewer where 32 bits cannot hold them. A `null` in a record is kept
+as a marker inside Blender (a custom property cannot hold `null`) and comes back as `null`.
 
 **Heading** is the angle of the empty's local X axis in the world, counter-clockwise from +X (rad), the STJ
 `heading`. An empty's arrow shows the direction a vehicle faces.
@@ -129,7 +135,7 @@ translator is conformant when:
 
 - reading that file gives the Test Ring document;
 - importing a document and exporting it again gives the document back, exactly, for the example documents
-  (the Test Ring, the Test Ring GP and the stage Coll de Prova);
+  (the Test Ring, the Test Ring GP and the stage Coll de Prova) and for the stages the Richard Burns Rally converter writes;
 - exporting the reference `.blend`, importing the result and comparing the two scenes (`stj_blender.py dump`)
   gives the same objects at the same places.
 

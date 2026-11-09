@@ -569,6 +569,38 @@ def find_blender():
 
 
 @unittest.skipUnless(find_blender(), "Blender not found (set STJ_BLENDER)")
+class RealDocuments(unittest.TestCase):
+    """Three things real converted tracks showed, and the converters' own output when it is next to this repository."""
+
+    def test_a_null_a_negative_scale_and_a_gate_off_the_arc_length_survive(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        doc["ground"]["layers"][next(iter(doc["ground"]["layers"]))]["x_test"] = {"tilling": None, "n": 1}
+        inst = doc["scenery"]["instances"][0]["transforms"]
+        inst[0] = [inst[0][0], inst[0][1], inst[0][2], 1.5, -0.3333]            # a mirrored instance
+        desc = profile.scene_from_document(doc)
+        self.assertEqual(profile.apply_scene(desc), doc)
+
+    def test_a_gate_whose_s_is_not_the_arc_length_stays_put(self):
+        import make_examples
+        doc = make_examples.test_ring()
+        doc["reference"]["centerline"]["chainage"] = [k * 1.01 for k in range(len(doc["reference"]["centerline"]["points"]))]
+        doc["timing"]["start_finish"]["s"] = 100.0
+        back = profile.apply_scene(profile.scene_from_document(doc))
+        self.assertEqual(back["timing"]["start_finish"]["s"], 100.0)
+
+    def test_converter_output_round_trips(self):
+        root = ROOT.parent
+        files = [p for p in root.glob("*/out*/**/*.stj.json") if "STJ repo" not in str(p)][:60]
+        if not files:
+            self.skipTest("no converter output next to the repository")
+        for f in files:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+            desc = profile.scene_from_document(doc)
+            self.assertEqual(levels(profile.lint_scene(desc), "ERROR"), [], f)
+            self.assertEqual(profile.apply_scene(desc), doc, str(f))
+
+
 class InBlender(KeepExamples, unittest.TestCase):
     """Builds the reference .blend, lints it, exports it and checks the result."""
 

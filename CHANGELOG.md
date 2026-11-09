@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender profile: real converted stages round-trip exactly**: 37 documents from the sim converters (Richard Burns Rally and WRC Generations) now come back identical through the profile, and the RBR stages through Blender 5.2 itself. Three things were fixed: `null` values inside records, a negative (mirror) instance scale, and a timing gate whose `s` is not the arc length; coordinates far from the origin are written as imported when unmoved (Blender holds 32-bit floats).
+
 - **Blender profile: speakers and sky**: point audio emitters import as Speaker objects, and a document with a sky gets a World with a Sky Texture node (view only; the data stays on `STJ::sky::sky`).
 
 - **Blender profile: the rest of the environment**: `STJ::environment::environment` carries weather, season, climate and lighting; every section of the document now has an object form.
