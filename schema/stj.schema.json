@@ -126,6 +126,12 @@
         },
         "licence": { "$ref": "#/definitions/licence" },
         "provenance": { "$ref": "#/definitions/provenance" },
+        "conformance": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["core", "race", "rally", "physics"] },
+          "uniqueItems": true,
+          "description": "Conformance profiles this file declares (spec §3.7). The validator checks that it holds what each needs: core = a reference line; race = timing, a grid and a closed or lapped line; rally = a start, a finish and a route; physics = surfaces with friction values."
+        },
         "authoring_source": {
           "type": "object",
           "required": ["uri"],
@@ -1202,6 +1208,22 @@
           ],
           "description": "What the surface is. The most portable field: engines with built-in surface types map from it."
         },
+        "function": {
+          "type": "string",
+          "enum": ["driving", "shoulder", "run_off", "barrier", "pit", "infield", "spectator", "decor"],
+          "description": "What the surface is for, apart from what it is made of (class): driving = the racing surface; shoulder, run_off = beside it; barrier = a wall or fence; pit = pit lane and boxes; infield, spectator, decor = off the track. Class stays the portable material."
+        },
+        "quality": {
+          "type": "object",
+          "description": "How good the numbers of this surface are. Replaces nothing: an _est annotation is still valid.",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "basis": { "type": "string", "enum": ["measured", "derived", "estimated", "default"], "description": "measured = from a test; derived = computed from other data; estimated = a judgement; default = a template value." },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "method": { "type": "string" }
+          }
+        },
         "mf_scaling": { "$ref": "#/definitions/mf_scaling" },
         "by_tyre_class": {
           "type": "object",
@@ -1673,6 +1695,26 @@
             "properties": { "id": {"$ref": "#/definitions/id"}, "pose": {"$ref": "#/definitions/pose"} }
           }
         },
+        "route_policy": {
+          "type": "object",
+          "description": "Which routes[] run is driven in each session (spec §7.1). Without it the top-level reference line is driven.",
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "default": { "$ref": "#/definitions/id", "description": "A routes[] id." },
+            "by_session": {
+              "type": "object",
+              "propertyNames": { "enum": ["practice", "qualifying", "warmup", "race", "stage", "hotlap"] },
+              "additionalProperties": { "$ref": "#/definitions/id" },
+              "description": "{session: routes[] id}."
+            }
+          }
+        },
+        "pacenote_sets": {
+          "type": "array",
+          "description": "Pace notes written for different vehicle classes or languages. race.pacenotes stays the default set.",
+          "items": { "$ref": "#/definitions/pacenote_set" }
+        },
         "racing_lines": {
           "type": "array",
           "items": {
@@ -1682,6 +1724,7 @@
             "patternProperties": { "^x_": {}, "^_": {} },
             "properties": {
               "id": { "$ref": "#/definitions/id" },
+              "vehicle_class": { "type": "string", "description": "The vehicle class the line was driven or computed for (a name from the vehicle standard, e.g. 'gt3'). Lines and speeds are vehicle-specific." },
               "purpose": {
                 "type": "string",
                 "enum": [
@@ -1967,7 +2010,8 @@
     },
     "camera": {
       "type": "object",
-      "required": ["id", "kind", "position"],
+      "required": ["id", "kind"],
+      "anyOf": [{"required": ["position"]}, {"required": ["position_ref"]}],
       "additionalProperties": false,
       "patternProperties": { "^x_": {}, "^_": {} },
       "properties": {
@@ -1978,6 +2022,7 @@
           "description": "static = fixed direction; tracking = turns to follow the car."
         },
         "position": { "$ref": "#/definitions/vec3" },
+        "position_ref": { "$ref": "#/definitions/position_ref", "description": "The position in a reference frame, instead of position." },
         "look_at": { "$ref": "#/definitions/vec3", "description": "static: point the camera faces." },
         "fov": {
           "type": "array",
@@ -2079,6 +2124,35 @@
           "description": "Car or class the notes were made for. Severities are vehicle-specific."
         },
         "notes": { "type": "array", "items": {"$ref": "#/definitions/pacenote"} }
+      }
+    },
+    "pacenote_set": {
+      "type": "object",
+      "required": ["id", "notes"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "vehicle_class": { "type": "string", "description": "The vehicle class the notes suit." },
+        "scale": { "const": "ascending_1_6" },
+        "language": { "type": "string", "description": "BCP 47 tag of the call texts." },
+        "written_for": { "type": "string" },
+        "notes": { "type": "array", "items": {"$ref": "#/definitions/pacenote"} }
+      }
+    },
+    "position_ref": {
+      "type": "object",
+      "description": "A position given in a reference frame instead of world coordinates (spec §3.8). world: x, y, z. road:<id> or route:<id> ('road:reference' for the reference line): s, t, z, where z is the height above the surface at (s, t). Tools resolve it to world coordinates.",
+      "required": ["reference"],
+      "additionalProperties": false,
+      "patternProperties": { "^x_": {}, "^_": {} },
+      "properties": {
+        "reference": { "type": "string", "pattern": "^(world|(road|route):[a-z0-9_]+)$" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "s": { "$ref": "#/definitions/s" },
+        "t": { "type": "number", "description": "Lateral offset (m), positive left." },
+        "z": { "type": "number", "default": 0 }
       }
     },
     "pacenote": {
@@ -3306,7 +3380,7 @@
           "items": {
             "type": "object",
             "required": ["id"],
-            "anyOf": [{"required": ["position"]}, {"required": ["path"]}],
+            "anyOf": [{"required": ["position"]}, {"required": ["position_ref"]}, {"required": ["path"]}],
             "additionalProperties": false,
             "patternProperties": { "^x_": {}, "^_": {} },
             "properties": {
@@ -3327,6 +3401,7 @@
                 ]
               },
               "position": { "$ref": "#/definitions/vec3" },
+              "position_ref": { "$ref": "#/definitions/position_ref", "description": "The position in a reference frame, instead of position." },
               "path": { "$ref": "#/definitions/polyline", "description": "Line source (grandstands, rivers)." },
               "sound": {
                 "type": "object",

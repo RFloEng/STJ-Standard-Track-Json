@@ -16,6 +16,7 @@ Standard library, plus the pxr module (pip install usd-core) for OpenUSD.
 import copy
 import json
 import math
+import re
 import struct
 import xml.etree.ElementTree as ET
 import zlib
@@ -98,7 +99,56 @@ def resolve(path, _stack=()):
     if not base_path.is_file():
         raise StjLoadError(f"{path.name}: base not found: {base_rel}")
     base_doc, chain = resolve(base_path, (*_stack, path))
-    return merge_patch(base_doc, doc.get("patch") or {}), [*chain, path]
+    merged = merge_patch(base_doc, doc.get("patch") or {})
+    return apply_ops(merged, doc.get("ops") or []), [*chain, path]
+
+
+_OP_TARGET = re.compile(r"^([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)(?:\[([A-Za-z0-9_]+)=([^\]]+)\])?$")
+
+
+def apply_ops(doc, ops):
+    """Apply an override's ops (spec 3.3) to a copy of doc: add / replace / update / remove on array
+    elements picked by key. Raises StjLoadError for a target that does not resolve."""
+    doc = copy.deepcopy(doc)
+    for n, op in enumerate(ops):
+        m = _OP_TARGET.match(op.get("target", ""))
+        if not m:
+            raise StjLoadError(f"ops[{n}]: bad target {op.get('target')!r}")
+        path, key, val = m.group(1), m.group(2) or "id", m.group(3)
+        node = doc
+        for part in path.split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+        kind = op.get("op")
+        if kind == "add":
+            if m.group(3) is not None:
+                raise StjLoadError(f"ops[{n}]: add takes the array, not an element")
+            if node is None:
+                parent = doc
+                parts = path.split(".")
+                for part in parts[:-1]:
+                    parent = parent.setdefault(part, {})
+                node = parent.setdefault(parts[-1], [])
+            if not isinstance(node, list):
+                raise StjLoadError(f"ops[{n}]: {path} is not an array")
+            node.append(copy.deepcopy(op.get("value")))
+            continue
+        if not isinstance(node, list):
+            raise StjLoadError(f"ops[{n}]: {path} is not an array")
+        if val is None:
+            raise StjLoadError(f"ops[{n}]: {kind} needs a selector like {path}[id=...]")
+        hits = [i for i, e in enumerate(node) if isinstance(e, dict) and str(e.get(key)) == val]
+        if len(hits) != 1:
+            raise StjLoadError(f"ops[{n}]: {op['target']} matches {len(hits)} elements")
+        i = hits[0]
+        if kind == "replace":
+            node[i] = copy.deepcopy(op.get("value"))
+        elif kind == "update":
+            node[i] = merge_patch(node[i], op.get("value") or {})
+        elif kind == "remove":
+            del node[i]
+        else:
+            raise StjLoadError(f"ops[{n}]: unknown op {kind!r}")
+    return doc
 
 
 # ── reference line ───────────────────────────────────────────────────────────
@@ -542,6 +592,33 @@ def road_line(doc, road_id):
         if r.get("id") == road_id:
             return reference_line({"reference": {"centerline": r["centerline"]}})
     return None
+
+
+def resolve_position(doc, ref):
+    """World (x, y, z) of a position_ref (spec 3.8), or None when the reference does not resolve."""
+    if not isinstance(ref, dict):
+        return None
+    where = ref.get("reference", "")
+    z = float(ref.get("z", 0.0))
+    if where == "world":
+        if "x" in ref and "y" in ref:
+            return (float(ref["x"]), float(ref["y"]), z)
+        return None
+    kind, _, ident = where.partition(":")
+    if "s" not in ref:
+        return None
+    t = float(ref.get("t", 0.0))
+    if kind == "road":
+        line = road_line(doc, ident)
+    elif kind == "route":
+        cl = route_centerline(doc, ident)
+        line = ReferenceLine(cl["points"], cl["closed"]) if len(cl["points"]) > 1 else None
+    else:
+        return None
+    if line is None:
+        return None
+    x, y, zz = line.point(ref["s"], t)
+    return (x, y, zz + z)
 
 
 # ── the sun (spec §8.3) ──────────────────────────────────────────────────────

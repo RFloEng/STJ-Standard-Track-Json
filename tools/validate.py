@@ -593,6 +593,13 @@ def check_race(ctx, origin):
         if rl.get("speed") and max(rl["speed"]) > 120:
             rep.warn(f"{p}.speed", f"max {max(rl['speed'])} m/s: speeds are in m/s")
     check_pacenotes(ctx, race.get("pacenotes"), origin)
+    sets = race.get("pacenote_sets", [])
+    ids = [x["id"] for x in sets]
+    for dup in {x for x in ids if ids.count(x) > 1}:
+        rep.error("race.pacenote_sets", f"duplicate id '{dup}'")
+    for i, st in enumerate(sets):
+        check_pacenotes(ctx, st, origin, f"race.pacenote_sets[{i}]")
+    check_route_policy(ctx, race.get("route_policy"))
     check_ai(ctx, race.get("ai"))
     check_start_procedure(ctx, race.get("start_procedure"))
     ids = [a["id"] for a in race.get("service_areas", [])]
@@ -722,7 +729,20 @@ def check_cameras(ctx):
                 rep.error(p, "near must be smaller than far")
 
 
-def check_pacenotes(ctx, pn, origin):
+def check_route_policy(ctx, pol):
+    """race.route_policy names routes[] that exist (spec 7.1)."""
+    if not pol:
+        return
+    routes = {r["id"] for r in ctx.doc.get("routes", []) if isinstance(r, dict) and "id" in r}
+    named = ([("default", pol["default"])] if "default" in pol else []) +         [(f"by_session.{k}", v) for k, v in (pol.get("by_session") or {}).items()]
+    for where, rid in named:
+        if rid not in routes:
+            ctx.rep.error(f"race.route_policy.{where}", f"unknown route '{rid}'")
+    if named and ctx.doc.get("reference") is None and not routes:
+        ctx.rep.warn("race.route_policy", "no routes to choose from")
+
+
+def check_pacenotes(ctx, pn, origin, base="race.pacenotes"):
     rep = ctx.rep
     if not pn:
         return
@@ -730,7 +750,7 @@ def check_pacenotes(ctx, pn, origin):
     finish = (tm.get("finish") or {}).get("s")
     prev = None
     for i, n in enumerate(pn.get("notes", [])):
-        p = f"race.pacenotes.notes[{i}]"
+        p = f"{base}.notes[{i}]"
         kind = n["kind"]
         if kind == "turn" and ("direction" not in n or "severity" not in n):
             rep.warn(p, "a turn needs direction and severity")
@@ -1909,6 +1929,93 @@ def check_presentation(ctx):
 V03_KEYS = ("marshals", "dynamic", "screens")
 
 
+def check_position_refs(ctx):
+    """position_ref (spec 3.8): the reference exists and holds what its frame needs."""
+    rep, doc = ctx.rep, ctx.doc
+    items = [(f"cameras.sets[{i}].cameras[{j}]", c) for i, cs in enumerate((doc.get("cameras") or {}).get("sets", []))
+             for j, c in enumerate(cs.get("cameras", []))]
+    items += [(f"audio.emitters[{i}]", e) for i, e in enumerate((doc.get("audio") or {}).get("emitters", []))]
+    for p, item in items:
+        ref = item.get("position_ref")
+        if ref is None:
+            continue
+        if "position" in item:
+            rep.warn(p, "both position and position_ref: give one")
+        where = ref["reference"]
+        kind, _, ident = where.partition(":")
+        if where == "world":
+            if "x" not in ref or "y" not in ref:
+                rep.error(f"{p}.position_ref", "world needs x and y")
+            continue
+        if "s" not in ref:
+            rep.error(f"{p}.position_ref", f"{kind} needs s")
+            continue
+        if kind == "road":
+            if ident != "reference" and not any(r.get("id") == ident for r in doc.get("roads", [])):
+                rep.error(f"{p}.position_ref", f"unknown road '{ident}'")
+                continue
+            if ident == "reference" and not ctx.line:
+                rep.error(f"{p}.position_ref", "no reference line")
+                continue
+        elif not any(r.get("id") == ident for r in doc.get("routes", [])):
+            rep.error(f"{p}.position_ref", f"unknown route '{ident}'")
+            continue
+        if core.resolve_position(doc, ref) is None:
+            rep.error(f"{p}.position_ref", f"{where} does not resolve to a point")
+
+
+def check_conformance(ctx):
+    """_metadata.conformance: the file holds what each declared profile needs (spec 3.7)."""
+    rep, doc = ctx.rep, ctx.doc
+    declared = (doc.get("_metadata") or {}).get("conformance")
+    if not declared:
+        return
+    tm = doc.get("timing") or {}
+    race = doc.get("race") or {}
+    lib = (doc.get("surfaces") or {}).get("library") or {}
+    lib = {k: v for k, v in lib.items() if not k.startswith(("x_", "_"))}
+    met = []
+
+    def need(profile, ok, what):
+        if not ok:
+            rep.error("_metadata.conformance", f"'{profile}' needs {what}")
+        return ok
+    for profile in declared:
+        ok = True
+        if profile == "core":
+            ok = need(profile, ctx.line is not None, "reference.centerline")
+        elif profile == "race":
+            ok = need(profile, ctx.line is not None, "reference.centerline")
+            ok &= need(profile, "start_finish" in tm or ("start" in tm and "finish" in tm), "timing.start_finish (or start and finish)")
+            ok &= need(profile, bool(race.get("grid")), "race.grid")
+            ok &= need(profile, ctx.lapped(), "a closed reference line or a lapped track type")
+        elif profile == "rally":
+            ok = need(profile, "start" in tm and "finish" in tm, "timing.start and timing.finish")
+            ok &= need(profile, ctx.line is not None or bool(doc.get("routes")), "a reference line or routes")
+        elif profile == "physics":
+            ok = need(profile, bool(lib), "surfaces.library")
+            ok &= need(profile, "default" in (doc.get("surfaces") or {}), "surfaces.default")
+            for sid, sv in lib.items():
+                if "mf_scaling" not in sv and "by_tyre_class" not in sv:
+                    rep.warn(f"surfaces.library.{sid}", "physics profile: no mf_scaling or by_tyre_class (grip is the STJ-REF value)")
+        if ok:
+            met.append(profile)
+    if met:
+        rep.note("_metadata.conformance", "meets: " + ", ".join(met))
+
+
+def check_surface_quality(ctx):
+    surf = (ctx.doc.get("surfaces") or {}).get("library") or {}
+    for sid, sv in surf.items():
+        if sid.startswith(("x_", "_")) or not isinstance(sv, dict):
+            continue
+        q = sv.get("quality") or {}
+        if q.get("basis") == "measured" and any(k.startswith("_est") for k in sv):
+            ctx.rep.warn(f"surfaces.library.{sid}.quality", "measured, but the surface has an _est annotation")
+        if q.get("basis") == "default" and q.get("confidence", 0) > 0.5:
+            ctx.rep.warn(f"surfaces.library.{sid}.quality", "a default value with confidence above 0.5")
+
+
 def check_version(ctx):
     """Keys newer than the declared version."""
     doc = ctx.doc
@@ -2798,6 +2905,9 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     check_cross_section(ctx)
     check_structures(ctx)
     check_places(ctx)
+    check_position_refs(ctx)
+    check_conformance(ctx)
+    check_surface_quality(ctx)
     check_assets(ctx)
     check_visual_materials(ctx)
     check_material_drives(ctx)

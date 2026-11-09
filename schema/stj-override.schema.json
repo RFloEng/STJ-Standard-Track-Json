@@ -24,6 +24,21 @@
     "patch": {
       "type": "object",
       "description": "RFC 7396 JSON Merge Patch applied over the resolved base document. The result must validate against stj.schema.json."
+    },
+    "ops": {
+      "type": "array",
+      "description": "Operations on array elements by key, applied after the patch, in order (spec §3.3). RFC 7396 replaces an array whole; these change one element.",
+      "items": {
+        "type": "object",
+        "required": ["op", "target"],
+        "additionalProperties": false,
+        "patternProperties": { "^_": {} },
+        "properties": {
+          "op": { "type": "string", "enum": ["add", "replace", "update", "remove"], "description": "add: append value to the array at target. replace: replace the element at target with value. update: merge-patch the element at target with value. remove: delete the element at target." },
+          "target": { "type": "string", "description": "A dotted path to an array, then for replace, update and remove a selector: 'edges[id=kerb_t1]', 'race.grid[position=3]'. The key defaults to id." },
+          "value": {}
+        }
+      }
     }
   }
 }

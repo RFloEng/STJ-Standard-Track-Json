@@ -78,7 +78,31 @@ An override is a document named `<name>.stj-override.json`, or a `.usda` layer t
 }
 ```
 
-Because arrays are replaced wholesale, an override that changes one sector or one pacenote must repeat the whole array. This is a known cost of RFC 7396 and the reason most variant data (weather, time) sits in objects, not arrays.
+Because arrays are replaced wholesale, an override that changes one sector or one pacenote must repeat the whole array. This is a known cost of RFC 7396 and the reason most variant data (weather, time) sits in objects, not arrays. Version 0.3 adds a way around it, `ops`.
+
+**Operations (`ops`).** An override may carry, next to `patch`, a list of operations that change single array elements. They are applied after the patch, in order, and the result must validate like any merged document.
+
+```json
+"ops": [
+  { "op": "update",  "target": "edges[id=kerb_t1]", "value": { "kind": "wall" } },
+  { "op": "remove",  "target": "race.pit_boxes[id=box_12]" },
+  { "op": "add",     "target": "edges", "value": { "id": "tyre_wall", "side": "left", "s_start": 40, "s_end": 60, "kind": "wall" } },
+  { "op": "replace", "target": "race.grid[position=3]", "value": { "position": 3, "pose": { "s": 20, "t": 2 } } }
+]
+```
+
+- `target` is a dotted path to an array. `add` takes just the array and appends `value` (a missing array is created). `replace`, `update` and `remove` add a selector `[key=value]` that must match exactly one element; the key is `id` unless another is named (`position` for the grid).
+- `replace` swaps the element for `value`, `update` merge-patches it (RFC 7396) and `remove` deletes it. A target that does not resolve, or matches none or several, is a load error.
+
+**Which arrays have an identity.** Operations work on arrays whose elements have a key. The others are ordered or plain lists and are changed with `patch`.
+
+| Array | Key | Order matters |
+|---|---|---|
+| `roads`, `routes`, `junctions`, `structures`, `edges`, `layouts`, `variants`, `buildings`, `areas`, `animated_objects` | `id` | no |
+| `race.grid` | `position` | yes (pole first) |
+| `race.pit_boxes`, `race.spawns`, `race.racing_lines`, `race.pacenote_sets`, `race.service_areas`, `cameras.sets`, `audio.emitters`, `audio.zones`, `scenery.instances` | `id` | no |
+| `race.pacenotes.notes`, `timing.split_points` | `s` as `s=120.0` | yes (along the line) |
+| `centerline.points`, `racing_lines[].points`, `footprint`, `polygon`, `route.steps` | none | yes; replaced whole |
 
 ### 3.4 Packaging and Blender
 
@@ -125,6 +149,41 @@ A variant is an override file (§3.3) whose `base` is this file. `variants[]` li
 - Texture swaps (wet asphalt, snow cover) are USD variant sets (`usd_variants`, below) or material changes in the override layer.
 - `usd_variants {set: variant}` selects USD variant sets with the variant (§7.8): the JSON patch changes the semantics, the USD variant changes what the stage shows. A variant may have an override, USD variants, or both.
 - The validator checks that each listed file is an override of this very file, applies it, and validates the result. It reports only the findings the variant adds.
+
+### 3.7 Conformance profiles (v0.3)
+
+`_metadata.conformance` is an optional list of the profiles a file claims, so a consumer can tell at once whether the file suits it. The validator checks that the file holds what each declared profile needs; an unmet profile is an ERROR, and a met one is reported in a NOTE.
+
+| Profile | The file holds |
+|---|---|
+| `core` | a reference line (`reference.centerline`) |
+| `race` | a reference line, `timing.start_finish` (or `start` and `finish`), `race.grid`, and a closed line or a lapped `track_info.type` |
+| `rally` | `timing.start` and `timing.finish`, and a reference line or `routes` |
+| `physics` | `surfaces.library` and `surfaces.default`; each surface should carry `mf_scaling` or `by_tyre_class` (WARN) |
+
+A file with no `conformance` is not rejected; the list says what is promised and never what is forbidden.
+
+### 3.8 Positions in a reference frame (v0.3)
+
+World coordinates stay the default. Where it helps to say "5 m left of the road at s = 120" instead of an x, y, z that breaks when the road moves, cameras and audio emitters accept `position_ref` in place of `position`:
+
+```json
+"position_ref": { "reference": "road:reference", "s": 120.0, "t": 5.0, "z": 3.0 }
+```
+
+- `reference` is `world` (then `x`, `y`, `z`), `road:<id>` (`road:reference` is the reference line) or `route:<id>` (then `s`, `t`, `z`). `t` is positive to the left and `z` is the height above the surface at `(s, t)`.
+- The validator checks that the road or route exists and that the frame has what it needs (ERROR otherwise). A file gives `position` or `position_ref`, not both (WARN).
+- A tool resolves it to world coordinates with `stj_core.resolve_position(doc, ref)`. The Blender profile leaves cameras and emitters with a `position_ref` in the text block, because a moved object would have nothing to write back to.
+
+### 3.9 Canonical form (v0.3)
+
+`tools/canonicalize.py` writes a document in one form: UTF-8, two-space indent, keys ordered `$schema`, `_metadata`, `id`, `name`, then alphabetical, then annotations and `x_` blocks; arrays keep their order; whole-valued floats are written as integers; short arrays of numbers stay on one line. The same data always gives the same bytes, so a diff shows what changed. `--check` fails when a file is not canonical (for CI) and `--write` rewrites it. Canonical form never changes the data.
+
+### 3.10 Migration and deprecation (v0.3)
+
+`tools/migrate.py FILE [OUT] [--to VERSION]` brings a document or an override up to a later version, one step at a time (`MIGRATIONS` in the tool). Versions 0.1 to 0.3 only add optional features, so the steps change the version number and nothing else.
+
+A field that a later version replaces is **deprecated for one minor version first**: it stays valid, the validator warns, and the changelog names its successor. The version after that may remove it, and the migrator rewrites old files. Nothing is removed in a patch version.
 
 ---
 
@@ -448,6 +507,11 @@ STJ fixes simple, first-order **reference laws**. An engine may run its own, bet
 - The starting states are the existing static blocks: `line_states[].levels`, the weather's `water_depth`, the surface maps chosen by `wear`.
 - Marks and debris persistence is `effects.marks.persistence` on the surface.
 - Reference implementations are in `tools/stj_core`: `line_state_after_passes`, `line_state_washed`, `water_step`, `evaporation_rate`, `dew_point`, `rut_depth_after_passes`, `wear_from_cars`, `track_temperature_step`.
+
+### 6.11 Function and quality (v0.3)
+
+- `function` says what a surface is *for*, apart from what it is made of (`class`): `driving` (the racing surface), `shoulder`, `run_off`, `barrier`, `pit`, `infield`, `spectator`, `decor`. A kerb is `class: kerb` and `function: driving`; the same asphalt beside the line is `shoulder`. Engines that sort surfaces into on-track and off-track use it; physics does not.
+- `quality {basis, confidence, method}` says how good the numbers are: `basis` is `measured`, `derived`, `estimated` or `default`; `confidence` runs from 0 to 1; `method` is free text (a skid-pad test, a table). It does not replace the `_est` annotation, which stays valid. The validator warns when a surface is `measured` and still carries `_est`, or is a `default` with confidence above 0.5.
 
 ---
 
@@ -973,6 +1037,9 @@ A timing line is `{s, t_min?, t_max?}` (full road width by default) or `{points:
 - `service_areas[]`: `{id, kind, polygon}`; `kind` is `service`, `remote_service`, `refuel`, `regroup`, `parc_ferme` or `paddock`.
 - `sections[]`: `{id, s_start, s_end, reference_time (s), surface, ratings {curves, rough, obstacles, straights}}`. Ratings run from 1 (little) to 5 (a lot). They give the stage's character for reference times, AI times and menus.
 - `pacenotes`: `{scale: "ascending_1_6", language, written_for, notes[]}`. Each note is `{s, kind, direction, severity, length, distance_to_next, modifiers[], call, call_adjust}`.
+- `pacenote_sets[]` (v0.3): `{id, vehicle_class, language, written_for, scale, notes[]}`. Notes written for another vehicle class or language; `pacenotes` stays the default set. Each set is checked like `pacenotes`.
+- `route_policy` (v0.3): `{default, by_session {practice | qualifying | warmup | race | stage | hotlap: route id}}`. Which `routes[]` run each session drives; without it the reference line is driven. The validator checks the routes exist.
+- `racing_lines[].vehicle_class` (v0.3): the vehicle class the line and its speeds were made for.
   - `kind`: `turn`, `hairpin`, `square`, `acute`, `straight`, `crest`, `jump`, `bump`, `dip`, `water`, `narrows`, `widens`, `junction`, `bridge`, `tunnel`, `surface_change`, `keep_in`, `keep_out`, `caution`, `finish`, `other`.
   - Severity uses the ascending 1–6 scale (1 slowest short of a hairpin, 6 fastest still called). Notes written on another scale are converted, and the original wording stays in `call`. Modifiers come from a fixed list, plus `x_…` strings.
   - `s` is where the feature begins, not where the co-driver speaks.
@@ -1190,6 +1257,6 @@ STJ can carry these values, but cannot make them mean the same thing everywhere.
 
 | Version | Changes |
 |---|---|
-| 0.3 | Survey Tier 3 (`proposals/stj_tier3_proposal.md`). <ul><li>race control: marshal sectors, posts, vehicles, restricted zones, reset (§10.1)</li><li>`dynamic`: reference evolution laws for line states, water, ruts, wear and track temperature (§6.10)</li><li>large worlds: chunks with local origins, tiles, several terrains (§7.6)</li><li>reflection probes, screens, crowds (§8.8); climate statistics (§11)</li><li>no reserved keys left</li><li>OpenUSD (`proposals/stj_usd_proposal.md`): USD meshes with per-face layer primvars and per-corner weights (§7.7); the STJ document inside a USD layer, USD override layers, `usd_variants`, chunk payloads, `.usdz` packages (§7.8); `authoring_source`</li><li>macro maps on a heightfield terrain: `geometry.terrain.macro[]` and the `colour` encoding with `strength` (§7.4, §8.7; `proposals/stj_terrain_macro_proposal.md`)</li></ul> |
+| 0.3 | Handoff additions (`proposals/stj_handoff_proposal.md`): conformance profiles (§3.7), `position_ref` (§3.8), canonical form and migration (§3.9, §3.10), override `ops` (§3.3), surface `function` and `quality` (§6.11), `route_policy`, `pacenote_sets` and `vehicle_class` (§10). Survey Tier 3 (`proposals/stj_tier3_proposal.md`). <ul><li>race control: marshal sectors, posts, vehicles, restricted zones, reset (§10.1)</li><li>`dynamic`: reference evolution laws for line states, water, ruts, wear and track temperature (§6.10)</li><li>large worlds: chunks with local origins, tiles, several terrains (§7.6)</li><li>reflection probes, screens, crowds (§8.8); climate statistics (§11)</li><li>no reserved keys left</li><li>OpenUSD (`proposals/stj_usd_proposal.md`): USD meshes with per-face layer primvars and per-corner weights (§7.7); the STJ document inside a USD layer, USD override layers, `usd_variants`, chunk payloads, `.usdz` packages (§7.8); `authoring_source`</li><li>macro maps on a heightfield terrain: `geometry.terrain.macro[]` and the `colour` encoding with `strength` (§7.4, §8.7; `proposals/stj_terrain_macro_proposal.md`)</li></ul> |
 | 0.2 | Survey Tier 2, all additive except that `animated_objects` became an array. <ul><li>signals, conditions and bindings (§11.1)</li><li>terrain heightfields (§7.4)</li><li>water bodies, plus wetting and drying with an effective film depth (§6.9, §7.5)</li><li>line states: rubber and swept gravel (§6.8)</li><li>seasons and surface substitutions (§6.3, §11)</li><li>physical props (§8.4), animated objects (§8.5), audio (§8.6)</li><li>UI and minimap fields in `track_info` (§5.1)</li><li>light, instance and scatter conditions; edge prototypes; `snow_bank`; `precipitation` in mm/h</li><li>layered ground: detail layers, four weight encodings, reference height blend, macro maps (§8.7)</li><li>from RBR stages (`proposals/stj_lessons_from_rbr_proposal.md`):<ul><li>surface maps inside primitives with blending, and states chosen by `wear` / `wetness` (§6.3)</li><li>absolute μ with `reference_mu` (§6.5)</li><li>centerline chainage and Hermite tangents (§7.1)</li><li>sinusoidal roughness, `base_offset`, surface `impact` and `effects`</li><li>invisible drag edges, tearable fences, conditional water, bendable props, foliage sway</li><li>`time_to_arrival` signal, stage sections, weather options, acoustic reflections</li><li>pace-note `call_adjust`; `distance_to_next` treated as derived</li></ul></li></ul> |
 | 0.1 | First draft. <ul><li>metadata, reference, geometry</li><li>surfaces: STJ-REF, MF scaling, per-tyre-class values, two-tier deformable model, bindings</li><li>timing: start/finish, sectors, splits, pit lane, track limits, DRS zones, rally controls, side roads</li><li>race: grid, pits, spawns, racing lines with AI purposes, AI corridor and hints, start procedure, service areas, pacenotes</li><li>edges (kerbs, verges, barriers), cameras</li><li>environment: geo-reference, sky, lighting, weather and weather schedule</li><li>scenery: prototypes, instances, scatter with engine-native blocks</li><li>layouts, variants, override files</li><li>validator</li></ul> |

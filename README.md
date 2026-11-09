@@ -178,6 +178,8 @@ Other tools:
 | Tool | Purpose |
 |---|---|
 | `tools/validate.py` | Schema validation of the document, plus the cross-reference checks a schema cannot express ([spec §12](spec/STJ_Spec.md#12-validation)). For example:<ul><li>ids, USD materials, prims and primvars exist</li><li>every `s` lies on the line</li><li>timing and pace notes are in order</li><li>signal values are valid</li><li>terrain agrees with the road's rule (below it, draped, or carved)</li><li>inertias are physical</li><li>`.usdz` packages follow OpenUSD's rules</li><li>unit slips such as degrees for radians or km/h for m/s</li></ul>`--strict` fails on warnings. |
+| `tools/canonicalize.py` | Writes a document in canonical form (stable key order, numbers and layout) so a diff shows what changed; `--check` for CI ([spec §3.9](spec/STJ_Spec.md#39-canonical-form-v03)) |
+| `tools/migrate.py` | Brings a document or override up to a later spec version, one step at a time ([spec §3.10](spec/STJ_Spec.md#310-migration-and-deprecation-v03)) |
 | `tools/stj_usd.py` | STJ inside OpenUSD: embed the document in a layer, extract it as JSON, package a `.usdz` |
 | `tools/stj_core.py` | Loading, `$ref`, RFC 7396 merge patch, the reference line (chainage, Hermite), USD and PNG reading, terrain sampling. It also holds the reference implementations of conditions, line states, the water-film depth, the ground blend and the evolution laws. |
 | `tools/ribbon_usd.py` | A USD collision ribbon from a centerline, surface bands and the road profile and banking, one GeomSubset per surface |
