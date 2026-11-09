@@ -1157,6 +1157,11 @@ def read_png(path):
 
 def write_png(path, width, height, values, channels=1, depth=8):
     """Write a PNG from a flat row-major sample list (filter 0, no interlace)."""
+    Path(path).write_bytes(png_bytes(width, height, values, channels, depth))
+
+
+def png_bytes(width, height, values, channels=1, depth=8):
+    """The bytes of a PNG from a flat row-major sample list (filter 0, no interlace)."""
     ctype = {1: 0, 2: 4, 3: 2, 4: 6}[channels]
     fmt = ">" + ("H" if depth == 16 else "B") * (width * channels)
     rows = b"".join(b"\x00" + struct.pack(fmt, *values[j * width * channels:(j + 1) * width * channels])
@@ -1165,9 +1170,9 @@ def write_png(path, width, height, values, channels=1, depth=8):
     def chunk(kind, body):
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
 
-    Path(path).write_bytes(PNG_MAGIC
-                           + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, depth, ctype, 0, 0, 0))
-                           + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+    return (PNG_MAGIC
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, depth, ctype, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
 
 
 # ── terrain (spec §7.4) ──────────────────────────────────────────────────────

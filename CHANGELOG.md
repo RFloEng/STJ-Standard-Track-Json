@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender profile: terrain** (`STJ::terrain::<id>`): a heightmap becomes a grid mesh on import and is sculpted in Blender; an untouched terrain exports as it was, an edited one writes its heightmap again (png16 or raw_f32) with new height range. `stj_core.png_bytes`.
+
 - **Handoff additions** (`proposals/stj_handoff_proposal.md`; from a third-party v0.4 restructure proposal, taking only what is additive and keeping the current names):
   - conformance profiles `_metadata.conformance` (`core`, `race`, `rally`, `physics`), checked by the validator (§3.7);
   - surface `function` (driving, shoulder, run_off, barrier, pit, infield, spectator, decor) and a `quality {basis, confidence, method}` block next to `_est` (§6.11);

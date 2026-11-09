@@ -77,6 +77,9 @@ def read_scene(scene=None):
             for key, attr in (("headings", "stj_heading"), ("scales", "stj_scale")):
                 a = mesh.attributes.get(attr)
                 entry[key] = [float(d.value) for d in a.data] if a is not None else []
+        elif obj.type == "MESH" and (profile.parse_name(obj.name) or ("",))[0] == "terrain":
+            m = obj.matrix_world
+            entry["points"] = [_vec(m @ v.co) for v in obj.data.vertices]
         elif obj.type == "CAMERA":
             entry["forward"] = _vec((-obj.matrix_world.to_3x3().col[2]).normalized())      # a camera looks along -Z
         elif obj.type == "LIGHT":
@@ -121,6 +124,11 @@ def export(out_dir, name="track"):
         usd_path.unlink()
     core.embed_document(doc, usd_path)                 # the track stage: the document, Z up, metres
     written = [json_path, usd_path]
+    for uri, data in profile.terrain_files(scene):
+        target = out / uri
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        written.append(target)
     for entry in (doc.get("geometry") or {}).get("meshes", []):
         coll = bpy.data.collections.get(next((c["name"] for c in scene["collections"]
                                               if profile.parse_name(c["name"]) == ("mesh", entry["id"], None)), ""))
@@ -166,10 +174,16 @@ def build_scene(desc):
             ob = bpy.data.objects.new(o["name"], cu)
         elif o["type"] == "MESH":
             mesh = bpy.data.meshes.new(o["name"])
-            mesh.from_pydata([tuple(p) for p in o["points"]], [], [])
+            faces = []
+            if o.get("grid"):                  # a terrain: a regular grid, row 0 at the north edge
+                nx, ny = o["grid"]
+                faces = [(j * nx + i, (j + 1) * nx + i, (j + 1) * nx + i + 1, j * nx + i + 1)
+                         for j in range(ny - 1) for i in range(nx - 1)]
+            mesh.from_pydata([tuple(p) for p in o["points"]], [], faces)
             for attr, key in (("stj_heading", "headings"), ("stj_scale", "scales")):
-                a = mesh.attributes.new(attr, "FLOAT", "POINT")
-                a.data.foreach_set("value", o[key])
+                if key in o:
+                    a = mesh.attributes.new(attr, "FLOAT", "POINT")
+                    a.data.foreach_set("value", o[key])
             ob = bpy.data.objects.new(o["name"], mesh)
         elif o["type"] == "CAMERA":
             ob = bpy.data.objects.new(o["name"], bpy.data.cameras.new(o["name"]))

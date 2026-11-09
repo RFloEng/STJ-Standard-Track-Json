@@ -56,14 +56,15 @@ CATEGORIES = {
     "instance": ({"MESH"}, "scenery.instances"),
     "building": ({"CURVE"}, "buildings"),
     "area": ({"CURVE"}, "areas"),
+    "terrain": ({"MESH"}, "geometry.terrain, geometry.terrains"),
 }
 RING_KEY = {"building": "footprint", "area": "polygon"}        # the field of the entry that a closed curve holds
 # records that live in the scene as an empty whose `stj` property is the entry: category -> (path, "list" | "dict")
 RECORDS = {"structure": ("structures", "list"), "animated": ("animated_objects", "list"),
            "prototype": ("scenery.prototypes", "dict"), "emitter": ("audio.emitters", "list"),
            "crowd": ("scenery.crowds", "list")}
-HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "instance", "building", "area") + tuple(RECORDS)
-INTERNAL = ("_i", "_set", "_shared")        # keys of an object's `stj` property that the exporter reads and does not write
+HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "instance", "building", "area", "terrain") + tuple(RECORDS)
+INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many")        # keys of an object's `stj` property that the exporter reads and does not write
 MESH_ROLES = ("visual", "collision", "lod", "decal")
 GEO_KEYS = ("latitude", "longitude", "altitude", "proj", "vertical_datum")      # on the geo origin's `stj` property
 SUN_TOLERANCE = math.radians(0.5)        # a sun within this of the computed one follows date and time
@@ -179,6 +180,63 @@ def centerline_geometry(obj):
 def reference_patch(obj):
     """The `reference.centerline` of a reference curve."""
     return core.merge_patch(centerline_geometry(obj), _entity(obj))
+
+
+def terrain_hash(heights):
+    """A fingerprint of the heights as the mesh holds them (float32), to tell whether they were edited."""
+    import hashlib
+    import struct
+    return hashlib.sha1(struct.pack(f"<{len(heights)}f", *heights)).hexdigest()[:16]
+
+
+def terrain_state(o):
+    """What a terrain mesh says: the grid size, the heights, whether they were edited since import."""
+    props = _stj_props(o)
+    hm = props.get("heightmap") or {}
+    grid = props.get("_grid") or hm.get("size")
+    zs = [p[2] for p in o.get("points") or []]
+    edited = props.get("_h") != terrain_hash(zs) if zs else False
+    return {"grid": grid, "heights": zs, "edited": edited, "heightmap": hm}
+
+
+def terrain_entry(o, ident, many):
+    """(entry, file) of a terrain mesh. file is None while the heights are as imported, otherwise
+    (uri, bytes): the heightmap written again from the mesh, in the format the entry names."""
+    st = terrain_state(o)
+    entry = _entity(o)
+    if many:
+        entry = {"id": ident, **entry}
+    if not st["edited"] or not st["grid"] or len(st["heights"]) != st["grid"][0] * st["grid"][1]:
+        return entry, None             # untouched, or a mesh that lint rejects
+    import struct
+    hm = dict(st["heightmap"])
+    nx, ny = st["grid"]
+    zs = st["heights"]
+    if hm.get("format") == "raw_f32":
+        data = struct.pack(f"<{len(zs)}f", *zs)
+    else:
+        lo, hi = round(min(zs), 4), round(max(zs), 4)
+        if hi <= lo:
+            hi = lo + 1.0
+        values = [min(65535, max(0, round((z - lo) / (hi - lo) * 65535))) for z in zs]
+        data = core.png_bytes(nx, ny, values, 1, 16)
+        hm.update({"height_min": lo, "height_max": hi})
+    hm["nodata"] = None                 # the mesh holds a height everywhere
+    entry["heightmap"] = hm
+    return entry, (hm["uri"], data)
+
+
+def terrain_objects(scene):
+    found = [(i, n) for k, i, n in stj_names(scene) if k == "OBJECT" and n and n[0] == "terrain"]
+    many = len(found) > 1 or any(_stj_props(i).get("_many") for i, _n in found)
+    return found, many
+
+
+def terrain_files(scene):
+    """[(uri, bytes)] of the heightmaps that have to be written again because the mesh was edited."""
+    found, many = terrain_objects(scene)
+    files = [terrain_entry(i, n[1], many)[1] for i, n in found]
+    return [f for f in files if f]
 
 
 def _order(o):
@@ -374,6 +432,10 @@ def scene_patch(scene, base):
         if found:
             patch[path] = [{"id": n[1], **_entity(o), RING_KEY[cat]: [[round(p[0], 4), round(p[1], 4)] for p in o["points"]]}
                            for o, n in found]
+    found, many = terrain_objects(scene)
+    if found:
+        entries = [terrain_entry(i, n[1], many)[0] for i, n in found]
+        patch.setdefault("geometry", {})["terrains" if many else "terrain"] = entries if many else entries[0]
     sets = objs("instance")
     if sets:
         value = []
@@ -394,7 +456,7 @@ def scene_patch(scene, base):
             props = dict(_stj_props(coll))
             uri = props.pop("uri", f"{ident}.usd")
             entries.append({"id": ident, "uri": uri, **props})
-        patch["geometry"] = {"meshes": entries}
+        patch.setdefault("geometry", {})["meshes"] = entries
     env = _environment_patch(named, base, patch)
     if env:
         patch["environment"] = env
@@ -665,6 +727,39 @@ def scene_from_document(doc, base_dir=None):
         if not scenery:
             del base["scenery"]
 
+    geometry = base.get("geometry")
+    if isinstance(geometry, dict) and base_dir is not None:
+        many = isinstance(geometry.get("terrains"), list) and bool(geometry["terrains"])
+        entries = geometry["terrains"] if many else ([geometry["terrain"]] if isinstance(geometry.get("terrain"), dict) else [])
+        built = []
+        for e in entries:
+            ident = e.get("id") if many else (e.get("id") or "terrain")
+            if not isinstance(e, dict) or not ID_RE.match(str(ident)) or "__" in str(ident) or "heightmap" not in e:
+                built = None
+                break
+            try:
+                t = core.Terrain(e, base_dir)
+            except Exception:  # noqa: BLE001  (a missing or odd file leaves the terrain in the text block)
+                built = None
+                break
+            nx, ny = e["heightmap"]["size"]
+            x0, y0, x1, y1 = e["heightmap"]["extent"]
+            valid = [v for v in t.heights.data if v == v]
+            fill = min(valid) if valid else 0.0
+            zs = [(v if v == v else fill) for v in t.heights.data]
+            pts = [[x0 + i * (x1 - x0) / (nx - 1), y1 - j * (y1 - y0) / (ny - 1), zs[j * nx + i]]
+                   for j in range(ny) for i in range(nx)]
+            stj = {**e, "_grid": [nx, ny], "_h": terrain_hash([p[2] for p in pts])}
+            if many:
+                stj["_many"] = True
+                stj.pop("id", None)
+            built.append(("STJ::terrain::" + str(ident), pts, [nx, ny], stj))
+        if built:
+            for name, pts, grid, stj in built:
+                obj(name, "MESH", points=pts, grid=grid, props={"stj": stj})
+            geometry.pop("terrains" if many else "terrain", None)
+            if not geometry:
+                del base["geometry"]
     collections = []
     geometry = base.get("geometry")
     meshes = geometry.get("meshes") if isinstance(geometry, dict) else None
@@ -752,6 +847,18 @@ def lint_scene(scene, base=None):
             g = _stj_props(item)
             if not -90 <= g.get("latitude", 0) <= 90 or not -180 <= g.get("longitude", 0) <= 180:
                 f.append(("ERROR", f"object '{item['name']}'", "latitude must be -90..90 and longitude -180..180 (degrees)"))
+    for kind, item, parsed in stj_names(scene):
+        if kind == "OBJECT" and parsed and parsed[0] == "terrain" and item["type"] == "MESH":
+            label = f"object '{item['name']}'"
+            st = terrain_state(item)
+            hm = st["heightmap"]
+            if not all(k in hm for k in ("uri", "format", "size", "extent")):
+                f.append(("ERROR", label, "needs a custom property stj.heightmap with uri, format, size and extent"))
+            elif not st["grid"] or len(item.get("points") or []) != st["grid"][0] * st["grid"][1]:
+                f.append(("ERROR", label, f"{len(item.get('points') or [])} vertices for a {st['grid']} grid: "
+                                          "the mesh must keep one vertex per heightmap sample"))
+            elif st["edited"]:
+                f.append(("NOTE", label, f"heights edited: the heightmap {hm['uri']} is written again from the mesh"))
     for kind, item, parsed in stj_names(scene):
         if kind == "COLLECTION" and parsed and parsed[0] == "mesh":
             props = _stj_props(item)

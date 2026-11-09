@@ -184,6 +184,37 @@ class DocumentToScene(KeepExamples, unittest.TestCase):
             doc = getattr(make_examples, name)()
             self.assertEqual(profile.apply_scene(profile.scene_from_document(doc)), doc, name)
 
+    def test_terrain_becomes_a_grid_and_back(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        desc = profile.scene_from_document(doc, ROOT / "examples")
+        terr = next(o for o in desc["objects"] if o["name"].startswith("STJ::terrain::"))
+        nx, ny = doc["geometry"]["terrain"]["heightmap"]["size"]
+        self.assertEqual(len(terr["points"]), nx * ny)
+        self.assertNotIn("terrain", json.loads(desc["texts"]["track.stj.json"]).get("geometry", {}))
+        self.assertEqual(profile.apply_scene(desc), doc)                       # untouched: the entry as it was
+        self.assertEqual(profile.terrain_files(desc), [])
+        terr["points"][5][2] += 2.0                                             # sculpt one vertex
+        back = profile.apply_scene(desc)
+        hm = back["geometry"]["terrain"]["heightmap"]
+        self.assertNotIn("nodata", hm)
+        self.assertEqual(back["geometry"]["terrain"]["layers"], doc["geometry"]["terrain"]["layers"])
+        (uri, data), = profile.terrain_files(desc)
+        self.assertEqual(uri, doc["geometry"]["terrain"]["heightmap"]["uri"])
+        with tempfile.TemporaryDirectory() as d:
+            shutil.copytree(ROOT / "examples" / "terrain", Path(d) / "terrain")
+            (Path(d) / uri).write_bytes(data)
+            t = core.Terrain(back["geometry"]["terrain"], d)
+            x, y, z = terr["points"][5]
+            self.assertAlmostEqual(t.height(x, y), z, delta=(hm["height_max"] - hm["height_min"]) / 65535 + 1e-6)
+
+    def test_terrain_lint(self):
+        import make_examples
+        desc = profile.scene_from_document(make_examples.coll_de_prova(), ROOT / "examples")
+        terr = next(o for o in desc["objects"] if o["name"].startswith("STJ::terrain::"))
+        terr["points"].pop()
+        self.assertTrue(any(l == "ERROR" and "vertices" in m for l, _p, m in profile.lint_scene(desc)))
+
     def test_records_instances_and_emitters(self):
         import make_examples
         doc = make_examples.coll_de_prova()
@@ -532,6 +563,24 @@ class InBlender(KeepExamples, unittest.TestCase):
                 back = json.loads((d / "out" / "t.stj.json").read_text(encoding="utf-8"))
                 for key in sorted(set(doc) | set(back)):
                     self.assertEqual(back.get(key), doc.get(key), f"{name}: {key}")
+
+    def test_terrain_survives_blender(self):
+        import shutil
+        import make_examples
+        script = str(ROOT / "tools" / "blender" / "stj_blender.py")
+        doc = make_examples.coll_de_prova()
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            shutil.copytree(ROOT / "examples" / "terrain", d / "terrain")
+            (d / "t.stj.json").write_text(json.dumps(doc), encoding="utf-8")
+            r = self.run_blender("--python", script, "--", "import", str(d / "t.stj.json"), str(d / "t.blend"))
+            self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-500:])
+            r = subprocess.run([find_blender(), "-b", str(d / "t.blend"), "--python", script, "--", "export", str(d / "out"), "t"],
+                               capture_output=True, text=True, timeout=300)
+            self.assertEqual(r.returncode, 0, r.stdout[-1500:])
+            back = json.loads((d / "out" / "t.stj.json").read_text(encoding="utf-8"))
+            self.assertEqual(back["geometry"]["terrain"], doc["geometry"]["terrain"])
+            self.assertFalse((d / "out" / "terrain").exists())                 # untouched: nothing rewritten
 
     def test_blend_to_document_to_blend_keeps_the_scene(self):
         script = str(ROOT / "tools" / "blender" / "stj_blender.py")
