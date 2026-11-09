@@ -2,7 +2,7 @@
 
 Goal: a track is authored in **one `.blend` file** with as few files next to it as possible. An exporter then writes the delivery package that converters read: a **USD stage** (`.usda`, or a single `.usdz`) with the STJ document inside it (spec §3.1, §7.8).
 
-**Where this page stands.** STJ geometry is OpenUSD only (spec §7.7). §1 and §2 are the record of the Blender 5.2 **glTF probe**, which is what showed that glTF drops per-face data, the sky, physics and speakers; the results are kept because they are measurements, and they explain why USD is the container. §4 is the USD probe, and §3 lists the exporter's conventions as they stand now.
+**Where this page stands.** The rules a translator follows are in [the STJ Blender profile](../spec/STJ_Blender_Profile.md), which is normative and has been run on Blender 5.2 LTS; this page is the background: the probes and the reasoning behind them, and conventions that are still advice. STJ geometry is OpenUSD only (spec §7.7). §1 and §2 are the record of the Blender 5.2 **glTF probe**, which is what showed that glTF drops per-face data, the sky, physics and speakers; the results are kept because they are measurements, and they explain why USD is the container. §4 is the USD probe, and §3 lists the exporter's conventions as they stand now.
 
 Everything below was **checked in Blender 5.2.0 LTS**, headless, by building a scene, saving, reopening and exporting glTF with the bundled exporter. To reproduce: `blender -b --factory-startup --python tools/blender/blend_probe.py -- <out_dir>` writes `report.json`. The v0.2 rows come from `blend_probe_v02.py -- <out_dir> <any.wav>`, which writes `report_v02.json` and a 16-bit PNG. `tools/stj_core.read_png` decodes that PNG correctly, filters included.
 
@@ -43,7 +43,7 @@ Everything below was **checked in Blender 5.2.0 LTS**, headless, by building a s
 
 ## 3. Conventions for an STJ Blender exporter
 
-> The rows for the reference curve, timing gates, grid, pit boxes, spawns and surface materials are now normative in [the STJ Blender profile](../spec/STJ_Blender_Profile.md). The rest of this section is advice until probed.
+> Nearly every row of this section is now normative in [the STJ Blender profile](../spec/STJ_Blender_Profile.md) (reference, roads, junctions, edges, markings, cameras, timing, race data, surfaces, structures, prototypes with their Rigid Body, instances, emitters, terrain, buildings, areas, water, ground, sky, screens). Where the profile and this table differ, the profile wins. What is left here as advice: speaker objects as emitters, scatter as geometry nodes, layouts as linked scenes and the season properties.
 
 Names are written `STJ__<category>__<id>` in the USD file, because USD forbids `::` in names and Blender's USD exporter writes `__` itself; `STJ::<category>::<id>` is the same name (spec §7.2). The table uses the `::` shorthand. Per-face data goes out as `stj_` primvars (§4).
 

@@ -99,6 +99,22 @@ python tools/stj_usd.py package my_stage.usda -o my_stage.usdz
 
 Everything except `_metadata` is optional. Add what you have: meshes, timing, pace notes, scenery, weather.
 
+**Finish it in Blender.** The [STJ Blender profile](spec/STJ_Blender_Profile.md) says how a `.blend` holds a track (Blender LTS, probed on 5.2): the reference line, roads, junctions, edges and markings are curves, gates, grid and cameras are empties, the sun follows the date and place, terrain is a sculptable grid, prototype physics is a Rigid Body, and a surface's grip values sit on its material. Import a track, edit it, export it again:
+
+```bash
+blender -b --factory-startup --python tools/blender/stj_blender.py -- import my_stage.stj.json my_stage.blend
+```
+
+```bash
+blender -b my_stage.blend --python tools/blender/stj_blender.py -- lint
+```
+
+```bash
+blender -b my_stage.blend --python tools/blender/stj_blender.py -- export out my_stage
+```
+
+Importing and then exporting gives the document back unchanged; what you edit in Blender is the only thing that changes.
+
 ## What's inside
 
 | Section | Content |
@@ -186,7 +202,8 @@ Other tools:
 | `tools/ground_bake.py` | Layered ground baked into an image, with the stamp that marks the image as a cache of the recipe |
 | `tools/ground_materialx.py` | Writes the layered ground as a MaterialX network on the ground material, so Blender and USD viewers show the real layers instead of a bake |
 | `tools/las_dtm.py` | Grids the ground points of a LiDAR tile into a heightmap, with no-data cells and the records of where it came from. LAS, or LAZ and COPC with the optional `laspy`. |
-| `tools/blender/` | The [STJ Blender profile](spec/STJ_Blender_Profile.md) translator (`stj_blender.py`: lint and export of a `.blend`; `stj_profile.py`: the rules, no Blender needed) and the probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md) |
+| `tools/canonicalize.py`, `tools/migrate.py` | Canonical form for diffs, and version migration ([spec §3.9, §3.10](spec/STJ_Spec.md#39-canonical-form-v03)) |
+| `tools/blender/` | The [STJ Blender profile](spec/STJ_Blender_Profile.md) translator (`stj_blender.py`: import, lint and export of a `.blend`; `stj_profile.py`: the rules, no Blender needed) and the probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md) |
 | `viewer/index.html` | A browser viewer for the document and its meshes. It reads text USD: a `.usda`, or a `.usdz` with `.usda` inside. |
 | `examples/make_examples.py` | Regenerates every example from one definition |
 
