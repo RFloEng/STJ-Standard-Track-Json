@@ -67,6 +67,10 @@ CATEGORIES = {
     "audio_zone": ({"EMPTY"}, "audio.zones"),
     "probe": ({"EMPTY"}, "environment.probes"),
     "service": ({"CURVE"}, "race.service_areas"),
+    "ground_layer": ({"EMPTY"}, "ground.layers"),
+    "ground_material": ({"EMPTY"}, "ground.materials"),
+    "sky": ({"EMPTY"}, "environment.sky"),
+    "screen": ({"EMPTY"}, "screens"),
 }
 RING_KEY = {"building": "footprint", "area": "polygon"}        # the field of the entry that a closed curve holds
 # records that live in the scene as an empty whose `stj` property is the entry: category -> (path, "list" | "dict")
@@ -77,7 +81,9 @@ RECORDS = {"structure": ("structures", "list"), "animated": ("animated_objects",
            "sector": ("marshals.sectors", "list"), "post": ("marshals.posts", "list"),
            "marshal_vehicle": ("marshals.vehicles", "list"), "restricted": ("marshals.restricted_zones", "list"),
            "audio_zone": ("audio.zones", "list"), "probe": ("environment.probes", "list"),
-           "service": ("race.service_areas", "list")}
+           "service": ("race.service_areas", "list"),
+           "ground_layer": ("ground.layers", "dict"), "ground_material": ("ground.materials", "list_noid"),
+           "sky": ("environment.sky", "object"), "screen": ("screens", "list")}
 # records that are a closed curve when they have the ring: category -> (field of the entry, numbers per point)
 RECORD_RING = {"water": ("outline", 2), "service": ("polygon", 3)}
 # records that sit at their `position` (shown there; a moved empty writes the new position)
@@ -488,6 +494,10 @@ def scene_patch(scene, base):
                 if cat in AT_POSITION and "position" in entry:
                     entry["position"] = _kept_position(entry["position"], o)
                 value.append(entry)
+        elif shape == "list_noid":
+            value = [_entity(o) for o, n in found]
+        elif shape == "object":
+            value = _entity(found[0][0])
         else:
             value = {n[1]: _entity(o) for o, n in found}
         node = patch
@@ -796,10 +806,27 @@ def scene_from_document(doc, base_dir=None):
         for key in parents:
             holder = holder.get(key) if isinstance(holder, dict) else None
         items = holder.get(leaf) if isinstance(holder, dict) else None
-        if items and all(record_ok(e) for e in items):
+        kind = RECORDS[cat][1]
+        done = False
+        if kind == "list" and items and all(record_ok(e) for e in items):
             record_objects(cat, lambda e, cat=cat: f"STJ::{cat}::{e['id']}", items,
                            (lambda e: _vec3(e["position"]) if isinstance(e.get("position"), list) else (0.0, 0.0, 0.0))
                            if cat in AT_POSITION else None)
+            done = True
+        elif kind == "dict" and isinstance(items, dict) and items and all(
+                ID_RE.match(str(k)) and "__" not in k and isinstance(v, dict) for k, v in items.items()):
+            for i, (k, v) in enumerate(items.items()):
+                obj(f"STJ::{cat}::{k}", props={"stj": {**v, "_i": i}})
+            done = True
+        elif kind == "list_noid" and isinstance(items, list) and items and all(
+                isinstance(e, dict) and ID_RE.match(str(e.get("mesh_ref", ""))) and "__" not in e["mesh_ref"] for e in items):
+            for i, e in enumerate(items):
+                obj(f"STJ::{cat}::{e['mesh_ref']}_{i}", props={"stj": {**e, "_i": i}})
+            done = True
+        elif kind == "object" and isinstance(items, dict) and items:
+            obj(f"STJ::{cat}::{cat}", props={"stj": dict(items)})
+            done = True
+        if done:
             del holder[leaf]
             node = base
             trail = []

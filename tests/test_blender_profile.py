@@ -217,6 +217,20 @@ class DocumentToScene(KeepExamples, unittest.TestCase):
             x, y, z = terr["points"][5]
             self.assertAlmostEqual(t.height(x, y), z, delta=(hm["height_max"] - hm["height_min"]) / 65535 + 1e-6)
 
+    def test_ground_sky_and_screens(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        desc = profile.scene_from_document(doc)
+        names = {o["name"] for o in desc["objects"]}
+        for want in ("STJ::ground_layer::stage_gravel", "STJ::ground_material::stage_ground_0", "STJ::sky::sky"):
+            self.assertIn(want, names)
+        self.assertNotIn("sky", json.loads(desc["texts"]["track.stj.json"]).get("environment", {}))
+        sky = next(o for o in desc["objects"] if o["name"] == "STJ::sky::sky")
+        sky["props"]["stj"]["turbidity"] = 4.0                                  # an edit in the property
+        self.assertEqual(profile.apply_scene(desc)["environment"]["sky"]["turbidity"], 4.0)
+        gp = profile.scene_from_document(make_examples.test_ring_gp())
+        self.assertIn("STJ::screen::main_screen", {o["name"] for o in gp["objects"]})
+
     def test_terrain_lint(self):
         import make_examples
         desc = profile.scene_from_document(make_examples.coll_de_prova(), ROOT / "examples")
