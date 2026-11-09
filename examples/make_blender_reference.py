@@ -56,8 +56,15 @@ root = bpy.data.collections.new("STJ")
 scene.collection.children.link(root)
 
 
+groups = {"STJ": root}
+
+
 def add(obj):
-    root.objects.link(obj)
+    name = profile.group_of(obj.name)             # the layout of an imported file (profile section "Collections")
+    if name not in groups:
+        groups[name] = bpy.data.collections.new(name)
+        root.children.link(groups[name])
+    groups[name].objects.link(obj)
     return obj
 
 

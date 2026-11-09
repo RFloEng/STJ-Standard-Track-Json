@@ -75,7 +75,28 @@ name is ignored, so two objects with the same STJ name are an error.
 | `STJ::crowd::<id>` | Empty | `scenery.crowds[]` | The `stj` property is the crowd (`prototype`, `area`, `density`, `behaviour`, `when`). |
 | collection `STJ::mesh::<id>` | Collection | `geometry.meshes[]` | The mesh objects inside are exported to one USD file by Blender's USD exporter. The `stj` property holds `roles` (required) and the rest of the entry (`uri`, `lod`, `decal`, `chunk`, `baked`, …); `uri` defaults to `<id>.usd`. |
 
-**Collections.** An imported track is sorted into collections under `STJ`, one for each kind of thing, so a big track is easy to work on (hide the scenery, lock the roads): `STJ Track` (reference, timing, sun, sky, environment, layouts, variants, …), `STJ Roads` (roads, junctions, edges, markings), `STJ Race` (grid, pit boxes, spawns, racing lines, marshals, service areas), `STJ Scenery` (instances, prototypes, structures, buildings, areas, crowds, scatter), `STJ Ground` (terrain, water, ground layers) and `STJ Cameras and audio`. The names have no `::`, so they are not entities. Which collection an object is in never changes what is exported, and you can move objects between them or add your own.
+**Collections (the layout of a file).** Every translator that writes a `.blend` for STJ, whatever the source, puts the
+objects in the same collections, so a track looks the same in the outliner whoever made it. The root collection is
+`STJ`, linked to the scene; under it, one collection per group of kinds, in this order, each made only when
+something belongs in it:
+
+| Collection | Kinds (the `<category>` of the object name) |
+|---|---|
+| `STJ Track` | `reference`, `track_info`, `layout`, `variant`, `surfaces`, `timing`, `sector`, `pit_lane`, `geo`, `sun`, `sky`, `environment`, `dynamic`, `chunk`, `tiles` |
+| `STJ Roads` | `road`, `junction`, `edge`, `marking` |
+| `STJ Race` | `grid`, `pit`, `spawn`, `line`, `post`, `marshal_vehicle`, `restricted`, `service` |
+| `STJ Scenery` | `instance`, `prototype`, `structure`, `animated`, `crowd`, `scatter`, `building`, `area` |
+| `STJ Ground` | `terrain`, `water`, `ground_layer`, `ground_material` |
+| `STJ Cameras and audio` | `camera`, `emitter`, `audio_zone`, `probe`, `screen` |
+
+- An STJ object (named `STJ::<category>::<id>`) is linked to exactly the collection of its kind, and nothing is left
+  loose in `STJ`. The mesh collections `STJ::mesh::<id>` stay where the USD import puts them, children of the scene
+  collection.
+- The group names have no `::`, so they are not entities. Where an object is changes nothing in the export; a user
+  may move objects or add collections of their own, and the check then gives a NOTE (`layout`) naming the objects
+  that are not in their collection. A translator's output has no such note.
+- `stj_profile.GROUPS` is the table in code; `stj_blender.py import` and `examples/make_blender_reference.py` use it,
+  and a translator that does not go through them uses the same table.
 
 **Order and exactness.** Blender sorts objects by name, so the order of a list in the document is kept in the
 `_i` key of the object's `stj` property (roads, junctions, edges, cameras). The keys `_i`, `_set`, `_shared` and `_orig`

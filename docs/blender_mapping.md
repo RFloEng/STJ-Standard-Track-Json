@@ -45,6 +45,8 @@ Everything below was **checked in Blender 5.2.0 LTS**, headless, by building a s
 
 > Nearly every row of this section is now normative in [the STJ Blender profile](../spec/STJ_Blender_Profile.md) (reference, roads, junctions, edges, markings, cameras, timing, race data, surfaces, structures, prototypes with their Rigid Body, instances, emitters, terrain, buildings, areas, water, ground, sky, screens). Where the profile and this table differ, the profile wins. What is left here as advice: speaker objects as emitters, scatter as geometry nodes, layouts as linked scenes and the season properties.
 
+Collections: objects are grouped by kind in `STJ Track`, `STJ Roads`, `STJ Race`, `STJ Scenery`, `STJ Ground` and `STJ Cameras and audio` under `STJ`, the same in every translator's file (profile section "Collections").
+
 Names are written `STJ__<category>__<id>` in the USD file, because USD forbids `::` in names and Blender's USD exporter writes `__` itself; `STJ::<category>::<id>` is the same name (spec §7.2). The table uses the `::` shorthand. Per-face data goes out as `stj_` primvars (§4).
 
 | Blender | STJ |

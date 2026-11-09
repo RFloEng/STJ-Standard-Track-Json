@@ -99,7 +99,7 @@ python tools/stj_usd.py package my_stage.usda -o my_stage.usdz
 
 Everything except `_metadata` is optional. Add what you have: meshes, timing, pace notes, scenery, weather.
 
-**Finish it in Blender.** The [STJ Blender profile](spec/STJ_Blender_Profile.md) says how a `.blend` holds a track (Blender LTS, probed on 5.2): the reference line, roads, junctions, edges and markings are curves, gates, grid and cameras are empties, the sun follows the date and place, terrain is a sculptable grid, prototype physics is a Rigid Body, and a surface's grip values sit on its material. Import a track, edit it, export it again:
+**Finish it in Blender.** The [STJ Blender profile](spec/STJ_Blender_Profile.md) says how a `.blend` holds a track (Blender LTS, probed on 5.2): the reference line, roads, junctions, edges and markings are curves, gates, grid and cameras are empties, the sun follows the date and place, terrain is a sculptable grid, prototype physics is a Rigid Body, and a surface's grip values sit on its material. Whatever translator made the file, the objects sit in the same collections (`STJ Track`, `STJ Roads`, `STJ Race`, `STJ Scenery`, `STJ Ground`, `STJ Cameras and audio`), so every track looks the same in the outliner. Import a track, edit it, export it again:
 
 ```bash
 blender -b --factory-startup --python tools/blender/stj_blender.py -- import my_stage.stj.json my_stage.blend

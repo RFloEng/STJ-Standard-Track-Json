@@ -1166,6 +1166,24 @@ def _changed(base, patch, path=""):
     return out
 
 
+def layout_findings(scene):
+    """A NOTE when STJ objects are not in the collection the layout puts them in (`GROUPS`). Every translator writes the
+    same layout; a user who moved an object on purpose gets a note, never an error."""
+    stray = {}
+    for o in scene.get("objects", []):
+        parsed = parse_name(o["name"]) if o["name"].startswith("STJ") else None
+        if not parsed or parsed[0] not in GROUP_OF:
+            continue
+        group = GROUP_OF[parsed[0]]
+        if group not in (o.get("collections") or []):
+            stray.setdefault(group, []).append(o["name"])
+    out = []
+    for group, names in stray.items():
+        out.append(("NOTE", "layout", f"{len(names)} object(s) are not in collection '{group}' (for example {names[0]}): "
+                    "an importer puts them there (profile section 'Collections')"))
+    return out
+
+
 def lint_scene(scene, base=None):
     """Findings [(level, path, message)] for a scene description against the profile."""
     f = []
@@ -1180,6 +1198,8 @@ def lint_scene(scene, base=None):
         f.append(("WARN", "scene", f"Blender {scene.get('blender')}: the profile rows were probed on {', '.join(TESTED_BLENDER)} (LTS) only"))
     if base is None:
         f.append(("ERROR", f"text '{BASE_TEXT}'", "no base document: the text block is missing"))
+
+    f.extend(layout_findings(scene))
 
     seen = {}
     refs = []

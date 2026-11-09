@@ -674,6 +674,16 @@ class InBlender(KeepExamples, unittest.TestCase):
             back = json.loads((Path(d) / "out" / "stage.stj.json").read_text(encoding="utf-8"))
             self.assertEqual(back["reference"], doc["reference"])      # which collection an object is in changes nothing
 
+    def test_the_layout_note_names_objects_outside_their_collection(self):
+        import make_examples
+        desc = profile.scene_from_document(make_examples.coll_de_prova())
+        self.assertEqual([x for x in profile.lint_scene(desc) if x[1] == "layout"], [])            # an import follows the layout
+        road = next(o for o in desc["objects"] if o["name"].startswith("STJ::road::"))
+        road["collections"] = ["STJ"]
+        notes = [x for x in profile.lint_scene(desc) if x[1] == "layout"]
+        self.assertEqual([n[0] for n in notes], ["NOTE"])
+        self.assertIn("STJ Roads", notes[0][2])
+
     def test_emitters_are_speakers_and_the_sky_is_a_world(self):
         import make_examples
         doc = make_examples.coll_de_prova()
