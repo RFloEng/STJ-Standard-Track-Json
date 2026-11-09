@@ -647,6 +647,33 @@ class InBlender(KeepExamples, unittest.TestCase):
             self.assertEqual(back["timing"]["sectors"], doc["timing"]["sectors"])
             self.assertEqual(len(back["race"]["grid"]), 4)
 
+    def test_objects_are_sorted_into_collections_by_kind(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        script = str(ROOT / "tools" / "blender" / "stj_blender.py")
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "stage.stj.json"
+            src.write_text(json.dumps(doc), encoding="utf-8")
+            blend = Path(d) / "stage.blend"
+            r = self.run_blender("--python", script, "--", "import", str(src), str(blend))
+            self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-800:])
+            probe = ("import bpy,json;print('COLL',json.dumps({c.name:sorted(o.name for o in c.objects) for c in bpy.data.collections},"
+                     "default=str))")
+            r = subprocess.run([find_blender(), "-b", str(blend), "--python-expr", probe], capture_output=True, text=True, timeout=300)
+            line = next(x for x in r.stdout.splitlines() if x.startswith("COLL "))
+            colls = json.loads(line[5:])
+            self.assertTrue(any(n.startswith("STJ::reference::") for n in colls["STJ Track"]))
+            self.assertTrue(any(n.startswith("STJ::instance::") for n in colls["STJ Scenery"]))
+            self.assertTrue(any(n.startswith("STJ::ground_layer::") for n in colls["STJ Ground"]))
+            self.assertTrue(any(n.startswith("STJ::spawn::") for n in colls["STJ Race"]))
+            self.assertTrue(any(n.startswith("STJ::road::") for n in colls["STJ Roads"]))
+            self.assertTrue(any(n.startswith("STJ::emitter::") for n in colls["STJ Cameras and audio"]))
+            self.assertEqual(colls["STJ"], [])                         # nothing is left loose in the root
+            r = subprocess.run([find_blender(), "-b", str(blend), "--python", script, "--", "export", str(Path(d) / "out"), "stage"],
+                               capture_output=True, text=True, timeout=300)
+            back = json.loads((Path(d) / "out" / "stage.stj.json").read_text(encoding="utf-8"))
+            self.assertEqual(back["reference"], doc["reference"])      # which collection an object is in changes nothing
+
     def test_emitters_are_speakers_and_the_sky_is_a_world(self):
         import make_examples
         doc = make_examples.coll_de_prova()

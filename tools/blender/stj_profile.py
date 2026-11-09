@@ -113,6 +113,26 @@ SUN_TOLERANCE = math.radians(0.5)        # a sun within this of the computed one
 TIMING_LINES = ("start_finish", "start", "finish", "stop")      # the others are split points
 
 
+# Imported objects are put in one collection per kind of thing, under the collection `STJ`, so a big track is easy to
+# work on (hide the scenery, lock the roads). Which collection an object is in never changes what is exported.
+GROUPS = {
+    "STJ Track": ("reference", "track_info", "layout", "variant", "surfaces", "timing", "sector", "pit_lane", "geo", "sun",
+                  "sky", "environment", "dynamic", "chunk", "tiles"),
+    "STJ Roads": ("road", "junction", "edge", "marking"),
+    "STJ Race": ("grid", "pit", "spawn", "line", "post", "marshal_vehicle", "restricted", "service"),
+    "STJ Scenery": ("instance", "prototype", "structure", "animated", "crowd", "scatter", "building", "area"),
+    "STJ Ground": ("terrain", "water", "ground_layer", "ground_material"),
+    "STJ Cameras and audio": ("camera", "emitter", "audio_zone", "probe", "screen"),
+}
+GROUP_OF = {cat: group for group, cats in GROUPS.items() for cat in cats}
+
+
+def group_of(name):
+    """The collection an imported object goes in: its kind's group, or `STJ` for a kind with none."""
+    parsed = parse_name(name)
+    return GROUP_OF.get(parsed[0], "STJ") if parsed else "STJ"
+
+
 def parse_name(name):
     """(category, id, part) of an STJ name, or None when it is not one.
 
@@ -746,7 +766,7 @@ def scene_from_document(doc, base_dir=None):
 
     def obj(name, otype="EMPTY", location=(0.0, 0.0, 0.0), heading=0.0, props=None, **more):
         entry = {"name": name, "type": otype, "location": [float(c) for c in location], "heading": float(heading),
-                 "collections": ["STJ"], "props": props or {}}
+                 "collections": [group_of(name)], "props": props or {}}
         entry.update(more)
         if otype == "CURVE" and more.get("points"):          # the imported coordinates, to write them back as they were
             orig = {"points": [list(map(float, p)) for p in more["points"]]}

@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender profile: collections by kind**: an imported track is sorted into `STJ Track`, `STJ Roads`, `STJ Race`, `STJ Scenery`, `STJ Ground` and `STJ Cameras and audio` under `STJ`, so a big track is easier to work on. The collection an object is in never changes the export.
+
 - **Blender: the mask blend as nodes**: the ground importer now builds the `mask` blend too (layers put in palette order, each over the ones before it through its own mask, with the red, green, blue or alpha channel and the world or road projection). Checked against `ground_blend` in a Blender 5.2 render, as the other blends are. Only a mask blend without one mask per layer keeps the preview surface.
 
 - **Blender add-on: STJ Track**: a Blender 5.2 extension with File > Import / Export entries and a sidebar panel (Import, Check, Export, and the last findings). `tools/blender/build_addon.py` stages the modules and lets Blender build and validate the `.zip`; `tests/test_blender_addon.py` loads the zip, runs the operators and gets the Test Ring back unchanged. `stj_blender` gained `load_into_scene`, and `lint` / `export` report through a callback.

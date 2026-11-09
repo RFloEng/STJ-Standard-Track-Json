@@ -178,6 +178,14 @@ def build_scene(desc, reset=True):
     scene[profile.PROFILE_PROP] = profile.PROFILE_VERSION
     root = bpy.data.collections.new("STJ")
     scene.collection.children.link(root)
+    groups = {"STJ": root}
+
+    def group(name):
+        """The collection `name` under `STJ`, made when the first object needs it."""
+        if name not in groups:
+            groups[name] = bpy.data.collections.new(name)
+            root.children.link(groups[name])
+        return groups[name]
     for o in desc["objects"]:
         if o["type"] == "CURVE":
             cu = bpy.data.curves.new(o["name"], "CURVE")
@@ -247,7 +255,7 @@ def build_scene(desc, reset=True):
             ob.rotation_euler = (0.0, 0.0, o["heading"])
         for k, v in o.get("props", {}).items():
             ob[k] = v
-        root.objects.link(ob)
+        group((o.get("collections") or ["STJ"])[0]).objects.link(ob)
         if o.get("rigid_body"):
             bpy.context.view_layer.objects.active = ob
             ob.select_set(True)

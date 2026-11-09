@@ -75,6 +75,8 @@ name is ignored, so two objects with the same STJ name are an error.
 | `STJ::crowd::<id>` | Empty | `scenery.crowds[]` | The `stj` property is the crowd (`prototype`, `area`, `density`, `behaviour`, `when`). |
 | collection `STJ::mesh::<id>` | Collection | `geometry.meshes[]` | The mesh objects inside are exported to one USD file by Blender's USD exporter. The `stj` property holds `roles` (required) and the rest of the entry (`uri`, `lod`, `decal`, `chunk`, `baked`, …); `uri` defaults to `<id>.usd`. |
 
+**Collections.** An imported track is sorted into collections under `STJ`, one for each kind of thing, so a big track is easy to work on (hide the scenery, lock the roads): `STJ Track` (reference, timing, sun, sky, environment, layouts, variants, …), `STJ Roads` (roads, junctions, edges, markings), `STJ Race` (grid, pit boxes, spawns, racing lines, marshals, service areas), `STJ Scenery` (instances, prototypes, structures, buildings, areas, crowds, scatter), `STJ Ground` (terrain, water, ground layers) and `STJ Cameras and audio`. The names have no `::`, so they are not entities. Which collection an object is in never changes what is exported, and you can move objects between them or add your own.
+
 **Order and exactness.** Blender sorts objects by name, so the order of a list in the document is kept in the
 `_i` key of the object's `stj` property (roads, junctions, edges, cameras). The keys `_i`, `_set`, `_shared` and `_orig`
 are the profile's own and are never written to the document. A pose or a gate imported from a document keeps
