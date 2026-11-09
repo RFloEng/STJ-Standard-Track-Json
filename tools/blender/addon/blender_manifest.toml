@@ -1,0 +1,20 @@
+schema_version = "1.0.0"
+
+id = "stj_track"
+version = "0.1.0"
+name = "STJ Track"
+tagline = "Import, check and export Standard Track JSON tracks"
+maintainer = "STJ contributors"
+type = "add-on"
+
+website = "https://github.com/RFloEng/STJ-Standard-Track-Json"
+
+tags = ["Import-Export", "Game Engine"]
+
+blender_version_min = "5.2.0"
+
+license = ["SPDX:Apache-2.0"]
+copyright = ["2026 STJ contributors"]
+
+[permissions]
+files = "Read tracks and write the delivery package to disk"

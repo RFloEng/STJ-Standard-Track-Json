@@ -115,6 +115,12 @@ blender -b my_stage.blend --python tools/blender/stj_blender.py -- export out my
 
 Importing and then exporting gives the document back unchanged; what you edit in Blender is the only thing that changes.
 
+**As an add-on.** The same steps are a Blender extension, *STJ Track* (File > Import / Export > STJ track, and a sidebar panel under STJ with Import, Check and Export). Build it with Blender 5.2 or later, then in Blender use Preferences > Get Extensions > Install from Disk:
+
+```bash
+python tools/blender/build_addon.py dist
+```
+
 ## What's inside
 
 | Section | Content |
@@ -204,6 +210,7 @@ Other tools:
 | `tools/blender/stj_ground.py` | Rebuilds the layered ground as Blender shader nodes on import (height and linear blends, projections, macro maps); checked pixel by pixel against the reference maths |
 | `tools/las_dtm.py` | Grids the ground points of a LiDAR tile into a heightmap, with no-data cells and the records of where it came from. LAS, or LAZ and COPC with the optional `laspy`. |
 | `tools/canonicalize.py`, `tools/migrate.py` | Canonical form for diffs, and version migration ([spec §3.9, §3.10](spec/STJ_Spec.md#39-canonical-form-v03)) |
+| `tools/blender/addon/`, `tools/blender/build_addon.py` | The *STJ Track* Blender extension (import, check and export operators, sidebar panel) and the script that builds and validates its `.zip` |
 | `tools/blender/` | The [STJ Blender profile](spec/STJ_Blender_Profile.md) translator (`stj_blender.py`: import, lint and export of a `.blend`; `stj_profile.py`: the rules, no Blender needed) and the probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md) |
 | `viewer/index.html` | A browser viewer for the document and its meshes. It reads text USD: a `.usda`, or a `.usdz` with `.usda` inside. |
 | `examples/make_examples.py` | Regenerates every example from one definition |

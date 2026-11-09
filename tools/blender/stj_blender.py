@@ -102,23 +102,24 @@ def read_scene(scene=None):
             "scene_props": _props(scene)}
 
 
-def lint():
+def lint(say=print):
+    """Check the open scene against the profile. Reports each finding and a summary through `say`; 1 when there is an ERROR."""
     findings = profile.lint_scene(read_scene())
     for line in profile.format_findings(findings):
-        print(line)
+        say(line)
     errors = [f for f in findings if f[0] == "ERROR"]
-    print(f"{len(errors)} error(s), {sum(1 for f in findings if f[0] == 'WARN')} warning(s), "
-          f"{sum(1 for f in findings if f[0] == 'NOTE')} note(s)")
+    say(f"{len(errors)} error(s), {sum(1 for f in findings if f[0] == 'WARN')} warning(s), "
+        f"{sum(1 for f in findings if f[0] == 'NOTE')} note(s)")
     return 1 if errors else 0
 
 
-def export(out_dir, name="track"):
+def export(out_dir, name="track", say=print):
     scene = read_scene()
     findings = profile.lint_scene(scene)
     for line in profile.format_findings(findings):
-        print(line)
+        say(line)
     if any(f[0] == "ERROR" for f in findings):
-        print("not exported: fix the errors above")
+        say("not exported: fix the errors above")
         return 1
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -145,7 +146,7 @@ def export(out_dir, name="track"):
         bpy.ops.wm.usd_export(filepath=str(target), collection=coll.name, export_materials=True,
                               generate_preview_surface=True, generate_materialx_network=True)
         written.append(target)
-    print("wrote " + ", ".join(str(w) for w in written))
+    say("wrote " + ", ".join(str(w) for w in written))
     return 0
 
 
@@ -290,21 +291,28 @@ def build_scene(desc, reset=True):
         bpy.data.texts.new(name).write(text)
 
 
-def import_document(doc_path, out_blend):
+def load_into_scene(doc_path, say=print, reset=True):
+    """Build the profile scene of a document (JSON, or the document inside a USD) in the open file, with the layered
+    ground as nodes. Returns the findings of the lint."""
     doc = core.load_document(doc_path)
     base_dir = Path(doc_path).resolve().parent
-    build_scene(profile.scene_from_document(doc, base_dir))
+    build_scene(profile.scene_from_document(doc, base_dir), reset=reset)
     try:
         import stj_ground
         for mat, notes in stj_ground.build_ground(doc, base_dir).items():
             for note in notes:
-                print(f"ground '{mat}': {note}")
+                say(f"ground '{mat}': {note}")
     except Exception as e:  # noqa: BLE001  (the nodes are a view: a failure must not lose the import)
-        print(f"ground: nodes not built ({type(e).__name__}: {e})")
-    bpy.ops.wm.save_as_mainfile(filepath=str(out_blend))
+        say(f"ground: nodes not built ({type(e).__name__}: {e})")
     findings = profile.lint_scene(read_scene())
     for line in profile.format_findings(findings):
-        print(line)
+        say(line)
+    return findings
+
+
+def import_document(doc_path, out_blend):
+    findings = load_into_scene(doc_path)
+    bpy.ops.wm.save_as_mainfile(filepath=str(out_blend))
     print(f"wrote {out_blend}")
     return 1 if any(f[0] == "ERROR" for f in findings) else 0
 

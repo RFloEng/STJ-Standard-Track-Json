@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender add-on: STJ Track**: a Blender 5.2 extension with File > Import / Export entries and a sidebar panel (Import, Check, Export, and the last findings). `tools/blender/build_addon.py` stages the modules and lets Blender build and validate the `.zip`; `tests/test_blender_addon.py` loads the zip, runs the operators and gets the Test Ring back unchanged. `stj_blender` gained `load_into_scene`, and `lint` / `export` report through a callback.
+
 - **Blender: the layered ground as shader nodes**: importing a document rebuilds each ground material as Blender nodes (`tools/blender/stj_ground.py`): vertex_top3 indices and weights, the height and linear blends, world, road and texcoord projections, and the grey_centred, multiply and colour macro maps. Rendered in Blender 5.2 and compared pixel by pixel with the reference maths (`tests/test_blender_ground.py`): identical. The `mask` blend and wetness maps are not built and keep the preview surface.
 
 - **Corrected: MaterialX ground in Blender**: Blender 5.2 imports only the preview-surface fallback of a material and ignores the MaterialX network written by `tools/ground_materialx.py`; the README, `docs/blender_mapping.md` and the tool's header said it showed the layers, and now say what was checked.
