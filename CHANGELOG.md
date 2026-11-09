@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender profile: speakers and sky**: point audio emitters import as Speaker objects, and a document with a sky gets a World with a Sky Texture node (view only; the data stays on `STJ::sky::sky`).
+
 - **Blender profile: the rest of the environment**: `STJ::environment::environment` carries weather, season, climate and lighting; every section of the document now has an object form.
 
 - **Blender profile: the rest of surfaces**: `STJ::surfaces::surfaces` carries `default`, `bindings`, `bands`, `maps`, `substitutions` and the other keys.

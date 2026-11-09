@@ -615,6 +615,29 @@ class InBlender(KeepExamples, unittest.TestCase):
             self.assertEqual(back["timing"]["sectors"], doc["timing"]["sectors"])
             self.assertEqual(len(back["race"]["grid"]), 4)
 
+    def test_emitters_are_speakers_and_the_sky_is_a_world(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        script = str(ROOT / "tools" / "blender" / "stj_blender.py")
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "stage.stj.json"
+            src.write_text(json.dumps(doc), encoding="utf-8")
+            blend = Path(d) / "stage.blend"
+            r = self.run_blender("--python", script, "--", "import", str(src), str(blend))
+            self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-800:])
+            probe = ("import bpy;print('SPK',sorted(o.name for o in bpy.data.objects if o.type=='SPEAKER'));"
+                     "print('WORLD',bpy.context.scene.world.name if bpy.context.scene.world else None)")
+            r = subprocess.run([find_blender(), "-b", str(blend), "--python-expr", probe], capture_output=True, text=True, timeout=300)
+            positional = sorted("STJ::emitter::" + e["id"] for e in doc["audio"]["emitters"] if "position" in e)
+            self.assertIn("SPK " + str(positional), r.stdout)
+            self.assertIn("WORLD STJ::sky", r.stdout)
+            r = subprocess.run([find_blender(), "-b", str(blend), "--python", script, "--", "export", str(Path(d) / "out"), "stage"],
+                               capture_output=True, text=True, timeout=300)
+            self.assertEqual(r.returncode, 0, r.stdout[-800:])
+            back = json.loads((Path(d) / "out" / "stage.stj.json").read_text(encoding="utf-8"))
+            self.assertEqual(back["audio"]["emitters"], doc["audio"]["emitters"])
+            self.assertEqual(back["environment"]["sky"], doc["environment"]["sky"])
+
     def test_coordinates_height_and_sun_survive_the_round_trip(self):
         doc = json.loads(json.dumps(PlaceAndSun.ENV))
         import make_examples

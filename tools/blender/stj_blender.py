@@ -152,9 +152,12 @@ def export(out_dir, name="track"):
 def clear_scene():
     """Empty the open file without reloading Blender's settings (an add-on stays enabled)."""
     for coll in (bpy.data.objects, bpy.data.collections, bpy.data.meshes, bpy.data.curves, bpy.data.cameras,
-                 bpy.data.lights, bpy.data.materials, bpy.data.texts, bpy.data.images):
+                 bpy.data.lights, bpy.data.speakers, bpy.data.materials, bpy.data.texts, bpy.data.images):
         for item in list(coll):
             coll.remove(item)
+    for world in list(bpy.data.worlds):
+        if world.name.startswith("STJ::"):
+            bpy.data.worlds.remove(world)
     scene = bpy.context.scene
     for key in list(scene.keys()):
         del scene[key]
@@ -227,6 +230,10 @@ def build_scene(desc, reset=True):
             ob = bpy.data.objects.new(o["name"], bpy.data.cameras.new(o["name"]))
             ob.location = o["location"]
             ob.rotation_euler = Vector(o["forward"]).to_track_quat("-Z", "Y").to_euler()
+        elif o["type"] == "SPEAKER":
+            ob = bpy.data.objects.new(o["name"], bpy.data.speakers.new(o["name"]))      # an audio emitter: heard in the viewport
+            ob.location = o["location"]
+            ob.rotation_euler = (0.0, 0.0, o["heading"])
         elif o["type"] == "LIGHT":
             light = bpy.data.lights.new(o["name"], o.get("light_type", "SUN"))
             ob = bpy.data.objects.new(o["name"], light)
@@ -247,6 +254,13 @@ def build_scene(desc, reset=True):
             for attr, value in o["rigid_body"].items():
                 setattr(ob.rigid_body, attr, value)
             ob.select_set(False)
+    if any(o["name"] == "STJ::sky::sky" for o in desc["objects"]):
+        world = bpy.data.worlds.new("STJ::sky")             # the sky shows in the viewport; the document keeps the data on the empty
+        world.use_nodes = True
+        nodes, links = world.node_tree.nodes, world.node_tree.links
+        sky_node = nodes.new("ShaderNodeTexSky")
+        links.new(sky_node.outputs["Color"], nodes["Background"].inputs["Color"])
+        scene.world = world
     for c in desc.get("collections", []):
         coll = bpy.data.collections.new(c["name"])
         scene.collection.children.link(coll)

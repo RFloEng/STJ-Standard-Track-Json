@@ -54,7 +54,7 @@ CATEGORIES = {
     "structure": ({"EMPTY"}, "structures"),
     "animated": ({"EMPTY"}, "animated_objects"),
     "prototype": ({"EMPTY", "MESH"}, "scenery.prototypes"),
-    "emitter": ({"EMPTY", "CURVE"}, "audio.emitters"),
+    "emitter": ({"EMPTY", "CURVE", "SPEAKER"}, "audio.emitters"),
     "crowd": ({"EMPTY"}, "scenery.crowds"),
     "instance": ({"MESH"}, "scenery.instances"),
     "building": ({"CURVE"}, "buildings"),
@@ -903,7 +903,8 @@ def scene_from_document(doc, base_dir=None):
                 obj(name_of(e), "CURVE", cyclic=True, points=[[p[0], p[1], p[2] if dim == 3 else z0] for p in ring],
                     props={"stj": {**{k: v for k, v in e.items() if k not in ("id", ring_key)}, "_i": i}})
                 continue
-            obj(name_of(e), location=(x, y, z), props={"stj": {**{k: v for k, v in e.items() if k != "id"}, "_i": i}})
+            obj(name_of(e), "SPEAKER" if cat == "emitter" and "position" in e else "EMPTY", location=(x, y, z),
+                props={"stj": {**{k: v for k, v in e.items() if k != "id"}, "_i": i}})
 
     def midpoint(e):
         try:
