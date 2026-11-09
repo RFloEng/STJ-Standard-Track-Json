@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender profile: racing lines and water paths**: `STJ::line::<id>` (race, qualifying, pit and AI side lines as curves; the checker warns when `speed` or `width` no longer match the points) and open curves for water bodies with a `path`.
+
 - **Blender profile: dynamic**: `STJ::dynamic::dynamic` carries the `dynamic` block.
 
 - **Blender profile: chunks and tiles**: `STJ::chunk::<id>` (at its `origin`) and `STJ::tiles::tiles`.

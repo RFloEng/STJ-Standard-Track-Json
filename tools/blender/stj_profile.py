@@ -49,6 +49,7 @@ CATEGORIES = {
     "camera": ({"CAMERA"}, "cameras.sets"),
     "edge": ({"CURVE"}, "edges"),
     "marking": ({"CURVE"}, "markings"),
+    "line": ({"CURVE"}, "race.racing_lines"),
     "structure": ({"EMPTY"}, "structures"),
     "animated": ({"EMPTY"}, "animated_objects"),
     "prototype": ({"EMPTY"}, "scenery.prototypes"),
@@ -93,8 +94,8 @@ RECORDS = {"structure": ("structures", "list"), "animated": ("animated_objects",
 RECORD_RING = {"water": ("outline", 2), "service": ("polygon", 3)}
 # records that sit at their `position` (shown there; a moved empty writes the new position)
 AT_POSITION = {"emitter": "position", "probe": "position", "post": "position", "chunk": "origin"}
-HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "marking", "instance", "building", "area", "terrain") + tuple(RECORDS)
-INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many")        # keys of an object's `stj` property that the exporter reads and does not write
+HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "marking", "line", "instance", "building", "area", "terrain") + tuple(RECORDS)
+INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many", "_cols")        # keys of an object's `stj` property that the exporter reads and does not write
 MESH_ROLES = ("visual", "collision", "lod", "decal")
 GEO_KEYS = ("latitude", "longitude", "altitude", "proj", "vertical_datum")      # on the geo origin's `stj` property
 SUN_TOLERANCE = math.radians(0.5)        # a sun within this of the computed one follows date and time
@@ -493,7 +494,11 @@ def scene_patch(scene, base):
             value = []
             for o, n in found:
                 entry = {"id": n[1], **_entity(o)}
-                if cat in RECORD_RING and o["type"] == "CURVE":
+                if cat == "water" and o["type"] == "CURVE" and "_cols" in _stj_props(o):
+                    cols = _stj_props(o)["_cols"]              # width and depth per point; the last ones carry on
+                    entry["path"] = [[round(c, 4) for c in p] + list(cols[min(k, len(cols) - 1)])
+                                     for k, p in enumerate(o["points"])]
+                elif cat in RECORD_RING and o["type"] == "CURVE":
                     key, dim = RECORD_RING[cat]
                     entry[key] = [[round(c, 4) for c in p[:dim]] for p in o["points"]]
                 if cat in AT_POSITION and AT_POSITION[cat] in entry:
@@ -548,6 +553,14 @@ def scene_patch(scene, base):
         if splits:
             patch["timing"]["split_points"] = sorted(splits, key=lambda e: e["s"])
     race = {}
+    lines = objs("line")
+    if lines:
+        race["racing_lines"] = []
+        for o, n in lines:
+            entry = {"id": n[1], **_entity(o), "points": [[round(c, 4) for c in p] for p in o["points"]]}
+            if o.get("cyclic"):
+                entry["closed"] = True
+            race["racing_lines"].append(entry)
     if grid:
         race["grid"] = sorted(grid, key=lambda e: e["position"])
     if pits:
@@ -651,6 +664,13 @@ def scene_from_document(doc, base_dir=None):
                     x, y, z, h = pose_of(e["garage_pose"])
                     obj(f"STJ::pit::{e['id']}::garage", location=(x, y, z), heading=h, props={"stj": {"pose": e["garage_pose"]}})
             del race["pit_boxes"]
+        rlines = race.get("racing_lines")
+        if rlines and all(isinstance(e, dict) and ID_RE.match(str(e.get("id", ""))) and "__" not in e["id"]
+                          and isinstance(e.get("points"), list) and len(e["points"]) >= 2 for e in rlines):
+            for i, e in enumerate(rlines):
+                obj(f"STJ::line::{e['id']}", "CURVE", cyclic=bool(e.get("closed")), points=[_vec3(p) for p in e["points"]],
+                    props={"stj": {**{k: v for k, v in e.items() if k not in ("id", "points")}, "_i": i}})
+            del race["racing_lines"]
         spawns = race.get("spawns")
         if spawns and all(set(e) <= {"id", "pose"} and ID_RE.match(e["id"]) and "__" not in e["id"] and
                           pose_of(e["pose"]) for e in spawns):
@@ -759,6 +779,13 @@ def scene_from_document(doc, base_dir=None):
     def record_objects(cat, name_of, value, pos_of=None):
         for i, e in enumerate(value):
             x, y, z = pos_of(e) if pos_of else (0.0, 0.0, 0.0)
+            path = e.get("path") if cat == "water" else None
+            if isinstance(path, list) and len(path) >= 2 and all(
+                    isinstance(p, list) and len(p) == 5 and all(isinstance(c, (int, float)) for c in p) for p in path):
+                obj(name_of(e), "CURVE", cyclic=False, points=[p[:3] for p in path],
+                    props={"stj": {**{k: v for k, v in e.items() if k not in ("id", "path")}, "_i": i,
+                                   "_cols": [p[3:] for p in path]}})
+                continue
             ring_key, dim = RECORD_RING.get(cat, (None, 0))
             ring = e.get(ring_key) if ring_key else None
             if isinstance(ring, list) and len(ring) >= 3 and all(
@@ -996,6 +1023,14 @@ def lint_scene(scene, base=None):
                                           "the mesh must keep one vertex per heightmap sample"))
             elif st["edited"]:
                 f.append(("NOTE", label, f"heights edited: the heightmap {hm['uri']} is written again from the mesh"))
+    for kind, item, parsed in stj_names(scene):
+        if kind == "OBJECT" and parsed and parsed[0] == "line" and item["type"] == "CURVE":
+            n = len(item.get("points") or [])
+            for key in ("speed", "width"):
+                vals = _stj_props(item).get(key)
+                if isinstance(vals, list) and len(vals) != n:
+                    f.append(("WARN", f"object '{item['name']}'", f"{key} has {len(vals)} values for {n} points: "
+                                                                  "the arrays are per point, so edit them with the curve"))
     for kind, item, parsed in stj_names(scene):
         if kind == "COLLECTION" and parsed and parsed[0] == "mesh":
             props = _stj_props(item)

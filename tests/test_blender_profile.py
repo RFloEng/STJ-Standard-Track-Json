@@ -234,6 +234,22 @@ class DocumentToScene(KeepExamples, unittest.TestCase):
         gp = profile.scene_from_document(make_examples.test_ring_gp())
         self.assertIn("STJ::screen::main_screen", {o["name"] for o in gp["objects"]})
 
+    def test_racing_lines_and_ford_paths(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        desc = profile.scene_from_document(doc)
+        line = next(o for o in desc["objects"] if o["name"] == "STJ::line::race")
+        ford = next(o for o in desc["objects"] if o["name"] == "STJ::water::ford_ss1")
+        self.assertEqual((line["type"], ford["type"]), ("CURVE", "CURVE"))
+        line["points"][3][1] += 1.0                                              # nudge the racing line
+        back = profile.apply_scene(desc)["race"]["racing_lines"][0]["points"]
+        self.assertAlmostEqual(back[3][1], doc["race"]["racing_lines"][0]["points"][3][1] + 1.0, places=3)
+        ford["points"][0][2] += 0.1
+        path = profile.apply_scene(desc)["water"]["bodies"][0]["path"]
+        self.assertEqual(path[0][3:], doc["water"]["bodies"][0]["path"][0][3:])      # width and depth stay
+        line["props"]["stj"]["speed"] = [10.0]
+        self.assertTrue(any(l == "WARN" and "speed has 1 values" in m for l, _p, m in profile.lint_scene(desc)))
+
     def test_terrain_lint(self):
         import make_examples
         desc = profile.scene_from_document(make_examples.coll_de_prova(), ROOT / "examples")
