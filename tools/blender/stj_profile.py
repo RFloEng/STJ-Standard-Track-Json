@@ -103,7 +103,7 @@ RECORD_RING = {"water": ("outline", 2), "service": ("polygon", 3)}
 # records that sit at their `position` (shown there; a moved empty writes the new position)
 AT_POSITION = {"emitter": "position", "probe": "position", "post": "position", "chunk": "origin"}
 HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "marking", "line", "pit_lane", "instance", "building", "area", "terrain") + tuple(RECORDS)
-INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many", "_cols", "_base", "_orig")
+INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many", "_cols", "_base", "_orig", "_src")
 # a prototype's physics is shown by a proxy mesh `STJ::prototype::<id>::body` with a Rigid Body: STJ shape kind -> Blender collision shape
 SHAPE_TO_RB = {"box": "BOX", "sphere": "SPHERE", "cylinder": "CYLINDER", "capsule": "CAPSULE", "mesh": "CONVEX_HULL"}
 RB_TO_SHAPE = {v: k for k, v in SHAPE_TO_RB.items()}        # keys of an object's `stj` property that the exporter reads and does not write
@@ -673,11 +673,15 @@ def scene_patch(scene, base):
         value = []
         for o, n in sets:
             pts, heads, scales = o.get("points") or [], o.get("headings") or [], o.get("scales") or []
+            pitches, rolls = o.get("pitches") or [], o.get("rolls") or []
             rows = []
             for k, p in enumerate(pts):
                 row = [_r(p[0]), _r(p[1]), _r(p[2]), round(heads[k] if k < len(heads) else 0.0, 5)]
+                pr = [round(pitches[k], 5) if k < len(pitches) else 0.0, round(rolls[k], 5) if k < len(rolls) else 0.0]
                 if k < len(scales) and scales[k] != 0:
                     row.append(round(scales[k], 5))
+                if any(pr):                                  # pitch and roll follow the scale, which is 1 when not given
+                    row += ([1.0] if len(row) == 4 else []) + pr[:1 if not pr[1] else 2]
                 rows.append(row)
             value.append({**_entity(o), "transforms": rows})
         patch.setdefault("scenery", {})["instances"] = value
@@ -688,7 +692,7 @@ def scene_patch(scene, base):
     if meshes:
         entries = []
         for coll, (_cat, ident, _part) in meshes:
-            props = dict(_stj_props(coll))
+            props = {k: v for k, v in _stj_props(coll).items() if k not in INTERNAL}
             uri = props.pop("uri", f"{ident}.usd")
             entries.append({"id": ident, "uri": uri, **props})
         patch.setdefault("geometry", {})["meshes"] = entries
@@ -1071,11 +1075,13 @@ def scene_from_document(doc, base_dir=None):
             del scenery["crowds"]
         insts = scenery.get("instances")
         if insts and all(isinstance(e, dict) and ID_RE.match(str(e.get("prototype", ""))) and e.get("transforms") and
-                         all(isinstance(t, list) and len(t) in (4, 5) for t in e["transforms"]) for e in insts):
+                         all(isinstance(t, list) and 4 <= len(t) <= 7 for t in e["transforms"]) for e in insts):
             for i, e in enumerate(insts):
                 t = e["transforms"]
                 obj(f"STJ::instance::{e['prototype']}_{i}", "MESH", points=[[r[0], r[1], r[2]] for r in t],
-                    headings=[r[3] for r in t], scales=[r[4] if len(r) == 5 else 0.0 for r in t],
+                    headings=[r[3] for r in t], scales=[r[4] if len(r) >= 5 else 0.0 for r in t],
+                    **({"pitches": [r[5] if len(r) > 5 else 0.0 for r in t], "rolls": [r[6] if len(r) > 6 else 0.0 for r in t]}
+                       if any(len(r) > 5 for r in t) else {}),
                     props={"stj": {**{k: v for k, v in e.items() if k != "transforms"}, "_i": i}})
             del scenery["instances"]
         if not scenery:
@@ -1124,7 +1130,7 @@ def scene_from_document(doc, base_dir=None):
                  and (base_dir / e["uri"]).is_file() for e in meshes)
         if ok:
             for e in meshes:
-                collections.append({"name": f"STJ::mesh::{e['id']}", "props": {"stj": {k: v for k, v in e.items() if k != "id"}},
+                collections.append({"name": f"STJ::mesh::{e['id']}", "props": {"stj": {**{k: v for k, v in e.items() if k != "id"}, "_src": str(base_dir / e["uri"])}},
                                     "usd": str(base_dir / e["uri"]), "objects": []})
             del geometry["meshes"]
             if not geometry:

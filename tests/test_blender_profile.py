@@ -580,6 +580,19 @@ class RealDocuments(unittest.TestCase):
         desc = profile.scene_from_document(doc)
         self.assertEqual(profile.apply_scene(desc), doc)
 
+    def test_tilted_instances_round_trip(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        rows = doc["scenery"]["instances"][0]["transforms"]
+        rows[0] = [rows[0][0], rows[0][1], rows[0][2], 0.5, 1.0, 0.25]                  # pitch only
+        rows[1] = [rows[1][0], rows[1][1], rows[1][2], 0.5, 0.8, -0.1, 1.5]             # pitch and roll
+        rows[2] = [rows[2][0], rows[2][1], rows[2][2], 0.5, 1.0, 0.0, 3.1416]           # a roll only (upside down)
+        desc = profile.scene_from_document(doc)
+        inst = next(o for o in desc["objects"] if o["name"].startswith("STJ::instance::scots_pine"))
+        self.assertEqual(inst["pitches"][:3], [0.25, -0.1, 0.0])
+        self.assertEqual(inst["rolls"][:3], [0.0, 1.5, 3.1416])
+        self.assertEqual(profile.apply_scene(desc), doc)
+
     def test_a_gate_whose_s_is_not_the_arc_length_stays_put(self):
         import make_examples
         doc = make_examples.test_ring()
@@ -626,6 +639,45 @@ class InBlender(KeepExamples, unittest.TestCase):
             self.assertEqual([g["position"] for g in doc["race"]["grid"]], [1, 2, 3, 4])
             if core.have_pxr():
                 self.assertEqual(core.load_document(Path(d) / "out" / "ring.usd"), doc)        # the document is in the USD
+
+    def test_a_usd_instance_set_is_visible_and_survives_the_export(self):
+        """A PointInstancer in a mesh file is instances in Blender (Blender's importer makes them), with orientation and 3-axis
+        scale, and the export puts the instancer back at its prim path instead of one object per instance."""
+        if not core.have_pxr():
+            self.skipTest("pxr not installed")
+        from pxr import Gf, Usd, UsdGeom, Vt
+        import make_examples
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            st = Usd.Stage.CreateNew(str(d / "scenery.usda"))
+            UsdGeom.SetStageUpAxis(st, "Z")
+            UsdGeom.SetStageMetersPerUnit(st, 1.0)
+            UsdGeom.Xform.Define(st, "/track")
+            inst = UsdGeom.PointInstancer.Define(st, "/track/logs")
+            UsdGeom.Xform.Define(st, "/track/logs/protos")
+            UsdGeom.Cube.Define(st, "/track/logs/protos/log").GetSizeAttr().Set(1.0)
+            inst.CreatePrototypesRel().AddTarget("/track/logs/protos/log")
+            inst.CreatePositionsAttr(Vt.Vec3fArray([Gf.Vec3f(0, 0, 1), Gf.Vec3f(5, 0, 1), Gf.Vec3f(10, 0, 1)]))
+            inst.CreateProtoIndicesAttr(Vt.IntArray([0, 0, 0]))
+            inst.CreateOrientationsAttr(Vt.QuathArray([Gf.Quath(1, 0, 0, 0), Gf.Quath(0.7071, 0, 0.7071, 0), Gf.Quath(0, 1, 0, 0)]))
+            inst.CreateScalesAttr(Vt.Vec3fArray([Gf.Vec3f(1, 1, 1), Gf.Vec3f(2, 1, 1), Gf.Vec3f(1, 3, 1)]))
+            st.GetRootLayer().Save()
+            doc = make_examples.test_ring()
+            doc.setdefault("geometry", {}).setdefault("meshes", []).append({"id": "scenery", "uri": "scenery.usda", "roles": ["visual"]})
+            doc["scenery"] = {"prototypes": {"log": {"class": "rock"}},
+                              "instances": [{"prototype": "log", "usd": {"mesh_ref": "scenery", "prim": "/track/logs"}}]}
+            (d / "track.stj.json").write_text(json.dumps(doc), encoding="utf-8")
+            r = self.run_blender("--python", str(ROOT / "tests" / "blender_instancer_check.py"), "--", str(d / "track.stj.json"), str(d / "out"))
+            line = next((x for x in r.stdout.splitlines() if x.startswith("RESULT ")), None)
+            self.assertTrue(line, r.stdout[-1500:] + r.stderr[-1500:])
+            res = json.loads(line[7:])
+        self.assertEqual(res["instances"], 3)
+        self.assertEqual(res["scales"], [[1.0, 1.0, 1.0], [2.0, 1.0, 1.0], [1.0, 3.0, 1.0]])
+        self.assertEqual(res["pointclouds"], [["logs", ["STJ::mesh::scenery"]]])
+        self.assertEqual(res["findings"], [])
+        self.assertTrue(res["same_document"], res)
+        self.assertEqual(res["exported_instancers"], ["/track/logs"])
+        self.assertEqual(res["exported_count"], 3)
 
     def test_import_then_export_gives_the_document_back(self):
         import make_examples

@@ -2888,8 +2888,8 @@
         "prototype": { "$ref": "#/definitions/id" },
         "transforms": {
           "type": "array",
-          "description": "[x, y, z, heading, scale] per instance; scale may be omitted (1). Upright in Z.",
-          "items": { "type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 5 }
+          "description": "[x, y, z, heading, scale, pitch, roll] per instance; scale may be omitted (1), and pitch and roll (rad) may be omitted (0, upright). Heading about Z, then pitch about the local Y, then roll about the local X (spec §8.2). To give a pitch or roll the scale must be given too.",
+          "items": { "type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 7 }
         },
         "when": { "$ref": "#/definitions/condition", "description": "Instances exist while true." },
         "cull_distance": { "type": "number", "exclusiveMinimum": 0, "description": "Distance (m) beyond which these instances are not drawn. Wins over the prototype's." },

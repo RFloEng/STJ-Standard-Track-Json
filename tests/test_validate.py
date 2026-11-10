@@ -421,6 +421,14 @@ class Tier2(unittest.TestCase):
         self.gp["scenery"]["instances"][0]["transforms"][0].append(1.5)
         self.assertFinding(self.gp, "WARN", "physics values are for scale 1")
 
+    def test_tilted_instance_is_valid_and_degrees_are_noticed(self):
+        before = messages(run(self.gp), "ERROR")
+        row = self.gp["scenery"]["instances"][0]["transforms"][0]
+        row[:] = row[:4] + [1.0, 0.2, 1.4]
+        self.assertEqual(messages(run(self.gp), "ERROR"), before)
+        self.gp["scenery"]["instances"][0]["transforms"][0][5] = 45.0                  # degrees given
+        self.assertFinding(self.gp, "WARN", "radians")
+
     def test_animation_time_range(self):
         self.gp["animated_objects"][0]["time_range"] = [96, 0]
         self.assertFinding(self.gp, "ERROR", "end must be after start")

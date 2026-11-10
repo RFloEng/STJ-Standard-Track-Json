@@ -941,8 +941,11 @@ def check_scenery(ctx):
         proto(f"{p}.prototype", ins["prototype"])
         for j, t in enumerate(ins.get("transforms", [])):
             check_heading(rep, f"{p}.transforms[{j}][3]", t[3])
-            if len(t) == 5 and t[4] <= 0:
+            if len(t) >= 5 and t[4] <= 0:
                 rep.error(f"{p}.transforms[{j}][4]", "scale must be positive")
+            for k in (5, 6):
+                if len(t) > k:
+                    check_heading(rep, f"{p}.transforms[{j}][{k}]", t[k])
         g = ins.get("usd")
         if g:
             if g["mesh_ref"] not in ctx.meshes:
@@ -1401,7 +1404,7 @@ def check_props(ctx):
     for i, ins in enumerate(sc.get("instances", [])):
         if ins["prototype"] in physical:
             for j, t in enumerate(ins.get("transforms", [])):
-                if len(t) == 5 and abs(t[4] - 1) > 1e-9:
+                if len(t) >= 5 and abs(t[4] - 1) > 1e-9:
                     rep.warn(f"scenery.instances[{i}].transforms[{j}][4]",
                              f"physical prop '{ins['prototype']}' scaled by {t[4]}: physics values are for scale 1")
     for i, e in enumerate(ctx.doc.get("edges") or []):

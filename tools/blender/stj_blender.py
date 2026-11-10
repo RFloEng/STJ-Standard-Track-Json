@@ -74,7 +74,7 @@ def read_scene(scene=None):
             # an instance set: one vertex per instance, with the heading and the scale as point attributes
             mesh = obj.data
             entry["points"] = [_vec(obj.matrix_world @ v.co) for v in mesh.vertices]
-            for key, attr in (("headings", "stj_heading"), ("scales", "stj_scale")):
+            for key, attr in (("headings", "stj_heading"), ("scales", "stj_scale"), ("pitches", "stj_pitch"), ("rolls", "stj_roll")):
                 a = mesh.attributes.get(attr)
                 entry[key] = [float(d.value) for d in a.data] if a is not None else []
         elif obj.type == "MESH" and (profile.parse_name(obj.name) or ("",))[0] == "terrain":
@@ -113,6 +113,31 @@ def lint(say=print):
     return 1 if errors else 0
 
 
+def restore_instancers(target, source, prims):
+    """Blender writes a PointInstancer out as one object per instance. Put the instancers of the source file back at their
+    prim paths (the `usd` form of an instance set names them) and drop what Blender wrote for them. Returns notes."""
+    from pxr import Sdf, Usd
+    notes = []
+    src, out = Usd.Stage.Open(str(source)), Usd.Stage.Open(str(target))
+    for path in prims:
+        prim = src.GetPrimAtPath(path)
+        if not prim:
+            notes.append(f"instancer {path}: not in {Path(source).name}, left as exported")
+            continue
+        for p in out.Traverse():                             # the realised copy: an Xform named like the instancer, or its points
+            if p.GetName() == prim.GetName() and str(p.GetPath()) != path:
+                out.RemovePrim(p.GetPath())
+                break
+        parent = Sdf.Path(path).GetParentPath()
+        for anc in reversed([q for q in parent.GetPrefixes()]):
+            if not out.GetPrimAtPath(anc):
+                out.DefinePrim(anc, "Xform")
+        Sdf.CopySpec(src.GetRootLayer(), Sdf.Path(path), out.GetRootLayer(), Sdf.Path(path))
+        notes.append(f"instancer {path}: restored from {Path(source).name}")
+    out.GetRootLayer().Save()
+    return notes
+
+
 def export(out_dir, name="track", say=print):
     scene = read_scene()
     findings = profile.lint_scene(scene)
@@ -145,6 +170,11 @@ def export(out_dir, name="track", say=print):
         target.parent.mkdir(parents=True, exist_ok=True)
         bpy.ops.wm.usd_export(filepath=str(target), collection=coll.name, export_materials=True,
                               generate_preview_surface=True, generate_materialx_network=True)
+        prims = [g["prim"] for s in (doc.get("scenery") or {}).get("instances", []) if (g := s.get("usd")) and g["mesh_ref"] == entry["id"]]
+        src = (_props(coll).get("stj") or {}).get("_src")
+        if prims and src:
+            for line in restore_instancers(target, src, prims):
+                say(line)
         written.append(target)
     say("wrote " + ", ".join(str(w) for w in written))
     return 0
@@ -230,7 +260,7 @@ def build_scene(desc, reset=True):
                          for j in range(ny - 1) for i in range(nx - 1)]
             if "points" in o:
                 mesh.from_pydata([tuple(p) for p in o["points"]], [], faces)
-            for attr, key in (("stj_heading", "headings"), ("stj_scale", "scales")):
+            for attr, key in (("stj_heading", "headings"), ("stj_scale", "scales"), ("stj_pitch", "pitches"), ("stj_roll", "rolls")):
                 if key in o:
                     a = mesh.attributes.new(attr, "FLOAT", "POINT")
                     a.data.foreach_set("value", o[key])

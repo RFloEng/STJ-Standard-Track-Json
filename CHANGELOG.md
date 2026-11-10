@@ -2,6 +2,10 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender: `usd`-form instance sets are visible and survive the export**: a PointInstancer in a mesh file shows in Blender as instances with full orientation and 3-axis scale (Blender's importer does this), and the export restores the instancer at its prim path from the source file instead of writing one object per instance. Edits to such instances are made in the USD file.
+
+- **Instances can be tilted** (from the DiRT Rally 2.0 converter's owner note): `scenery.instances[].transforms` rows may carry `pitch` and `roll` after the scale (`[x, y, z, heading, scale, pitch, roll]`, rad); existing rows are unchanged. The Blender profile adds the point attributes `stj_pitch` and `stj_roll` to instance sets that need them. Non-uniform scale stays in the `usd` form.
+
 - **Compatibility and definition of done** (from the owner handoff, second review): spec §3.11 separates backward, forward and semantic compatibility; the README states what finishes a format change (schema, spec text, example, validator check, migration, test).
 
 - **Blender profile: the layout of a file is part of the profile**: every translator puts the objects in `STJ Track`, `STJ Roads`, `STJ Race`, `STJ Scenery`, `STJ Ground` and `STJ Cameras and audio` under `STJ`, so a track looks the same whoever made it (table and rules in the profile, `stj_profile.GROUPS` in code). The check gives a NOTE (`layout`) for objects outside their collection; the export ignores collections. The reference `.blend` follows the layout.
