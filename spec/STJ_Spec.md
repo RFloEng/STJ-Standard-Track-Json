@@ -395,7 +395,7 @@ When `reference.surface` is absent the tyre is taken to describe STJ-REF. Tyre c
 3. **Bands**: `surfaces.bands[]` `{s_start, s_end, t_min, t_max, surface}` along the reference line. Later bands win where they overlap. On a closed line `s_end < s_start` crosses s = 0. Bands make a centerline-only file drivable; `tools/ribbon_usd.py` turns them into a collision mesh.
 4. `surfaces.default`.
 
-**Terrain contacts** (§7.4) take the surface of the dominant terrain layer at the contact point. Terrain is a separate collision source: under a wheel, the higher of terrain and collision mesh is touched.
+**Terrain contacts** (§7.4) take the surface of the dominant terrain layer at the contact point. Terrain is a separate collision source. Under a wheel the collision mesh wins where there is one (it is the road, a kerb, a barrier); the terrain is touched where no mesh reaches. A terrain that lies a little above a road mesh is therefore valid: the engine, not the file, resolves the overlap.
 
 **Substitutions** (v0.2): `surfaces.substitutions {"from": "to"}` replaces the surface found above, whichever level found it. It is one step: a target must not itself be substituted. Because it is an object, an override merges into it: a winter variant is a substitution map plus the new surfaces, not a copy of every binding (§11).
 
@@ -566,7 +566,7 @@ STJ fixes simple, first-order **reference laws**. An engine may run its own, bet
 
 **Road and terrain (`centerline.terrain`).** Editors and games disagree on which side wins where a road meets the ground, so the document says: `terrain {mode, shoulder_blend, falloff, sections[]}`.
 
-- `free` (the default): no rule. The validator warns where the terrain rises above the road (§7.4).
+- `free` (the default): no rule. Terrain and road may overlap; the collision mesh wins (§7.4).
 - `drape`: the road follows the terrain. The centerline `z` is a result, and the validator warns where it differs from the terrain by more than 10 cm.
 - `carve`: the terrain is cut or filled to meet the road. Across the drivable width it takes the road surface, and over `shoulder_blend` metres beyond the edge it returns to its natural height, linearly or by smoothstep (`falloff`, default `smooth`). `stj_core.terrain_with_road` is the reference, and a converter to a mesh-only engine bakes it.
 - `sections[] {s_start, s_end, mode, shoulder_blend, falloff}` override over `s` ranges: a bridge or tunnel stays `free`, a cutting carves. Only the road knows where those are, which is why the rule is on the road and not on the terrain.
@@ -691,7 +691,7 @@ Edges add meaning to the geometry. They do not replace collision meshes: a conve
 
 **Macro maps.** `macro[]` puts low-resolution maps over the whole heightfield. The keys are those of §8.7's `ground.materials[].macro`, without `texcoord` (a heightfield has no UVs): `{kind: tint | occlusion | other, uri, extent, encoding, strength}`. The image covers `extent` (default: the heightmap's), is sampled bilinearly, and its row 0 is the +Y (north) edge, like every STJ raster. `encoding` is `grey_centred` (default), `multiply` or `colour` (§8.7). The maps apply to the terrain's detail colour after the layer blend; road meshes keep the macro maps of their own `ground.materials[]`.
 
-**Terrain and meshes.** The higher surface is touched. Authors keep terrain at least a few centimetres under road meshes, or cut `holes` (8-bit mask on the heightmap grid, non-zero = no terrain). The validator samples the terrain every 2 m along the reference line and warns where it rises more than 2 cm above it.
+**Terrain and meshes.** Where a collision mesh lies under a wheel it wins over the terrain; terrain is touched only where no mesh reaches. Real game terrain is a continuous heightfield with the road drawn over it, often a few centimetres below the road's surface, and a converter passes it through unchanged: nothing has to be lowered or cut. `holes` (8-bit mask on the heightmap grid, non-zero = no terrain) is for what really is open, such as tunnels and cuttings, not a workaround for an overlap. The validator does not check the overlap.
 
 Tiles, streaming and terrain LOD are out of scope (open question Q14).
 
@@ -768,6 +768,15 @@ Meshes are **OpenUSD** (`.usd`, `.usda`, `.usdc`, `.usdz`), the only mesh format
 - A cutout whose opacity comes from a texture and has no `opacityThreshold` is a WARN (a decal blends and is exempt).
 - **MAY** add a MaterialX network on `outputs:mtlx:surface` for what UsdPreviewSurface cannot do: layer blends, primvar reads, vertex-alpha decals. `x_<engine>.shader` in the material's `customData` names the source shader, so a converter back to that engine can pick it again.
 - The validator adds a NOTE per material listing the maps it carries (`diffuseColor+normal+roughness`), so a reader sees at a glance what a converter dropped. The checks need the `pxr` module.
+
+**Materials stay as the source (fidelity).** A material is the part of a track that is hardest to get back once it is flattened, so a converter keeps what the source has and bakes only when it must. In order:
+
+1. **Keep the source's material as it is.** Constants, maps (each at its own resolution, in its own channel packing when the format can carry it), tints, vertex-colour multipliers, alpha modes and the names of the source's shader and parameters stay in the file. Do not merge textures, re-pack channels, resize or flatten a tint into the albedo when the format can hold them separately.
+2. **Say what UsdPreviewSurface cannot, in MaterialX.** Layer blends, vertex-weighted mixes, detail maps, primvar reads, clear-coat, two-layer decals and anything else beyond the table above are written as a MaterialX network (OpenPBR or standard_surface) on `outputs:mtlx:surface`, next to the mandatory UsdPreviewSurface. The source engine's shader and raw parameters go under `x_<engine>` in the material's `customData` (above), so a converter back to that engine can pick them again. A ground recipe is the `ground` block (§8.7), never an image.
+3. **Bake only when a target cannot do it, and bake at the last step.** A bake is an export step from STJ to a particular engine (a translator STJ → engine), not a step of reading the source. A converter from a game to STJ does not bake materials. Lighting baked into the source (vertex light, lightmaps, shadow maps) is a different thing: it stays marked as `baked` on the mesh (§7.2) and is not multiplied into the albedo.
+4. **When a bake is written to the file, it is a cache.** It carries `customData` `stj:baked {reason, tool, tool_version, source}` (`source` says what was baked from what: "3-layer height blend, ground.materials[0]"), and the recipe stays beside it: a MaterialX network on the same material, the `x_<engine>` data, or the `ground` block with its `fallback` (§8.7). The validator adds a NOTE per baked material, warns when a baked material keeps no source, and warns when `stj:baked` has no `source`.
+
+A converter that writes materials therefore needs, beyond UsdPreviewSurface: a **MaterialX writer** (UsdShade with the `ND_open_pbr_surface_surfaceshader` or `ND_standard_surface_surfaceshader` nodes and the MaterialX image, mix and geomprop nodes; `tools/ground_materialx.py` is the reference for the layered ground, and `tests/mtlx_eval.py` evaluates such a network to check it against the maths), the **texture formats of the source** (§8.7, Texture formats: DDS is kept, not converted), and the **recipe tools** of this repository (`stj_core.ground_blend`, `tools/ground_bake.py` for the bake the target needs, `rule_hash` for the staleness check). Reading a source it cannot express is never a reason to throw the information away: keep it under `x_<engine>` and say so.
 
 **The STJ JSON is normative.** Prims may also carry UsdPhysics (rigid body, mass, collider, physics material) or UsdMedia SpatialAudio for USD tools. Where they disagree with the JSON (for example `prototype.physics.mass` against the prim's MassAPI), the JSON wins and the validator warns.
 

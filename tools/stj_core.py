@@ -1671,11 +1671,18 @@ def usd_material_report(material_prim):
     """What a UsdShade material carries (spec §7.7).
 
     {surface: shader id of the default outputs:surface, or None; maps: UsdPreviewSurface inputs fed by a
-    texture; textures: [(texture shader path, colour space declared)]; opacity_threshold; opacity_map}."""
+    texture; textures: [(texture shader path, colour space declared)]; opacity_threshold; opacity_map; mtlx: a MaterialX
+    network is attached; source_data: the `x_<engine>` customData keys; baked: the `stj:baked` customData or None}."""
     from pxr import UsdShade
     mat = UsdShade.Material(material_prim)
     shader = mat.ComputeSurfaceSource()[0]
     report = {"surface": None, "maps": [], "textures": [], "opacity_threshold": 0.0, "opacity_map": False}
+    custom = material_prim.GetCustomData() or {}
+    mtlx = mat.GetSurfaceOutput("mtlx")
+    report["mtlx"] = bool(mtlx and mtlx.HasConnectedSource())                       # a MaterialX network is attached
+    report["source_data"] = sorted(k for k in custom if k.startswith("x_"))         # the source engine's shader, kept
+    baked = custom.get("stj", {}).get("baked") if isinstance(custom.get("stj"), dict) else None
+    report["baked"] = dict(baked) if isinstance(baked, dict) else None              # stj:baked {reason, tool, tool_version, source}
     if not shader:
         return report
     sid = shader.GetIdAttr().Get()

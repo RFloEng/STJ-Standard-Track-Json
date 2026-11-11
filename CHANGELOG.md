@@ -2,6 +2,10 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Materials stay as the source** (from the converters): spec §7.7 adds a fidelity rule. Keep the source's material as it is, put what UsdPreviewSurface cannot say in a MaterialX network next to it and the source shader under `x_<engine>`, bake only when a target cannot do it and at the last step (STJ to engine), and mark any bake that reaches the file with `stj:baked {reason, tool, tool_version, source}` while keeping its recipe. `stj_core.usd_material_report` reports `mtlx`, `source_data` and `baked`; the validator adds a NOTE per baked material and warns when it keeps no source.
+
+- **Terrain may lie above the road** (from the WRC Generations converter): the validator no longer warns where the terrain rises above the reference line, and the best-practice line is gone. Spec §7.4 now says the collision mesh wins under a wheel and the terrain is touched where no mesh reaches, so a converter passes a game's heightfield through unchanged. `holes` stay for tunnels and cuttings.
+
 - **DDS ground textures**: the texture files of a ground layer may be DDS (block-compressed, mipmaps stored) as well as PNG (spec §8.7, *Texture formats*). `stj_core.read_dds_header` and `read_texture` (pixels via Pillow when installed); the validator checks the header (unknown format, no mipmaps, albedo alpha data without alpha channel) and rejects a DDS for a data raster (mask). The Blender ground nodes take the layer statistics from Blender's own decoded pixels. Weights, heightmaps, masks and macro maps stay PNG.
 
 - **Blender: names of meshes and placeholder sky and sun**: a mesh object keeps its USD prim name, and a repeated name gets its parent in front (`Windmill_Rotor/shape`) instead of `.001`. A document with no sky or sun gets a `Placeholder sky` World and a `Placeholder sun` light (collection `STJ Placeholders`, property `stj_placeholder`), never exported.

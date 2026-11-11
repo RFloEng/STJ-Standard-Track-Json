@@ -102,7 +102,7 @@ In STJ this is a mesh with role `collision` and surfaces bound to its materials 
 **STJ recommendation:**
 - Author `2^n + 1` square grids up to 4097. Those go to Unity, UE and RoR unchanged, and to BeamNG by dropping one row and column.
 - 1 m cells near the road and 2–4 m further away are typical choices. No engine publishes a rule.
-- Keep the terrain ≥ 5 cm under road meshes, or cut holes. The validator checks this (spec §7.4).
+- Terrain and road meshes may overlap: the collision mesh wins (spec §7.4). Do not lower the terrain or cut holes to avoid an overlap; use `holes` for tunnels and cuttings.
 - Use few layers: four or five survive every engine (RoR allows 6).
 
 ---

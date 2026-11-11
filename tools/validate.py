@@ -18,7 +18,7 @@ Steps for each file:
   3. Cross-reference rules the schema cannot express (spec §12): surface, mesh, CRG and
      prototype ids exist; s values lie on the reference line; start, splits, sectors,
      finish and pacenotes are ordered along it; grid order; unit sanity (rad vs deg, m/s vs km/h).
-     v0.2: signal names and values, terrain grid rules and terrain above the road, water,
+     v0.2: signal names and values, terrain grid rules, water,
      substitutions, line states, prop inertia, USD prims and primvars, audio ranges.
 
 Levels: ERROR fails the file; WARN fails it with --strict; NOTE never fails.
@@ -1205,7 +1205,7 @@ def check_one_terrain(ctx, ter, p):
         rep.error(f"{p}.holes", f"mask is {terrain.holes.width} x {terrain.holes.height}, heightmap is {nx} x {ny}")
         return
     if ctx.line:
-        above, off = [], []
+        off = []
         cl = (ctx.doc.get("reference") or {}).get("centerline") or {}
         s = 0.0
         while s <= ctx.line.length:
@@ -1215,17 +1215,11 @@ def check_one_terrain(ctx, ter, p):
             if mode == "drape":
                 if h is not None and abs(h - z) > 0.1:
                     off.append((s, h - z))
-            elif mode == "free" and h is not None and h > z + 0.02 and not terrain.is_hole(x, y):
-                above.append((s, h - z))
             s += 2.0
         if off:
             worst = max(off, key=lambda a: abs(a[1]))
             rep.warn(p, f"drape: the road is meant to follow the terrain, but its centerline differs from it at {len(off)} of the "
                         f"sampled points, worst {worst[1]:+.2f} m at s = {worst[0]:.0f}")
-        if above:
-            worst = max(above, key=lambda a: a[1])
-            rep.warn(p, f"terrain rises above the road at {len(above)} of the sampled points (2 m apart), "
-                        f"worst {worst[1]:.2f} m at s = {worst[0]:.0f}: lower it or cut holes (spec §7.4)")
 
 
 POLYGON_BODIES = {"sea", "lake", "pond", "puddle", "pool"}
@@ -2701,6 +2695,15 @@ def check_visual_materials(ctx):
                     rep.warn(p, f"texture {path} of '{name}' declares no colour space (sourceColorSpace raw or sRGB)")
             if rp["opacity_map"] and rp["opacity_threshold"] <= 0 and not decal:
                 rep.warn(p, f"material '{name}': opacity comes from a texture without opacityThreshold; a cutout needs one (0.5 when the source gives none)")
+            if rp["baked"] is not None:
+                why = rp["baked"].get("reason", "no reason given")
+                rep.note(p, f"material '{name}' is a bake ({why})")
+                if not rp["mtlx"] and not rp["source_data"]:
+                    rep.warn(p, f"material '{name}' is baked and keeps no source: attach the recipe (a MaterialX network on "
+                                "outputs:mtlx:surface, or the source shader and parameters under x_<engine> in customData), "
+                                "or keep the unbaked material (spec §7.7)")
+                elif not rp["baked"].get("source"):
+                    rep.warn(p, f"material '{name}' is baked but stj:baked has no 'source' naming what it was baked from")
             rep.note(p, f"material '{name}' carries: " + ("+".join(rp["maps"]) if rp["maps"] else "no texture maps (constants only)"))
 
 

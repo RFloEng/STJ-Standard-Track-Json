@@ -351,11 +351,13 @@ class Tier2(unittest.TestCase):
         self.assertFinding(self.gp, "WARN", "start_procedure.lights.count is 5")
 
     # terrain
-    def test_terrain_above_road(self):
+    def test_terrain_above_the_road_is_not_a_finding(self):
+        """A game's terrain may lie a little above its road: the collision mesh wins there (spec §7.4), so nothing to fix."""
         hm = self.stage["geometry"]["terrain"]["heightmap"]
         hm["height_min"] += 3.0
         hm["height_max"] += 3.0
-        self.assertFinding(self.stage, "WARN", "terrain rises above the road")
+        for level in ("ERROR", "WARN"):
+            self.assertFalse([m for m in messages(run(self.stage), level) if "terrain" in m and "road" in m], level)
 
     def test_terrain_size_mismatch(self):
         self.stage["geometry"]["terrain"]["heightmap"]["size"] = [65, 129]
@@ -1714,7 +1716,7 @@ class RoadProfile(unittest.TestCase):
 
 
 def write_visual_mesh(path, *, surface=True, texture=None, opacity_map=False, threshold=None, two_sided=False,
-                      interface_input=None, material="Mat"):
+                      interface_input=None, material="Mat", custom=None, mtlx=False):
     """A one-quad USD mesh with one material. texture: None, or the sourceColorSpace token ('' for none)."""
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, Vt
     st = Usd.Stage.CreateNew(str(path))
@@ -1748,6 +1750,13 @@ def write_visual_mesh(path, *, surface=True, texture=None, opacity_map=False, th
             if opacity_map:
                 sh.CreateInput("opacity", Sdf.ValueTypeNames.Float).ConnectToSource(tx.ConnectableAPI(), "a")
         mat.CreateSurfaceOutput().ConnectToSource(sh.ConnectableAPI(), "surface")
+        if mtlx:
+            mx = UsdShade.Shader.Define(st, f"/m/materials/{material}/mx")
+            mx.CreateIdAttr("ND_open_pbr_surface_surfaceshader")
+            mx.CreateOutput("out", Sdf.ValueTypeNames.Token)
+            mat.CreateSurfaceOutput("mtlx").ConnectToSource(mx.ConnectableAPI(), "out")
+    if custom:
+        mat.GetPrim().SetCustomData(custom)
     UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(mat)
     st.GetRootLayer().Save()
 
@@ -1807,6 +1816,21 @@ class MaterialsAndAssets(unittest.TestCase):
         self.finding("ERROR", "is not doubleSided")
         self.mesh(texture="sRGB", opacity_map=True, threshold=0.5, two_sided=True)
         self.absent("ERROR", "is not doubleSided")
+
+    def test_a_bake_must_keep_its_source(self):
+        """Materials stay as the source; a baked one is marked and carries the recipe it was baked from (spec §7.7)."""
+        baked = {"stj": {"baked": {"reason": "target has no layered shaders", "tool": "t", "tool_version": "1", "source": "a 3-layer blend"}}}
+        self.mesh(texture="sRGB", custom=baked)
+        self.finding("NOTE", "is a bake (target has no layered shaders)")
+        self.finding("WARN", "baked and keeps no source")
+        self.mesh(texture="sRGB", custom=baked, mtlx=True)
+        self.absent("WARN", "keeps no source")
+        self.mesh(texture="sRGB", custom={**baked, "x_rbr": {"shader": "terrain_blend"}})
+        self.absent("WARN", "keeps no source")
+        self.mesh(texture="sRGB", custom={"stj": {"baked": {"reason": "r"}}}, mtlx=True)
+        self.finding("WARN", "has no 'source'")
+        self.mesh(texture="sRGB")
+        self.absent("WARN", "keeps no source")
 
     def test_a_decal_may_blend_its_opacity(self):
         self.mesh(texture="sRGB", opacity_map=True)
