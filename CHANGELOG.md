@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **Blender: names of meshes and placeholder sky and sun**: a mesh object keeps its USD prim name, and a repeated name gets its parent in front (`Windmill_Rotor/shape`) instead of `.001`. A document with no sky or sun gets a `Placeholder sky` World and a `Placeholder sun` light (collection `STJ Placeholders`, property `stj_placeholder`), never exported.
+
 - **Blender: `usd`-form instance sets are visible and survive the export**: a PointInstancer in a mesh file shows in Blender as instances with full orientation and 3-axis scale (Blender's importer does this), and the export restores the instancer at its prim path from the source file instead of writing one object per instance. Edits to such instances are made in the USD file.
 
 - **Instances can be tilted** (from the DiRT Rally 2.0 converter's owner note): `scenery.instances[].transforms` rows may carry `pitch` and `roll` after the scale (`[x, y, z, heading, scale, pitch, roll]`, rad); existing rows are unchanged. The Blender profile adds the point attributes `stj_pitch` and `stj_roll` to instance sets that need them. Non-uniform scale stays in the `usd` form.

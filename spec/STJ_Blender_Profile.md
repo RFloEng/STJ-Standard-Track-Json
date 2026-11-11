@@ -92,6 +92,8 @@ something belongs in it:
 - An STJ object (named `STJ::<category>::<id>`) is linked to exactly the collection of its kind, and nothing is left
   loose in `STJ`. The mesh collections `STJ::mesh::<id>` stay where the USD import puts them, children of the scene
   collection.
+- **Names of meshes.** Objects that come from a USD mesh file keep the names of their prims. Blender's own repeat suffix (`shape.001`) hides where such an object came from, so a repeated name gets its parent's name in front (`Windmill_Rotor/shape`). Objects named `STJ::…` are never renamed this way, so the names the profile reads stay as they are.
+- **Placeholders.** A document with no sky gets a World named `Placeholder sky` (a Sky Texture), and one with no sun gets a Sun light `Placeholder sun` in the collection `STJ Placeholders`, so the viewport is not black. Both carry the custom property `stj_placeholder` and are not named `STJ…`: they are never exported, never a finding, and a sky or sun the document has is never replaced. A placeholder is for looking only; it says nothing about the track's light.
 - The group names have no `::`, so they are not entities. Where an object is changes nothing in the export; a user
   may move objects or add collections of their own, and the check then gives a NOTE (`layout`) naming the objects
   that are not in their collection. A translator's output has no such note.

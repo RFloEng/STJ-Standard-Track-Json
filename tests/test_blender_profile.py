@@ -640,6 +640,24 @@ class InBlender(KeepExamples, unittest.TestCase):
             if core.have_pxr():
                 self.assertEqual(core.load_document(Path(d) / "out" / "ring.usd"), doc)        # the document is in the USD
 
+    def test_names_of_meshes_and_the_placeholders(self):
+        """Mesh objects keep the names of the USD prims (a repeated name gets its parent in front, not a .001) and a document
+        without sky or sun gets placeholders that are never exported."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            r = self.run_blender("--python", str(ROOT / "tests" / "blender_names_check.py"), "--", str(ROOT / "examples" / "test_ring_gp.usda"), str(d / "out"))
+            line = next((x for x in r.stdout.splitlines() if x.startswith("RESULT ")), None)
+            self.assertTrue(line, r.stdout[-1500:] + r.stderr[-1500:])
+            res = json.loads(line[7:])
+        self.assertFalse([n for n in res["mesh_objects"] if n[-4:-3] == "." and n[-3:].isdigit()], res["mesh_objects"])
+        self.assertIn("Marshal_Flag_T1/shape", res["mesh_objects"])
+        self.assertEqual(res["placeholders"], {"Placeholder sun": ["STJ Placeholders"]})
+        self.assertEqual(res["worlds"], {"Placeholder sky": True})
+        self.assertEqual(res["export"], 0)
+        self.assertFalse(res["placeholder_in_export"])
+        self.assertEqual(res["layout_notes"], [])
+        self.assertEqual(res["findings"], [])
+
     def test_a_usd_instance_set_is_visible_and_survives_the_export(self):
         """A PointInstancer in a mesh file is instances in Blender (Blender's importer makes them), with orientation and 3-axis
         scale, and the export puts the instancer back at its prim path instead of one object per instance."""

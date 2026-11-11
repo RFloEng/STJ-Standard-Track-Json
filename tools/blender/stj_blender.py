@@ -180,6 +180,51 @@ def export(out_dir, name="track", say=print):
     return 0
 
 
+PLACEHOLDER = "stj_placeholder"             # custom property of the helpers made for viewing only (profile, 'Placeholders')
+
+
+def disambiguate(coll):
+    """Blender names the second `shape` of a USD file `shape.001`. Give such an object the name of its parent in front
+    (`line_pit/shape`) so the original name stays readable. Only objects in a mesh collection that are not STJ objects."""
+    import re
+    depth = lambda o: len(list(_ancestors(o)))  # noqa: E731
+    for o in sorted(coll.all_objects, key=depth):
+        m = re.fullmatch(r"(.+)\.\d{3}", o.name)
+        if o.name.startswith("STJ") or not m or o.parent is None:
+            continue
+        new = f"{o.parent.name}/{m.group(1)}"
+        if new not in bpy.data.objects:
+            o.name = new
+
+
+def _ancestors(o):
+    while o.parent is not None:
+        o = o.parent
+        yield o
+
+
+def add_placeholders(desc, scene, group):
+    """A document with no sky or no sun gets a Sky Texture world and a Sun light so the viewport is not black. They are
+    helpers: named without `STJ`, marked with the custom property `stj_placeholder`, in the collection `STJ Placeholders`,
+    and never exported. A sky or sun the document has is not replaced."""
+    from math import radians
+    names = {o["name"] for o in desc["objects"]}
+    if not any(n.startswith("STJ::sky::") for n in names):
+        world = bpy.data.worlds.new("Placeholder sky")
+        world[PLACEHOLDER] = True
+        world.use_nodes = True
+        nodes, links = world.node_tree.nodes, world.node_tree.links
+        links.new(nodes.new("ShaderNodeTexSky").outputs["Color"], nodes["Background"].inputs["Color"])
+        scene.world = world
+    if not any(n.startswith("STJ::sun::") for n in names):
+        light = bpy.data.lights.new("Placeholder sun", "SUN")
+        light.energy = 3.0
+        ob = bpy.data.objects.new("Placeholder sun", light)
+        ob.rotation_euler = (radians(50), 0.0, radians(30))
+        ob[PLACEHOLDER] = True
+        group("STJ Placeholders").objects.link(ob)
+
+
 def clear_scene():
     """Empty the open file without reloading Blender's settings (an add-on stays enabled)."""
     for coll in (bpy.data.objects, bpy.data.collections, bpy.data.meshes, bpy.data.curves, bpy.data.cameras,
@@ -187,7 +232,7 @@ def clear_scene():
         for item in list(coll):
             coll.remove(item)
     for world in list(bpy.data.worlds):
-        if world.name.startswith("STJ::"):
+        if world.name.startswith("STJ::") or world.get(PLACEHOLDER):
             bpy.data.worlds.remove(world)
     scene = bpy.context.scene
     for key in list(scene.keys()):
@@ -310,6 +355,7 @@ def build_scene(desc, reset=True):
             layer = bpy.context.view_layer.layer_collection.children[coll.name]
             bpy.context.view_layer.active_layer_collection = layer         # the import lands in the active collection
             bpy.ops.wm.usd_import(filepath=c["usd"])
+            disambiguate(coll)
             for mat in list(bpy.data.materials):
                 if mat.name not in before:
                     parsed = profile.parse_name(mat.name)
@@ -327,6 +373,7 @@ def build_scene(desc, reset=True):
             mat[k] = v
     for name, text in desc["texts"].items():
         bpy.data.texts.new(name).write(text)
+    add_placeholders(desc, scene, group)
 
 
 def load_into_scene(doc_path, say=print, reset=True):
