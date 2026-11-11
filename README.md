@@ -207,6 +207,7 @@ Other tools:
 | `tools/ribbon_usd.py` | A USD collision ribbon from a centerline, surface bands and the road profile and banking, one GeomSubset per surface |
 | `tools/ground_bake.py` | Layered ground baked into an image, with the stamp that marks the image as a cache of the recipe |
 | `tools/ground_materialx.py` | Writes the layered ground as a MaterialX network on the ground material, so USD viewers that read MaterialX (usdview, Omniverse) show the real layers instead of a bake. Blender 5.2 imports only the preview-surface fallback of that material, not the MaterialX network |
+| `tools/material_mtlx.py` | For converters: writes an ordinary material (tint, vertex colour, packed roughness/metalness/occlusion, gloss, normal, emissive, opacity, a two-layer mix) as a MaterialX network next to its UsdPreviewSurface, so a material is not baked flat (spec §7.7) |
 | `tools/blender/stj_ground.py` | Rebuilds the layered ground as Blender shader nodes on import (height and linear blends, projections, macro maps); checked pixel by pixel against the reference maths |
 | `tools/las_dtm.py` | Grids the ground points of a LiDAR tile into a heightmap, with no-data cells and the records of where it came from. LAS, or LAZ and COPC with the optional `laspy`. |
 | `tools/canonicalize.py`, `tools/migrate.py` | Canonical form for diffs, and version migration ([spec §3.9, §3.10](spec/STJ_Spec.md#39-canonical-form-v03)) |

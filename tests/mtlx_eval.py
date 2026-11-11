@@ -32,11 +32,16 @@ class Evaluator:
         src = out.GetConnectedSource()
         return self.value(src[0].GetPrim(), src[1] if len(src) > 1 else "out", "base_color")
 
+    def surface(self):
+        """Every input of the surface shader that has a value: {base_color, specular_roughness, base_metalness, ...}."""
+        src = self.material.GetOutput("mtlx:surface").GetConnectedSource()
+        return self.output(src[0].GetPrim(), src[1] if len(src) > 1 else "out")
+
     def value(self, prim, out_name, input_name):
         """The value of input `input_name` of the shader at `prim`."""
         sh = self.UsdShade.Shader(prim)
         inp = sh.GetInput(input_name)
-        if inp is None:
+        if not inp:
             return None
         if inp.HasConnectedSource():
             src = inp.GetConnectedSource()
@@ -97,11 +102,17 @@ class Evaluator:
             return tuple(x * g("in2") for x in g("in1"))
         if nid == "ND_clamp_color3":
             return tuple(min(max(x, lo), hi) for x, lo, hi in zip(g("in"), g("low"), g("high")))
-        if nid == "ND_mix_color3":
+        if nid in ("ND_mix_color3", "ND_mix_vector3"):
             m = g("mix")
             return tuple(b * (1.0 - m) + f * m for f, b in zip(g("fg"), g("bg")))
+        if nid == "ND_mix_float":
+            return g("bg") * (1.0 - g("mix")) + g("fg") * g("mix")
+        if nid == "ND_normalmap_float":
+            return g("in")                       # tangent space: the map's own vector, before the tangent frame
         if nid == "ND_open_pbr_surface_surfaceshader":
-            return {"base_color": g("base_color")}
+            keys = ("base_color", "specular_roughness", "base_metalness", "geometry_normal", "geometry_opacity",
+                    "emission_color", "emission_luminance")
+            return {k: g(k) for k in keys if g(k) is not None}
         raise NotImplementedError(nid)
 
     def image(self, prim, four):
