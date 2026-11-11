@@ -23,7 +23,7 @@ Author to these limits and every converter in `docs/converter_plan.md` can take 
 | Bumps | Only on the collision mesh. The visual mesh follows it. | AC practice [community] |
 | Visual mesh pieces | < 55 000 vertices per mesh | AC 16-bit index limit [community] |
 | Materials | As few as possible. Merge objects that share a material. | Draw-call cost in BeamNG [official] and AC [community] |
-| Textures | Power of two, with mipmaps, ≤ 4096 px per side. Deliver block-compressed DDS per engine (§4); keep PNG masters. | RBR, BeamNG [official] |
+| Textures | Power of two, with mipmaps, ≤ 4096 px per side. Deliver block-compressed DDS per engine (§4); keep PNG masters. STJ ground layers accept DDS directly (spec §8.7); data rasters stay PNG. | RBR, BeamNG [official] |
 | Terrain | Square cells, `2^n + 1` samples per side, ≤ 4097 | Unity, UE, RoR [official] (§5) |
 | Terrain height range | Keep it within ±256 m of the terrain's z offset, or plan the UE Z scale | UE default scale [official] |
 | Repeated objects | Instances (`scenery.instances`) and scatter rules, never baked copies | BeamNG instancing [official] |

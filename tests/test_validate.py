@@ -677,6 +677,60 @@ class Ground(unittest.TestCase):
         self.assertNotEqual(centre, edge)                     # road gravel is not forest floor
 
 
+class DdsTextures(unittest.TestCase):
+    """Ground layer textures may be DDS; data rasters must stay PNG (spec §8.7)."""
+
+    def setUp(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow not installed")
+        self.Image = Image
+        self.stage = core.load_document(STAGE)
+        self.made = []
+
+    def tearDown(self):
+        for f in self.made:
+            f.unlink(missing_ok=True)
+
+    def dds(self, name, size=(16, 16), fmt="DXT5", mode="RGBA"):
+        path = EX / "ground" / name
+        self.Image.new(mode, size, (120, 90, 60, 200)[:len(mode)]).save(path, pixel_format=fmt)
+        self.made.append(path)
+        return f"ground/{name}"
+
+    def test_the_header_names_format_size_mips_and_alpha(self):
+        self.dds("t_a.dds", (16, 8), "DXT5")
+        self.dds("t_b.dds", (16, 8), "DXT1", "RGB")
+        a = core.read_dds_header(EX / "ground" / "t_a.dds")
+        b = core.read_dds_header(EX / "ground" / "t_b.dds")
+        self.assertEqual((a["width"], a["height"], a["format"], a["alpha"]), (16, 8, "BC3", True))
+        self.assertEqual((b["format"], b["alpha"]), ("BC1", False))
+        self.assertEqual(core.read_texture(EX / "ground" / "t_a.dds").channels, 4)
+        self.assertEqual(core.read_texture(EX / "ground" / "t_a.dds").width, 16)
+        self.assertTrue(core.is_dds(EX / "ground" / "t_a.dds"))
+        self.assertFalse(core.is_dds(EX / "ground" / "sec01_tint.png"))
+
+    def test_a_dds_albedo_is_accepted_and_missing_mipmaps_are_noted(self):
+        lay = next(iter(self.stage["ground"]["layers"].values()))
+        lay["albedo"]["uri"] = self.dds("t_c.dds", (64, 64))
+        report = run(self.stage)
+        self.assertFalse([m for m in messages(report, "ERROR") if "t_c" in m or "DDS" in m], messages(report, "ERROR"))
+        self.assertTrue(any("without mipmaps" in m for m in messages(report, "WARN")))
+
+    def test_an_albedo_with_data_in_alpha_needs_an_alpha_channel(self):
+        lay = next(iter(self.stage["ground"]["layers"].values()))
+        lay["albedo"]["uri"] = self.dds("t_d.dds", (4, 4), "DXT1", "RGB")
+        lay["albedo"]["alpha"] = "height"
+        lay["albedo"]["height_in_alpha"] = True
+        self.assertTrue(any("has no alpha channel" in m for m in messages(run(self.stage), "WARN")))
+
+    def test_a_mask_must_be_a_png(self):
+        gm = self.stage["ground"]["materials"][0]
+        gm["blend"] = {"method": "mask", "mask": [{"uri": self.dds("t_e.dds", (4, 4)), "tile": 5.0}] * (len(gm["palette"]) - 1)}
+        self.assertTrue(any("must be a PNG" in m for m in messages(run(self.stage), "ERROR")))
+
+
 class TerrainMacro(unittest.TestCase):
     """Macro maps over a heightfield terrain and the `colour` encoding (spec §7.4, §8.7)."""
 

@@ -1522,6 +1522,30 @@ def check_v02_extras(ctx):
             rep.warn("_metadata.version", f"declares 0.1 but uses v0.2 features: {', '.join(found[:4])}")
 
 
+def check_layer_texture(rep, path, f, needs_alpha):
+    """A ground layer texture is a PNG or a DDS (spec §8.7). A DDS is judged by its header: block-compressed formats are
+    what an engine loads, and it should carry its mipmaps."""
+    if not core.is_dds(f):
+        return
+    try:
+        h = core.read_dds_header(f)
+    except (core.StjLoadError, OSError, struct.error) as e:
+        rep.error(path, str(e))
+        return
+    if h["format"] == "other":
+        rep.warn(path, "a DDS format this validator does not know: tools that read the pixels will skip it")
+    if h["mips"] <= 1 and max(h["width"], h["height"]) > 4:
+        rep.warn(path, f"a DDS of {h['width']} x {h['height']} without mipmaps: it shimmers in the distance")
+    if needs_alpha and not h["alpha"] and h["format"] != "other":
+        rep.warn(path, f"the albedo alpha holds data, but this {h['format']} has no alpha channel")
+
+
+def check_data_raster_png(rep, path, f):
+    """Heights, weights and masks must be exact, so they stay PNG: a block-compressed DDS would corrupt them."""
+    if f.is_file() and core.is_dds(f):
+        rep.error(path, "a data raster (weights, masks, heights, macro maps) must be a PNG: DDS compression changes the values")
+
+
 def check_ground(ctx):
     """Ground layers, layered materials and their USD primvars (spec §8.7)."""
     rep, doc = ctx.rep, ctx.doc
@@ -1533,6 +1557,9 @@ def check_ground(ctx):
         for k in ("albedo", "normal", "height", "roughness", "occlusion"):
             if k in lay and not ctx.file(lay[k]["uri"]).is_file():
                 rep.warn(f"{p}.{k}.uri", f"file not found: {lay[k]['uri']}")
+            elif k in lay:
+                check_layer_texture(rep, f"{p}.{k}.uri", ctx.file(lay[k]["uri"]), k == "albedo" and (
+                    lay[k].get("height_in_alpha") or lay[k].get("alpha") in ("height", "specular", "roughness", "gloss")))
         alb = lay.get("albedo", {})
         if "alpha" in alb and "height_in_alpha" in alb and (alb["alpha"] == "height") != alb["height_in_alpha"]:
             rep.error(f"{p}.albedo", f"alpha '{alb['alpha']}' contradicts height_in_alpha {str(alb['height_in_alpha']).lower()}")
@@ -1607,6 +1634,8 @@ def check_ground(ctx):
             for j, mk in enumerate(masks):
                 if not ctx.file(mk["uri"]).is_file():
                     rep.warn(f"{p}.blend.mask[{j}].uri", f"file not found: {mk['uri']}")
+                else:
+                    check_data_raster_png(rep, f"{p}.blend.mask[{j}].uri", ctx.file(mk["uri"]))
                 if mk.get("projection") == "road" and not ctx.line:
                     rep.error(f"{p}.blend.mask[{j}].projection", "'road' projection needs a reference centerline")
             if blend.get("softness", 0.15) > 0.5:

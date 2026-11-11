@@ -1105,6 +1105,68 @@ class Raster:
                 + (1 - u) * v * g(i, j + 1, c) + u * v * g(i + 1, j + 1, c))
 
 
+DDS_MAGIC = b"DDS "
+DXGI_FORMATS = {71: "BC1", 72: "BC1", 74: "BC2", 75: "BC2", 77: "BC3", 78: "BC3", 80: "BC4", 81: "BC4", 83: "BC5", 84: "BC5",
+                95: "BC6H", 96: "BC6H", 98: "BC7", 99: "BC7", 28: "RGBA8", 29: "RGBA8", 87: "BGRA8", 91: "BGRA8", 61: "R8"}
+DDS_FOURCC = {b"DXT1": "BC1", b"DXT2": "BC2", b"DXT3": "BC2", b"DXT4": "BC3", b"DXT5": "BC3", b"ATI1": "BC4", b"BC4U": "BC4",
+              b"ATI2": "BC5", b"BC5U": "BC5"}
+
+
+def is_dds(path):
+    with open(path, "rb") as f:
+        return f.read(4) == DDS_MAGIC
+
+
+def read_dds_header(path):
+    """{width, height, mips, format, alpha} of a DDS file, from its header only (no pixels are decoded). `format` is
+    BC1 to BC7, RGBA8, BGRA8, R8 or `other`."""
+    with open(path, "rb") as f:
+        head = f.read(148)
+    if head[:4] != DDS_MAGIC or len(head) < 128:
+        raise StjLoadError(f"{Path(path).name}: not a DDS file")
+    size, flags, height, width = struct.unpack_from("<IIII", head, 4)
+    mips = struct.unpack_from("<I", head, 28)[0] if flags & 0x20000 else 1
+    pf_flags, fourcc, bits = struct.unpack_from("<I4sI", head, 80)
+    masks = struct.unpack_from("<IIII", head, 92)
+    fmt, alpha = "other", False
+    if pf_flags & 0x4:                                              # a FourCC
+        if fourcc == b"DX10" and len(head) >= 148:
+            fmt = DXGI_FORMATS.get(struct.unpack_from("<I", head, 128)[0], "other")
+        else:
+            fmt = DDS_FOURCC.get(fourcc, "other")
+        alpha = fmt in ("BC2", "BC3", "BC7", "RGBA8", "BGRA8")
+    elif pf_flags & 0x40:                                           # uncompressed RGB(A)
+        alpha = bool(pf_flags & 0x1)
+        fmt = ("RGBA8" if masks[0] == 0xFF else "BGRA8") if bits == 32 else "other"
+    elif pf_flags & 0x20000 and bits == 8:
+        fmt = "R8"
+    return {"width": width, "height": height, "mips": max(1, mips), "format": fmt, "alpha": alpha}
+
+
+def read_dds(path):
+    """The top mip of a DDS as a Raster. The pixels are decoded by Pillow (pip install pillow), so a DDS can be read where
+    it is installed; the header is always readable (read_dds_header)."""
+    try:
+        from PIL import Image
+    except ImportError:
+        raise StjLoadError(f"{Path(path).name}: reading DDS pixels needs Pillow (pip install pillow); convert the texture to PNG "
+                           "or install it") from None
+    try:
+        im = Image.open(path)
+        im.load()
+    except Exception as e:  # noqa: BLE001
+        raise StjLoadError(f"{Path(path).name}: cannot decode the DDS ({e})") from None
+    if im.mode not in ("L", "RGB", "RGBA"):
+        im = im.convert("RGBA" if "A" in im.mode else "RGB")
+    ch = {"L": 1, "RGB": 3, "RGBA": 4}[im.mode]
+    return Raster(im.width, im.height, ch, 255, list(im.tobytes()))
+
+
+def read_texture(path):
+    """A colour or data texture of a ground layer: a PNG (read_png) or a DDS (read_dds)."""
+    return read_dds(path) if is_dds(path) else read_png(path)
+
+
 PNG_MAGIC = bytes([0x89]) + b"PNG\r\n" + bytes([0x1A]) + b"\n"
 PNG_CHANNELS = {0: 1, 2: 3, 4: 2, 6: 4}  # colour type -> channels (palettes not supported)
 

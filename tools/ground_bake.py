@@ -34,7 +34,7 @@ def linear_to_srgb(c):
 
 class Texture:
     def __init__(self, path):
-        self.img = core.read_png(path)
+        self.img = core.read_texture(path)
         img = self.img
         self.mean_alpha = (sum(img.data[3::4]) / (img.width * img.height) / img.maxval) if img.channels == 4 else 0.5
         self._mean_rgb = None

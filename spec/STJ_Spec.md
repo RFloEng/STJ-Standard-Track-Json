@@ -935,6 +935,8 @@ Terrains are drawn the same way almost everywhere:
 
 A material cannot express this: it has one surface, and the blend weights are per-face data, not a material property. Without `ground`, a converter can only bake the ground into images, which loses sharpness and the layers that BeamNG, UE, Unity and CSP rebuild natively. Rationale and the DR2 case: `proposals/stj_layered_ground_proposal.md`.
 
+**Texture formats.** The texture files of a layer (`albedo`, `normal`, `height`, `roughness`, `occlusion`) are **PNG or DDS**. A DDS is what an engine loads: block-compressed (BC1 to BC7, about a quarter to an eighth of the memory of a PNG) and with its mipmaps stored, so a converter from a DDS-based game keeps the files as they are. Keep the PNG master beside it when there is one. The validator reads only the DDS header: it names a format it does not know, warns when a texture larger than 4 px has no mipmaps, and warns when an albedo whose alpha holds `height`, `specular`, `roughness` or `gloss` has no alpha channel. Reading the pixels of a DDS needs Pillow (`pip install pillow`) in the reference tools (`ground_bake.py`, `ground_materialx.py`); without it they say so and skip that layer. In Blender the pixels are decoded by Blender. **Data rasters stay PNG**: the heightmap, `holes`, weights, blend `mask` and macro maps, and the water accumulation map, because block compression changes their values; the validator rejects a DDS there. Inside a `.usdz` (§7.8) a DDS is not allowed: package the PNG.
+
 **`ground.layers`** (by id):
 
 | Key | Meaning |

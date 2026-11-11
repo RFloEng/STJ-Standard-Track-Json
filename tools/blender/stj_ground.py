@@ -342,13 +342,34 @@ def _weighted_mean(b, idx, ws, mean_rgb):
 _STATS = {}
 
 
+def _blender_stats(path):
+    """(mean colour in linear light, mean alpha) of an image Blender can read (a DDS), from its own decoded pixels."""
+    img = bpy.data.images.load(str(path), check_existing=False)
+    try:
+        img.colorspace_settings.name = "Non-Color"                  # the stored values, as the PNG reader has them
+        px = img.pixels[:]
+        n = len(px) // 4
+        srgb = [sum(px[c::4]) / n for c in range(3)]
+        linear = []
+        for c in range(3):
+            vals = px[c::4]
+            linear.append(sum((v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4) for v in vals) / n)
+        alpha = sum(px[3::4]) / n if core.read_dds_header(path)["alpha"] else 0.5
+        return tuple(linear), alpha
+    finally:
+        bpy.data.images.remove(img)
+
+
 def _load_stats(path):
     """(mean colour in linear light, mean alpha) of a PNG, with the same reader the reference tools use."""
     key = str(path)
     if key not in _STATS:
         import ground_bake as gb
-        t = gb.Texture(Path(path))
-        _STATS[key] = (tuple(t.mean_rgb), t.mean_alpha)
+        try:
+            t = gb.Texture(Path(path))
+            _STATS[key] = (tuple(t.mean_rgb), t.mean_alpha)
+        except core.StjLoadError:
+            _STATS[key] = _blender_stats(path)       # a DDS and no Pillow in Blender: Blender decodes it itself
     return _STATS[key]
 
 

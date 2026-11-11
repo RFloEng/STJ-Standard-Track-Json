@@ -2,6 +2,8 @@
 
 ## 0.3 (draft) — 2026-11-02
 
+- **DDS ground textures**: the texture files of a ground layer may be DDS (block-compressed, mipmaps stored) as well as PNG (spec §8.7, *Texture formats*). `stj_core.read_dds_header` and `read_texture` (pixels via Pillow when installed); the validator checks the header (unknown format, no mipmaps, albedo alpha data without alpha channel) and rejects a DDS for a data raster (mask). The Blender ground nodes take the layer statistics from Blender's own decoded pixels. Weights, heightmaps, masks and macro maps stay PNG.
+
 - **Blender: names of meshes and placeholder sky and sun**: a mesh object keeps its USD prim name, and a repeated name gets its parent in front (`Windmill_Rotor/shape`) instead of `.001`. A document with no sky or sun gets a `Placeholder sky` World and a `Placeholder sun` light (collection `STJ Placeholders`, property `stj_placeholder`), never exported.
 
 - **Blender: `usd`-form instance sets are visible and survive the export**: a PointInstancer in a mesh file shows in Blender as instances with full orientation and 3-axis scale (Blender's importer does this), and the export restores the instancer at its prim path from the source file instead of writing one object per instance. Edits to such instances are made in the USD file.

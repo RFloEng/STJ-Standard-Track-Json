@@ -44,6 +44,29 @@ class GroundNodes(unittest.TestCase):
             macro = {"kind": "tint", "uri": "ground/sec01_tint.png", "texcoord": "st", **enc}
             self.assert_matches(run_check({"macro": [macro]}))
 
+    def test_dds_layer_textures_give_the_same_ground(self):
+        """The layers' albedo as block-compressed DDS (what an engine loads): Blender decodes them, the nodes get the layer
+        statistics from Blender's pixels, and the render stays near the reference (DXT5 is lossy)."""
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow not installed")
+        sys.path.insert(0, str(ROOT / "tools"))
+        import stj_core as core
+        with tempfile.TemporaryDirectory() as d:
+            copy = Path(d) / "examples"
+            shutil.copytree(ROOT / "examples", copy)
+            doc = core.load_document(STAGE)
+            for lay in doc["ground"]["layers"].values():
+                png = copy / lay["albedo"]["uri"]
+                Image.open(png).convert("RGBA").save(png.with_suffix(".dds"), pixel_format="DXT5")
+                lay["albedo"]["uri"] = str(Path(lay["albedo"]["uri"]).with_suffix(".dds")).replace("\\", "/")
+            (copy / "track.stj.json").write_text(json.dumps(doc), encoding="utf-8")
+            res = run_check(stage=copy / "track.stj.json")
+        self.assertTrue(res["built"], res)
+        self.assertEqual(res["notes"], [], res)
+        self.assertLess(res["mean_err"], 0.03, res)
+
     def test_the_mask_blend(self):
         import random
         sys.path.insert(0, str(ROOT / "tools"))

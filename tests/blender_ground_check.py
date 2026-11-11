@@ -99,7 +99,12 @@ px = list(img.pixels)
 # reference
 ground = doc["ground"]
 layers = [ground["layers"][lid] for lid in gm["palette"]]
-tex = [gb.Texture(base_dir / l["albedo"]["uri"]) for l in layers]
+def ref_uri(uri):
+    """The reference reads PNG only (Blender has no Pillow): a DDS layer texture has its PNG master beside it."""
+    return str(Path(uri).with_suffix(".png")) if uri.lower().endswith(".dds") else uri
+
+
+tex = [gb.Texture(base_dir / ref_uri(l["albedo"]["uri"])) for l in layers]
 blend = gm.get("blend") or {}
 macros = [(gb.Texture(base_dir / m["uri"]), m.get("encoding", "grey_centred"), m.get("strength", 1.0), m.get("texcoord", "st"))
           for m in gm.get("macro", []) if "extent" not in m and m["kind"] != "wetness"]
