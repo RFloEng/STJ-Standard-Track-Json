@@ -266,16 +266,24 @@ class ReferenceLine:
         x, y, z, h = self.frame(s)
         return (x - t * math.sin(h), y + t * math.cos(h), z)
 
-    def project(self, x, y):
-        """(s, t) of the point on the line nearest to (x, y), with t positive to the left."""
+    def project(self, x, y, near=None, window=None):
+        """(s, t) of the point on the line nearest to (x, y), with t positive to the left (spec §4: the nearest point; a tie
+        goes to the smaller s). With `near` (an s you already know) and `window` (m), only the line within `window` of `near`
+        is searched, which keeps the result continuous in s and is cheap; on a closed line the window wraps."""
         best = None
         d = self._dense
         for a, b in zip(d, d[1:]):
+            if near is not None and window is not None:
+                gap = abs(a[2] - near)
+                if self.closed and self.length:
+                    gap = min(gap, self.length - gap)
+                if gap > window + (b[2] - a[2]):
+                    continue
             dx, dy = b[0] - a[0], b[1] - a[1]
             ds = dx * dx + dy * dy
             u = 0.0 if ds < 1e-18 else max(0.0, min(1.0, ((x - a[0]) * dx + (y - a[1]) * dy) / ds))
             d2 = (x - a[0] - u * dx) ** 2 + (y - a[1] - u * dy) ** 2
-            if best is None or d2 < best[0]:
+            if best is None or d2 < best[0] - 1e-12:             # a tie keeps the smaller s
                 seg = math.sqrt(ds)
                 side = 0.0 if seg < 1e-9 else (dx * (y - a[1]) - dy * (x - a[0])) / seg
                 best = (d2, a[2] + u * (b[2] - a[2]), side)
@@ -1326,7 +1334,8 @@ def offset_at(offsets, s, closed_length=None):
 def line_state_value(state, level, s, t, t_line):
     """r(s, t) = level * profile(s) * exp(-0.5 * ((t - t_line) / spread)^2)."""
     prof = eval_curve(state["profile"], s) if state.get("profile") else 1.0
-    return level * prof * math.exp(-0.5 * ((t - t_line) / state["spread"]) ** 2)
+    spread = max(float(state["spread"]), 1e-9)               # the schema needs spread > 0; a zero must not divide
+    return level * prof * math.exp(-0.5 * ((t - t_line) / spread) ** 2)
 
 
 def in_band(band, s, t):
@@ -1710,6 +1719,27 @@ def usd_material_report(material_prim):
                     declared = bool(f.GetAttr().GetColorSpace())
                 report["textures"].append((str(src.GetPath()), declared))
     return report
+
+
+def usd_collision_meshes(stage, roles):
+    """The Mesh prims of a stage that are collision surface (spec §7.2): all of them when `collision` is the file's only
+    role, else the ones that carry `stj:collision = true` themselves or on an ancestor; none when the file lacks the role."""
+    from pxr import Usd, UsdGeom
+    roles = set(roles)
+    if "collision" not in roles:
+        return []
+    meshes = [p for p in stage.Traverse() if p.IsA(UsdGeom.Mesh)]
+    if roles == {"collision"}:
+        return meshes
+
+    def marked(prim):
+        while prim and prim.IsValid() and not prim.IsPseudoRoot():
+            attr = prim.GetAttribute("stj:collision")
+            if attr and attr.Get() is True:
+                return True
+            prim = prim.GetParent()
+        return False
+    return [p for p in meshes if marked(p)]
 
 
 def usd_primvar_types(stage, prim_path):

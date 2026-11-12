@@ -532,6 +532,7 @@ def stage_ground(line):
     root = UsdGeom.Xform.Define(stage, "/ground")
     stage.SetDefaultPrim(root.GetPrim())
     mesh = UsdGeom.Mesh.Define(stage, "/ground/sec01")
+    mesh.GetPrim().CreateAttribute("stj:collision", Sdf.ValueTypeNames.Bool).Set(True)      # a file that is visual and collision marks its collision prims (spec §7.2)
     mesh.CreatePointsAttr(Vt.Vec3fArray([tuple(r(c, 3) for c in pt) for pt in points]))
     mesh.CreateFaceVertexCountsAttr(Vt.IntArray(counts))
     mesh.CreateFaceVertexIndicesAttr(Vt.IntArray(indices))
@@ -1220,6 +1221,7 @@ def blend_ring():
     stage.SetDefaultPrim(track.GetPrim())
 
     mesh = UsdGeom.Mesh.Define(stage, "/track/ribbon")
+    mesh.GetPrim().CreateAttribute("stj:collision", Sdf.ValueTypeNames.Bool).Set(True)      # a file that is visual and collision marks its collision prims (spec §7.2)
     mesh.CreatePointsAttr(Vt.Vec3fArray([tuple(r(c, 3) for c in p) for p in points]))
     mesh.CreateFaceVertexCountsAttr(Vt.IntArray(counts))
     mesh.CreateFaceVertexIndicesAttr(Vt.IntArray(indices))

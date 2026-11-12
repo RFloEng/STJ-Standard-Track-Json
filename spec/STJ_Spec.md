@@ -204,7 +204,7 @@ SI, as SVJ §2: m, kg, N, s, Pa, rad, m/s; temperature in °C. Exceptions, state
 ### 4.2 Track coordinates (s, t, h) and the reference line
 
 - **s**: distance along the reference line (m), **measured in the x/y plane** like OpenDRIVE `s` (elevation does not lengthen it), increasing in the race direction.
-- **t**: lateral offset (m), **positive to the left** of the race direction (OpenDRIVE `t`, OpenCRG `v`).
+- **t**: lateral offset (m), **positive to the left** of the race direction (OpenDRIVE `t`, OpenCRG `v`). For a point in the world, `(s, t)` is defined by the **nearest point of the reference line**: `s` is the chainage of that point and `t` the signed distance to it. On a polyline the inside of a corner can have two nearest points near the edge of the road; the nearer wins, and the tie goes to the smaller `s`. A reader that already knows its `s` (a vehicle that moves a little each step) passes it as a hint with a window (`ReferenceLine.project(x, y, near=s, window=w)`), and only the line within the window is searched, so the result is continuous in `s` and cheap.
 - **h**: height above the surface.
 
 The reference line is either `reference.opendrive` (a file plus an optional `route` of road ids, chained in race order) or `reference.centerline` (a polyline of `[x, y, z]`). When both are present OpenDRIVE is authoritative; the centerline is a convenience copy for tools without an OpenDRIVE evaluator. A **closed** centerline (`closed: true`) connects its last point back to the first; do not repeat the first point. On a closed line `s` lies in `[0, L)` and every ordering rule is applied in **lap distance** `(s − s_start_finish) mod L`.
@@ -361,7 +361,7 @@ A tyre states the surface its coefficients describe. This is an additive SVJ fie
 } } }
 ```
 
-When `reference.surface` is absent the tyre is taken to describe STJ-REF. Tyre classes: `slick`, `road`, `intermediate`, `wet`, `gravel`, `snow`, `studded`, `mud`, `offroad`.
+When `reference.surface` is absent the tyre is taken to describe STJ-REF, so its division in §6.4 step 3 is by 1. When `tyre_class` is absent, no `by_tyre_class` entry applies and the generic values are used. Tyre classes: `slick`, `road`, `intermediate`, `wet`, `gravel`, `snow`, `studded`, `mud`, `offroad`.
 
 ### 6.3 Surface object and where surfaces apply
 
@@ -371,7 +371,7 @@ When `reference.surface` is absent the tyre is taken to describe STJ-REF. Tyre c
 |---|---|---|
 | `class` | enum | `asphalt`, `concrete`, `kerb`, `painted_line`, `cobblestone`, `artificial_grass`, `grass`, `dirt`, `gravel`, `sand`, `mud`, `snow`, `ice`, `rock`, `water`, `metal`, `wood`, `wall`, `other`. Required. In practice the most portable field. |
 | `mf_scaling` | – | `LMUX`, `LMUY` (λμx, λμy), `LKX`, `LKY`, `LCX`, `LCY`, `LEX`, `LEY`, `LXAL`, `LYKA`, `LTR`; names as SVJ `pacejka.scaling` |
-| `by_tyre_class` | – | Per tyre class replacement of `mf_scaling`, `rolling_resistance`, `wet_response`, `deformable` (§6.5) |
+| `by_tyre_class` | – | Per tyre class values for `mf_scaling`, `rolling_resistance`, `wet_response`, `deformable` (§6.5). **They merge with the generic ones field by field, the class value winning**: a class that gives only `LMUX` keeps the generic `LKX`, `LKY` and the rest. `mf_scaling` merges factor by factor, `deformable` key by key; `rolling_resistance` and `wet_response` are single values and are replaced. |
 | `rolling_resistance` | – | Added coefficient: `F = f · Fz` against the direction of travel. STJ-REF = 0. |
 | `roughness` | – | §6.7 |
 | `wet_response` | m → factor | Factor on `LMUX`, `LMUY` versus water-film depth |
@@ -387,13 +387,16 @@ When `reference.surface` is absent the tyre is taken to describe STJ-REF. Tyre c
 0. **Surface maps** (`surfaces.maps[]`). The surface varies **inside** collision primitives, as on real ground, where gravel patches, swept wheel tracks and verges do not follow triangle edges.
    - A map names a collision mesh's material, a `palette` of surface ids, and weights in one of the `ground` encodings (§8.7): `vertex_top3` with the primvars `stj_surf_layers` / `stj_surf_weights` (§7.7), `vertex_dense`, `image` or `id_map`.
    - `contact: blend` (the default) makes the contact's parameters (scaling factors, rolling resistance, deformable values, μ) the weighted mean of the palette entries present. `contact: dominant` takes the largest weight.
-   - A map may carry `when` (a condition, §11.1). **The first map whose condition holds is used**; a map without `when` always holds. Bindings and ground materials take `when` the same way.
+   - **What blends how.** Numbers (scaling factors, `rolling_resistance`, `mu`, deformable values, `water.storage_depth`, `drain_rate`) blend by weight. Curves (`wet_response`, `roughness` profiles) are evaluated for each entry and the results blended by weight, never the curves point by point. Categorical fields (`class`, `track_limits`, `pit_lane`, `out_of_bounds`, `water.wet_look`, `base_surface`, `effects`, `impact`) come from the entry with the largest weight. A field that an entry does not give takes its default (`base_offset` 0, a factor 1, `rolling_resistance` 0) in the mean. Line states (§6.8) are applied to each entry on its own `applies_to` before the blend.
+   - A map may carry `when` (a condition, §11.1). **The first map whose condition holds is used**, in array order; a map without `when` always holds. Bindings and ground materials take `when` the same way. **When no map holds, the search goes on at level 1**, so a document needs no unconditional last map. A condition is evaluated against the live signals, or against their §11.1 defaults when the engine has none at load (`wear` 0.5, `wetness` 0).
    - A single file can therefore hold one surface map per state, for example new / normal / worn × dry / damp / wet, chosen by the `wear` and `wetness` signals at load or live.
 
-1. **Collision mesh materials.** For a USD mesh with role `collision`, each UsdShade material maps to a surface (it covers its faces through GeomSubsets): either the material is named `STJ__surface__<id>` (`STJ::surface::<id>` is accepted as the same), or a `surfaces.bindings[]` entry `{mesh_ref, material | prim, surface}` names it. The second form leaves imported meshes unrenamed. Every engine's mechanism reduces to this: AC mesh-name prefixes (`1ROAD`), RBR per-triangle material ids, BeamNG material `groundType`, ACR physical materials.
+1. **Collision mesh materials.** For a USD mesh with role `collision`, each UsdShade material maps to a surface (it covers its faces through GeomSubsets): either the material is named `STJ__surface__<id>` (`STJ::surface::<id>` is accepted as the same), or a `surfaces.bindings[]` entry `{mesh_ref, material | prim, surface}` names it. **When a material has both, the binding wins** (it is the explicit statement; the name is a convention). Which prims of a file are collision surface is defined in §7.2. The second form leaves imported meshes unrenamed. Every engine's mechanism reduces to this: AC mesh-name prefixes (`1ROAD`), RBR per-triangle material ids, BeamNG material `groundType`, ACR physical materials.
 2. **OpenDRIVE lane materials**: `surfaces.opendrive_materials` maps `<material surface="…">` names to ids.
 3. **Bands**: `surfaces.bands[]` `{s_start, s_end, t_min, t_max, surface}` along the reference line. Later bands win where they overlap. On a closed line `s_end < s_start` crosses s = 0. Bands make a centerline-only file drivable; `tools/ribbon_usd.py` turns them into a collision mesh.
 4. `surfaces.default`.
+
+**What governs the physics, and what only draws.** `surfaces.maps[]`, `bindings`, material names, lane materials, bands and `default` decide the surface of a contact. `ground.materials[]` (§8.7) is the visual recipe of a material: it says how the ground is drawn, and when a `surfaces.maps[]` entry names the same material, the map governs the contact and the ground material governs the look. The two use the same palette ids, so they agree when the document is consistent.
 
 **Terrain contacts** (§7.4) take the surface of the dominant terrain layer at the contact point. Terrain is a separate collision source. Under a wheel the collision mesh wins where there is one (it is the road, a kerb, a barrier); the terrain is touched where no mesh reaches. A terrain that lies a little above a road mesh is therefore valid: the engine, not the file, resolves the overlap.
 
@@ -405,16 +408,22 @@ The normative recipe for one contact:
 
 1. Find the surface at the contact point (§6.3), after substitutions.
 2. If the surface has `by_tyre_class[<tyre_class>]`, use its values in place of the generic ones.
-3. For every scaling factor *i* the surface gives:
+3. For every scaling factor *i* the surface gives (after the merge of step 2):
    `λ_eff,i = λ_tyre,i · λ_surface,i / λ_tyre_ref,i`
-   where `λ_tyre,i` is the tyre's `pacejka.scaling` (1 if absent) and `λ_tyre_ref,i` the tyre's reference surface (1 for STJ-REF).
-3a. **Line states** (§6.8): multiply `LMUX` and `LMUY` by `1 + gain · r(s, t)`, with `grip_gain` on a dry contact and `wet_gain` where the film depth is above 0. In marbles, multiply them by the marbles factor. On a swept line, multiply `loose_layer_depth` as §6.8 says.
-4. Multiply `LMUX` and `LMUY` by `wet_response(d)`, where `d` is the **effective film depth** at the contact (§6.9). The global depth comes from the weather (`environment.default_weather.water_depth` or the engine's live `water_depth` signal).
+   where `λ_tyre,i` is the tyre's `pacejka.scaling` (1 if absent) and `λ_tyre_ref,i` the tyre's reference surface (1 for STJ-REF). **The division applies to class-specific values too.** A `by_tyre_class` value is the factor of a tyre *of that class* on this surface, relative to STJ-REF; the tyre's own fit was made on its reference surface, so the division removes that surface from the fit. Skipping it would count the surface twice for a tyre fitted on it.
+3a. **Line states** (§6.8): multiply `LMUX` and `LMUY` by `1 + gain · r(s, t)`, with `grip_gain` (per axis) on a dry contact and `wet_gain` (one number, for both axes) where the film depth is above 0; without `wet_gain` the gain on a wet contact is 0. In marbles, multiply them by the marbles factor. On a swept line, multiply `loose_layer_depth` as §6.8 says.
+4. Where `d > 0`, multiply `LMUX` and `LMUY` by `wet_response(d)`, where `d` is the **effective film depth** at the contact (§6.9). `wet_response(0)` is 1 by definition: the curve never changes dry grip, whatever its first point says (before its first point the first value holds, but only for d > 0). The global depth comes from the weather (`environment.default_weather.water_depth` or the engine's live `water_depth` signal).
 5. Evaluate the tyre (SVJ §11.13) with `λ_eff`. Add `−(rolling_resistance + drag_coefficient · v) · Fz` against the direction of travel, on top of the tyre's own rolling resistance.
-6. Tyre models other than MF (TMeasy, brush, lookup tables) apply only the friction factors, to peak and sliding μ.
+6. Tyre models other than MF (TMeasy, brush, lookup tables) apply only the friction factors, to peak and sliding μ. `mu.sliding` of §6.5 scales the sliding μ of a model that has one (`mu.sliding / reference_mu.sliding`); for the Magic Formula, which has no separate sliding μ, it is informative.
 7. An engine with a soil model uses `deformable.terramechanics` for that contact instead of steps 3–5. Other engines use Tier A (§6.6).
 
 A gravel tyre fitted on gravel (`λ_tyre_ref` = the gravel values) put on that gravel gets exactly the scaling it was fitted with. On asphalt it gets more grip, scaled by the ratio of the two surfaces.
+
+**Worked example.** Surface `gravel_hardpack`: generic `mf_scaling {LMUX 0.6, LMUY 0.65, LKX 0.6, LKY 0.65}`, and `by_tyre_class.gravel.mf_scaling {LMUX 0.76, LMUY 0.72}`. A gravel tyre with `pacejka.scaling {LMUX 1.1, LMUY 1.0}` and `reference.surface.mf_scaling {LMUX 0.76, LMUY 0.72}` drives on it.
+- Step 2 (merge): `LMUX 0.76, LMUY 0.72` from the class; `LKX 0.6, LKY 0.65` kept from the generic values.
+- Step 3: `LMUX = 1.1 · 0.76 / 0.76 = 1.1`; `LMUY = 1.0 · 0.72 / 0.72 = 1.0`; `LKX = 1 · 0.6 / 1 = 0.6` (the reference gives no `LKX`, so 1); `LKY = 1 · 0.65 / 1 = 0.65`.
+- The same tyre on STJ-REF asphalt (all factors 1): `LMUX = 1.1 / 0.76 = 1.447`, `LMUY = 1 / 0.72 = 1.389`.
+- A road tyre (no `reference.surface`, no `by_tyre_class.road`) on `gravel_hardpack`: the generic values, `LMUX 0.6`, `LMUY 0.65`, `LKX 0.6`, `LKY 0.65`.
 
 ### 6.5 Why `by_tyre_class` exists
 
@@ -462,9 +471,9 @@ A racing line changes the surface under it: rubber builds up on tarmac, and loos
 | `applies_to` | Surface ids the state lies on |
 | `line`, `spread` | The racing line it follows (`race.racing_lines` id) and its Gaussian σ across the line (m) |
 | `profile` | Optional `[[s, factor], …]`: braking zones carry more |
-| `grip_gain {LMUX, LMUY}`, `wet_gain` | Grip gain on a dry contact; the gain that replaces it on a wet one (usually negative: a rubbered line is slippery in the rain) |
+| `grip_gain {LMUX, LMUY}`, `wet_gain` | Grip gain per axis on a dry contact; the one gain (both axes) that replaces it on a wet one (usually negative: a rubbered line is slippery in the rain). Without `wet_gain` the gain on a wet contact is 0. |
 | `loose_layer_factor` | `swept`: factor on `deformable.effective.loose_layer_depth` at full state |
-| `marbles {offset, LMU}` | Beyond `spread + offset` from the line, `LMUX` and `LMUY` are multiplied by `1 − (1 − LMU) · level` |
+| `marbles {offset, LMU}` | Beyond `spread + offset` from the line, `LMUX` and `LMUY` are multiplied by `1 − (1 − LMU) · level`: the session `level` only, not `profile(s)` and not the Gaussian |
 | `levels` | State level 0…1 per session (`practice`, `qualifying`, `warmup`, `race`, `stage`, `any`) |
 
 The state at (s, t) is
@@ -626,6 +635,8 @@ STJ fixes simple, first-order **reference laws**. An engine may run its own, bet
 
 `geometry.meshes[]`: `{id, uri, roles: ["visual" | "collision" | "lod" | "decal"], lod {of, level, switch_distance}, decal {on, opacity_primvar, depth_offset}}`. `geometry.terrain` (v0.2) is §7.4. A mesh may be visual and collision at once. USD prim and material names that STJ tools generate or recognise follow SVJ's convention with an STJ prefix: `STJ__<category>__<id>` (USD forbids `::` in names; `STJ::<category>::<id>` is accepted as the same), with categories `collision`, `surface` (material names), `reference`, `timing`, `grid`, `pit`, `spawn`, `light`, `scatter`, `instance`, `helper`, `lod`.
 
+**Which prims are collision surface.** In a file whose only role is `collision`, every Mesh prim is a collision prim. In a file that has `collision` among other roles (visual and collision at once), a Mesh prim is a collision prim only if it or an ancestor carries the attribute `bool stj:collision = true`; the unmarked prims are visual only, and so are the prims of a file without the role. Surfaces (§6.3 level 1), `surfaces.bindings[]`, ground materials and the ground-height query use collision prims only. `stj_core.usd_collision_meshes(stage, roles)` returns them; the validator warns when a file with several roles marks none.
+
 **Decals.** The role `decal` marks a visual mesh drawn on top of another: tyre marks, road paint, oil and dirt patches. An engine draws it after the opaque geometry, without casting shadows, with a small depth offset so it does not fight with the surface under it. `decal {on, opacity_primvar, depth_offset}`: `on` is what it lies on (a `geometry.meshes` id, or `terrain`), `opacity_primvar` a per-vertex float primvar multiplied with the material opacity (USD's own `displayOpacity` is the usual one; a MaterialX network multiplies it with the texture alpha, and readers without MaterialX use the texture alpha alone), and `depth_offset` is in metres (default 0.02). A decal is a visual layer: the validator warns when it also has the `collision` role. Spline-projected paint, as editors draw decal roads, is not described.
 
 **Mesh hints.**
@@ -691,6 +702,8 @@ Edges add meaning to the geometry. They do not replace collision meshes: a conve
 
 **Macro maps.** `macro[]` puts low-resolution maps over the whole heightfield. The keys are those of §8.7's `ground.materials[].macro`, without `texcoord` (a heightfield has no UVs): `{kind: tint | occlusion | other, uri, extent, encoding, strength}`. The image covers `extent` (default: the heightmap's), is sampled bilinearly, and its row 0 is the +Y (north) edge, like every STJ raster. `encoding` is `grey_centred` (default), `multiply` or `colour` (§8.7). The maps apply to the terrain's detail colour after the layer blend; road meshes keep the macro maps of their own `ground.materials[]`.
 
+**Ray tolerance.** A vertical ray used to find the ground height can land exactly on an edge and miss, because a mesh is float32 and the JSON coordinates are rounded. A reader uses a tolerance of 1 mm on the barycentric test, or retries the ray offset by a millimetre.
+
 **Terrain and meshes.** Where a collision mesh lies under a wheel it wins over the terrain; terrain is touched only where no mesh reaches. Real game terrain is a continuous heightfield with the road drawn over it, often a few centimetres below the road's surface, and a converter passes it through unchanged: nothing has to be lowered or cut. `holes` (8-bit mask on the heightmap grid, non-zero = no terrain) is for what really is open, such as tunnels and cuttings, not a workaround for an overlap. The validator does not check the overlap.
 
 Tiles, streaming and terrain LOD are out of scope (open question Q14).
@@ -743,7 +756,7 @@ Meshes are **OpenUSD** (`.usd`, `.usda`, `.usdc`, `.usdz`), the only mesh format
 | Node or material `STJ::<category>::<id>` | `STJ__<category>__<id>`. USD forbids `::` in names; Blender already writes `__`. Both spellings mean the same in STJ. |
 | `bindings[] {material \| node}` | `{material \| prim}`. `material` is a UsdShade material name, `prim` a prim path (Mesh or GeomSubset). Materials apply per face through GeomSubsets. |
 | `_STJ_SURF_LAYERS` / `_STJ_LAYERS` (VEC3 per vertex, vertices split where the layer set changes) | **Uniform** (per-face) primvars, so no vertex is split. Either one `int3` primvar `stj_surf_layers`, or **three int primvars** `["stj_surf_layers_0", "_1", "_2"]`. Blender has no int3 attribute type, but it writes and reads three per-face integers (checked). |
-| `_STJ_SURF_WEIGHTS` / `_STJ_WEIGHTS` (VEC2 per vertex) | `stj_surf_weights`: `float2`, `vertex` or **`faceVarying`** (per face corner), which avoids splitting vertices |
+| `_STJ_SURF_WEIGHTS` / `_STJ_WEIGHTS` (VEC2 per vertex) | `stj_surf_weights`: `float2` or `texCoord2f` (both are read), `vertex` or **`faceVarying`** (per face corner), which avoids splitting vertices |
 | Other `_STJ_*` attributes | `stj_<name>` primvars. STJ primvars use an **`stj_` prefix, not the `stj:` namespace**: Blender's exporter drops per-corner attributes whose names contain `:` (checked). |
 | `TEXCOORD_n` | A UV primvar by name: `"texcoord": "st"` |
 | A glTF animation by name | `time_range: [start, end]` in the stage's time codes. USD has no named clips. |

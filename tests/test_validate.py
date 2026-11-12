@@ -679,6 +679,31 @@ class Ground(unittest.TestCase):
         self.assertNotEqual(centre, edge)                     # road gravel is not forest floor
 
 
+class SimulatorProposals(unittest.TestCase):
+    """Definitions the simulator team asked for (spec §4 (s, t), §6.3 to §6.8)."""
+
+    def test_project_is_the_nearest_point_and_a_hint_keeps_it_continuous(self):
+        doc = core.load_document(EX / "test_ring_gp.usda")
+        line = core.reference_line(doc)
+        for s in (10.0, 123.4, 400.0, line.length - 5.0):
+            for t in (-3.0, 0.0, 2.5):
+                x, y, _z = line.point(s, t)
+                ps, pt = line.project(x, y)
+                self.assertAlmostEqual(pt, t, delta=0.15)
+                self.assertAlmostEqual(line.lap_distance(ps, s) if line.lap_distance(ps, s) < line.length / 2 else ps - s, 0.0, delta=1.0)
+                hs, ht = line.project(x, y, near=s, window=20.0)
+                self.assertAlmostEqual(hs, ps, delta=1e-6)
+                self.assertAlmostEqual(ht, pt, delta=1e-6)
+        x, y, _z = line.point(100.0, 0.0)
+        far = line.project(x, y, near=line.length / 2.0, window=10.0)          # a window away from the point finds another place
+        self.assertGreater(abs(far[0] - 100.0), 10.0)
+
+    def test_a_zero_spread_does_not_divide_by_zero(self):
+        state = {"spread": 0.0}
+        self.assertEqual(core.line_state_value(state, 1.0, 0.0, 0.0, 0.0), 1.0)
+        self.assertEqual(core.line_state_value(state, 1.0, 0.0, 1.0, 0.0), 0.0)
+
+
 class DdsTextures(unittest.TestCase):
     """Ground layer textures may be DDS; data rasters must stay PNG (spec §8.7)."""
 
@@ -1831,6 +1856,22 @@ class MaterialsAndAssets(unittest.TestCase):
         self.finding("WARN", "has no 'source'")
         self.mesh(texture="sRGB")
         self.absent("WARN", "keeps no source")
+
+    def test_which_prims_are_collision(self):
+        """Spec §7.2: the only role collision means all prims; collision plus visual needs stj:collision on the prims."""
+        from pxr import Usd
+        self.mesh(texture="sRGB")
+        self.doc["geometry"]["meshes"][0]["roles"] = ["visual", "collision"]
+        self.finding("WARN", "no Mesh prim carries stj:collision")
+        st = Usd.Stage.Open(str(self.dir / "vis.usda"))
+        self.assertEqual(core.usd_collision_meshes(st, ["visual", "collision"]), [])
+        self.assertEqual(len(core.usd_collision_meshes(st, ["collision"])), 1)
+        self.assertEqual(core.usd_collision_meshes(st, ["visual"]), [])
+        from pxr import Sdf
+        st.GetPrimAtPath("/m").CreateAttribute("stj:collision", Sdf.ValueTypeNames.Bool).Set(True)      # marked on an ancestor
+        st.GetRootLayer().Save()
+        self.assertEqual(len(core.usd_collision_meshes(st, ["visual", "collision"])), 1)
+        self.absent("WARN", "no Mesh prim carries stj:collision")
 
     def test_a_decal_may_blend_its_opacity(self):
         self.mesh(texture="sRGB", opacity_map=True)

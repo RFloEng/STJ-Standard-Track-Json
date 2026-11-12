@@ -2658,6 +2658,24 @@ def check_assets(ctx):
             rep.note("assets", f"'{ref}' is listed as a texture but no USD mesh names it")
 
 
+def check_collision_prims(ctx):
+    """A file that is collision and something else must say which prims are the collision surface (spec §7.2)."""
+    if not core.have_pxr():
+        return
+    for i, m in enumerate((ctx.doc.get("geometry") or {}).get("meshes", [])):
+        roles = set(m.get("roles", []))
+        if "collision" not in roles or roles == {"collision"} or m["id"] not in ctx.mesh_names:
+            continue
+        try:
+            stage = _usd_stage(ctx, m["id"])
+            marked = core.usd_collision_meshes(stage, roles)
+        except Exception:    # noqa: BLE001
+            continue
+        if not marked:
+            ctx.rep.warn(f"geometry.meshes[{i}]", f"'{m['id']}' has the roles {sorted(roles)} but no Mesh prim carries "
+                         "stj:collision = true: no prim is collision surface (spec §7.2)")
+
+
 def check_visual_materials(ctx):
     """The material profile of visual and decal meshes (spec §7.7): a UsdPreviewSurface fallback, cards two-sided."""
     rep = ctx.rep
@@ -3053,6 +3071,7 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     check_conformance(ctx)
     check_surface_quality(ctx)
     check_assets(ctx)
+    check_collision_prims(ctx)
     check_visual_materials(ctx)
     check_material_drives(ctx)
     check_surface_maps(ctx)
