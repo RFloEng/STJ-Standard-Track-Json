@@ -1,7 +1,9 @@
 """Tests for the v0.4 handoff additions: conformance profiles, surface function and quality, route policy,
 pacenote sets, position references, override ops, the canonicalizer and the migrator."""
 
+import contextlib
 import copy
+import io
 import json
 import sys
 import tempfile
@@ -322,6 +324,83 @@ class Migrate(unittest.TestCase):
             migrate.migrate({"_metadata": {"version": "0.3"}}, "0.1")
         with self.assertRaises(ValueError):
             migrate.migrate({"_metadata": {"version": "9.9"}})
+
+    def test_dry_run_writes_nothing_and_shows_the_change(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "a.stj.json"
+            f.write_text(json.dumps({"_metadata": {"specification": "STJ", "version": "0.2"}}), encoding="utf-8")
+            before = f.read_text(encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(migrate.main([str(f), "--dry-run"]), 0)
+            self.assertEqual(f.read_text(encoding="utf-8"), before)
+            self.assertIn("would become 0.3", buf.getvalue())
+            self.assertIn('"version": "0.3"', buf.getvalue())
+
+
+class DiagnosticsJson(unittest.TestCase):
+    def test_json_pointer_from_a_dotted_path(self):
+        self.assertEqual(validate.json_pointer("roads[0].centerline"), "/roads/0/centerline")
+        self.assertEqual(validate.json_pointer("timing.sectors"), "/timing/sectors")
+        self.assertEqual(validate.json_pointer("race.grid[2] (p3).pose"), "/race/grid/2/pose")
+        self.assertEqual(validate.json_pointer("(override)"), "")
+        self.assertEqual(validate.json_pointer("a.b with spaces.c"), "/a")
+
+    def test_the_json_output_has_severity_path_pointer_and_message(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "bad.stj.json"
+            f.write_text(json.dumps({"_metadata": {"specification": "STJ", "version": "0.3", "coordinate_system": "OpenDRIVE", "units": "SI"},
+                                     "layouts": [{"id": "bad", "route": "nope", "direction": "reverse"}]}), encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = validate.main([str(f), "--json"])
+            out = json.loads(buf.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(out["result"], "FAIL")
+        self.assertEqual(out["errors"], sum(1 for x in out["diagnostics"] if x["severity"] == "ERROR"))
+        for x in out["diagnostics"]:
+            self.assertEqual(set(x), {"severity", "path", "pointer", "message"})
+            self.assertTrue(x["pointer"] == "" or x["pointer"].startswith("/"))
+        routes = [x for x in out["diagnostics"] if "route" in x["path"] and x["severity"] == "ERROR"]
+        self.assertTrue(routes and routes[0]["pointer"].startswith("/layouts/0"))     # the invalid layout of spec §2.1
+
+    def test_a_clean_file_gives_an_empty_list(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(validate.main([str(GP), "--json", "--strict"]), 0)
+        self.assertEqual(json.loads(buf.getvalue())["diagnostics"], [])
+
+
+class ConversionReport(unittest.TestCase):
+    def test_entries_counts_and_lost(self):
+        r = core.ConversionReport("dr2_to_stj", "stage.xml", "stage.stj.json", "1.0")
+        r.add("mapped", "/roads/0", "carried over").add("dropped", "/scenery/trees/3", "species 'palm' has no equivalent")
+        r.add("baked", "", "two layers baked to one map")
+        self.assertEqual(r.counts()["dropped"], 1)
+        self.assertEqual(r.lost(), ["/scenery/trees/3: species 'palm' has no equivalent", "two layers baked to one map"])
+        d = r.to_dict()
+        self.assertEqual((d["tool"], d["tool_version"], len(d["entries"])), ("dr2_to_stj", "1.0", 3))
+        json.dumps(d)
+        with self.assertRaises(ValueError):
+            r.add("lost", "", "x")
+
+    def test_lost_fits_provenance(self):
+        lost = core.ConversionReport("t").add("dropped", "/x", "y").lost()
+        doc = {"_metadata": {"specification": "STJ", "version": "0.3", "provenance": {"conversion": {"lost": lost}}}}
+        self.assertTrue(all(isinstance(m, str) for m in doc["_metadata"]["provenance"]["conversion"]["lost"]))
+
+
+
+class SectionReferences(unittest.TestCase):
+    def test_every_section_reference_outside_the_spec_resolves(self):
+        import re
+        spec = (ROOT / "spec" / "STJ_Spec.md").read_text(encoding="utf-8")
+        heads = set(re.findall(r"^#{2,3} (\d+(?:\.\d+)?)[. ]", spec, re.M))
+        files = [ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "docs" / "consistency_audit.md", ROOT / "docs" / "interoperability.md",
+                 ROOT / "docs" / "best_practices.md", ROOT / "tools" / "validate.py", ROOT / "tools" / "stj_core.py", ROOT / "tools" / "migrate.py"]
+        for f in files:
+            for ref in re.findall(r"(?<!SVJ )(?<!SVJ_Spec )(?<!profile )§(\d+(?:\.\d+)?)", f.read_text(encoding="utf-8")):
+                self.assertIn(ref, heads, f"{f.name}: §{ref}")
 
 
 if __name__ == "__main__":

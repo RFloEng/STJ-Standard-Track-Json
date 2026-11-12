@@ -4,11 +4,12 @@ STJ Validator
 Validates STJ files (.stj.json) and override files (.stj-override.json).
 
 Usage:
-    python tools/validate.py <file> [file2 ...] [--schema PATH] [--strict]
+    python tools/validate.py <file> [file2 ...] [--schema PATH] [--strict] [--json]
 
 Options:
     --schema PATH   Override the schema file (default: schema/stj.schema.json)
     --strict        Exit non-zero on warnings too
+    --json          Print the findings as JSON (severity, path, JSON Pointer, message) instead of text
     -h, --help      Show this help text and exit.
 
 Steps for each file:
@@ -29,6 +30,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import struct
 import sys
 from pathlib import Path
@@ -3147,16 +3149,39 @@ def validate(path, schema=None, check_variants=True):
     return rep
 
 
+def json_pointer(path):
+    """Best-effort RFC 6901 JSON Pointer for a finding's dotted path (`roads[0].centerline` -> `/roads/0/centerline`).
+
+    Labels in brackets such as `sector (s1)` are dropped, and the pointer stops at the first segment that is not a plain
+    key or index, so a message about `(override)` or a free-text place gives the pointer of what it could place ('' = the
+    whole document). The text in `path` stays exact; the pointer is for tools."""
+    path = re.sub(r"\s*\([^)]*\)", "", path or "")
+    parts = []
+    for seg in path.replace("[", ".").replace("]", "").split("."):
+        if not seg:
+            continue
+        if not re.fullmatch(r"[\w:\-]+", seg):
+            break
+        parts.append(seg.replace("~", "~0").replace("/", "~1"))
+    return "".join("/" + q for q in parts)
+
+
+def diagnostics(rep):
+    """The findings of a report as a list of {severity, path, pointer, message}, in report order."""
+    return [{"severity": level, "path": path, "pointer": json_pointer(path), "message": msg} for level, path, msg in rep.items]
+
+
 def main(argv):
     if "-h" in argv or "--help" in argv or not argv:
         print(__doc__)
         return 0 if argv else 2
     strict = "--strict" in argv
+    as_json = "--json" in argv
     schema_path = SCHEMA
     files = []
     it = iter(argv)
     for a in it:
-        if a == "--strict":
+        if a in ("--strict", "--json"):
             continue
         if a == "--schema":
             schema_path = Path(next(it))
@@ -3164,16 +3189,23 @@ def main(argv):
         files.append(a)
     schema = core.load_json(schema_path)
     failed = False
+    results = []
     for f in files:
-        print(f"\nValidating: {f}")
-        print("=" * 60)
         rep = validate(f, schema)
-        for level, path, msg in rep.items:
-            print(f"  {level:<5}  {path}: {msg}")
         e, w, n = rep.count("ERROR"), rep.count("WARN"), rep.count("NOTE")
         ok = e == 0 and (w == 0 or not strict)
-        print(f"  {'PASS' if ok else 'FAIL'}  {e} error(s), {w} warning(s), {n} note(s)")
         failed |= not ok
+        if as_json:
+            results.append({"file": f, "result": "PASS" if ok else "FAIL", "errors": e, "warnings": w, "notes": n,
+                            "diagnostics": diagnostics(rep)})
+            continue
+        print(f"\nValidating: {f}")
+        print("=" * 60)
+        for level, path, msg in rep.items:
+            print(f"  {level:<5}  {path}: {msg}")
+        print(f"  {'PASS' if ok else 'FAIL'}  {e} error(s), {w} warning(s), {n} note(s)")
+    if as_json:
+        print(json.dumps(results if len(results) != 1 else results[0], indent=2, ensure_ascii=False))
     return 1 if failed else 0
 
 

@@ -549,6 +549,28 @@ class Checker(unittest.TestCase):
         s["objects"] += [empty("STJ::timing::start", 0, 0), empty("STJ::timing::start.001", 5, 0)]
         self.assertTrue(any("same STJ name" in m for m in levels(profile.lint_scene(s), "ERROR")))
 
+    def test_a_renamed_object_is_a_new_entity_and_a_deleted_one_is_gone(self):
+        import make_examples
+        doc = make_examples.coll_de_prova()
+        desc = profile.scene_from_document(doc)
+        road = next(o for o in desc["objects"] if o["name"] == "STJ::road::service")
+        road["name"] = "STJ::road::service_b"                   # the name carries the id: this is another road
+        out = profile.apply_scene(desc)
+        self.assertEqual([r["id"] for r in out["roads"]], ["service_b"])
+        self.assertEqual(out["roads"][0]["centerline"]["points"], doc["roads"][0]["centerline"]["points"])
+        desc["objects"].remove(road)                            # a deleted object is a removed entity
+        self.assertNotIn("roads", profile.apply_scene(desc))
+
+    def test_a_field_the_object_does_not_give_stays_as_the_text_block_has_it(self):
+        s = scene()
+        base = json.loads(s["texts"][profile.BASE_TEXT])
+        base["timing"] = {"start_finish": {"s": 10.0, "t_min": -6, "t_max": 6}, "note_kept": True}
+        s["texts"][profile.BASE_TEXT] = json.dumps(base)
+        s["objects"].append(empty("STJ::timing::start_finish", 250, 0))
+        out = profile.apply_scene(s)
+        self.assertAlmostEqual(out["timing"]["start_finish"]["s"], 250.0, places=3)      # the object wins
+        self.assertTrue(out["timing"]["note_kept"])                                      # what it does not say is left alone
+
     def test_a_gate_far_from_the_track(self):
         s = scene()
         s["objects"].append(empty("STJ::timing::start", 100, 200))

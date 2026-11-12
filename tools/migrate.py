@@ -7,9 +7,12 @@ number and nothing else; later versions that rename or remove a field put the re
 has been deprecated for one minor version (the policy is in spec 3.10).
 
 Usage:
-  python tools/migrate.py FILE [OUT] [--to VERSION]    OUT defaults to FILE (rewritten in canonical form)
+  python tools/migrate.py FILE [OUT] [--to VERSION] [--dry-run]
+    OUT defaults to FILE (rewritten in canonical form). --dry-run writes nothing: it prints the steps and
+    the lines of the canonical text that would change.
 """
 import copy
+import difflib
 import json
 import sys
 from pathlib import Path
@@ -52,20 +55,30 @@ def main(argv):
         print(__doc__)
         return 0 if argv else 2
     to = VERSIONS[-1]
+    dry = False
     args = []
     it = iter(argv)
     for a in it:
         if a == "--to":
             to = next(it)
+        elif a == "--dry-run":
+            dry = True
         else:
             args.append(a)
     src = Path(args[0])
     out = Path(args[1]) if len(args) > 1 else src
+    old_text = src.read_text(encoding="utf-8")
     try:
-        doc, notes = migrate(json.loads(src.read_text(encoding="utf-8")), to)
+        doc, notes = migrate(json.loads(old_text), to)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    if dry:
+        diff = list(difflib.unified_diff(old_text.splitlines(), canonicalize.canonical_text(doc).splitlines(),
+                                         f"{src.name} (now)", f"{out.name} (migrated to {to})", lineterm="", n=0))
+        print(f"{src.name}: would become {to}; nothing written" + "".join(f"\n  {n}" for n in notes))
+        print("\n".join(diff) if diff else "  (the canonical text is unchanged)")
+        return 0
     out.write_text(canonicalize.canonical_text(doc), encoding="utf-8", newline="\n")
     print(f"{src.name}: now {to}" + "".join(f"\n  {n}" for n in notes))
     return 0

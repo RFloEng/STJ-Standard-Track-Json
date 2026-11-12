@@ -26,6 +26,23 @@ rows that are still advice: `docs/blender_mapping.md`.
   text block's arrays whole.
 - Axes need no conversion: Blender's Z-up scene coordinates are STJ coordinates, metres.
 
+### 2.1 Precedence and deletion
+
+One list, from weakest to strongest, for the document and for each entity:
+
+1. the **base document**: the text block `track.stj.json`, one resolved document. The profile does not apply override files or USD layers itself: a user who has a base and overrides (spec §3.3) merges them before import, and mesh files go through Blender's USD import, which composes their layers;
+2. the **object's custom properties** (`stj`), which hold the fields of the entity that the geometry does not;
+3. the **object's own state** (its position, curve, light direction, …), which the row of section 4 turns into fields.
+
+Properties and state together are the **scene overlay**, applied over the base as an RFC 7396 merge patch. State wins over the property: a moved object writes its new position whatever the property still says.
+
+Rules:
+
+- **A stronger source wins field by field.** A field a stronger source does not mention is left as the weaker source has it. Absence never deletes.
+- **A deleted object is a removed entity.** The scene supplies whole lists (`roads`, `junctions`, `edges`, `race.grid`, …) from its objects, so an entity that has no object any more is not in the exported list. An entity that is only in the text block, because its category has no objects in the scene, stays.
+- **`null` removes a field** (RFC 7396). A Blender custom property cannot hold null, so the translator carries it as a token and converts it back on export.
+- **Conflicts are reported.** Export lists each field where a stronger source replaced a different value of a weaker one as a NOTE (`export` prints them, `lint` does too), naming the field and both sources, so a user who edited the text block by hand sees that the scene overrode it.
+
 ## 3. Names
 
 `STJ::<category>::<id>[::<part>]`. In a USD file the same name is `STJ__<category>__<id>[__<part>]`, because
@@ -36,6 +53,15 @@ name is ignored, so two objects with the same STJ name are an error.
 - `<id>` is lowercase letters, digits and underscores (the STJ `id` rule). It must not contain `__`.
 - A name that starts with `STJ` and does not have this form is an error.
 - Other STJ-looking names (`STJ_Collision`, `STJ_Visual`) are collections and are not parsed as entities.
+
+### 3.1 Identity (normative)
+
+The **STJ `id` is the identity** of an entity. A Blender object name and a USD prim path are only the ways this profile and the USD files spell it.
+
+- The object's name carries the id: `STJ::road::a` is the road with id `a`. **Renaming the object to `STJ::road::b` makes a new entity `b`**; the road `a` is gone from the exported document. A translator never keeps the old id from a custom property or from the text block once the name says another.
+- Blender's `.001` suffix is ignored when the name is read (`STJ::road::a.001` is `a`). Two objects that read as the same name are an **error** (`same STJ name`); the translator does not pick one. Duplicate an object, then rename it, before exporting.
+- In a USD file the same name is `STJ__road__a`, and the prim path under the stage is a mapping only: it may change when Blender or another tool re-parents the prim, and nothing but the name is read for identity.
+- An object that is not named `STJ::...` is not an entity (section 3) and is never exported as one.
 
 ## 4. Entity rows (normative)
 

@@ -64,7 +64,9 @@ What STJ does not promise:
 - **The same result everywhere.** Loose-surface feel, ground blending and AI racing lines mean different things in different engines. [Spec §14](spec/STJ_Spec.md#14-where-portability-is-a-lie) lists what carries over and what does not.
 - **No manual work.** The aim is that manual work is the game-specific finishing, not rebuilding the track.
 
-Planned: a per-target report from each exporter, saying what was converted, what was approximated and what needs a person. STJ already marks estimates (`_est`), what a conversion dropped (`provenance.lost`) and the validator's notes, which a report would build on.
+What each format carries, and what is tested here, is in [`docs/interoperability.md`](docs/interoperability.md). Where the layers of this repository agree and where they do not is in [`docs/consistency_audit.md`](docs/consistency_audit.md).
+
+A converter says what it did in one shape, the **conversion report** ([spec §3.12](spec/STJ_Spec.md#312-conversion-report-v03), `stj_core.ConversionReport`): what was mapped, approximated, baked, dropped, assumed or unsupported. STJ also marks estimates (`_est`), what a conversion dropped (`provenance.lost`) and the validator's notes.
 
 ## A first look
 
@@ -201,7 +203,7 @@ Other tools:
 |---|---|
 | `tools/validate.py` | Schema validation of the document, plus the cross-reference checks a schema cannot express ([spec §12](spec/STJ_Spec.md#12-validation)). For example:<ul><li>ids, USD materials, prims and primvars exist</li><li>every `s` lies on the line</li><li>timing and pace notes are in order</li><li>signal values are valid</li><li>terrain agrees with the road's rule (below it, draped, or carved)</li><li>inertias are physical</li><li>`.usdz` packages follow OpenUSD's rules</li><li>unit slips such as degrees for radians or km/h for m/s</li></ul>`--strict` fails on warnings. |
 | `tools/canonicalize.py` | Writes a document in canonical form (stable key order, numbers and layout) so a diff shows what changed; `--check` for CI ([spec §3.9](spec/STJ_Spec.md#39-canonical-form-v03)) |
-| `tools/migrate.py` | Brings a document or override up to a later spec version, one step at a time ([spec §3.10](spec/STJ_Spec.md#310-migration-and-deprecation-v03)) |
+| `tools/migrate.py` | Brings a document or override up to a later spec version, one step at a time; `--dry-run` shows the change and writes nothing ([spec §3.10](spec/STJ_Spec.md#310-migration-and-deprecation-v03)) |
 | `tools/stj_usd.py` | STJ inside OpenUSD: embed the document in a layer, extract it as JSON, package a `.usdz` |
 | `tools/stj_core.py` | Loading, `$ref`, RFC 7396 merge patch, the reference line (chainage, Hermite), USD and PNG reading, terrain sampling. It also holds the reference implementations of conditions, line states, the water-film depth, the ground blend and the evolution laws. |
 | `tools/ribbon_usd.py` | A USD collision ribbon from a centerline, surface bands and the road profile and banking, one GeomSubset per surface |
@@ -234,7 +236,7 @@ The ring and the stage are fictional. All surface numbers in them are estimates,
 ```
 schema/     stj.schema.json (the document, Draft-07), stj-override.schema.json (variant patches)
 spec/       STJ_Spec.md, the specification
-docs/       best practices, Blender mapping, converter plan, feature survey, open questions, logo
+docs/       best practices, interoperability, consistency audit, Blender mapping, converter plan, feature survey, open questions, logo
 proposals/  design proposals with their decisions
 examples/   USD tracks and variant layers, meshes, terrain, ground, audio, UI, the generator
 viewer/     the browser viewer
@@ -244,7 +246,7 @@ tests/      unittest suite
 
 ## Status
 
-**v0.3 draft.** Files of earlier versions stay valid; see [CHANGELOG.md](CHANGELOG.md). Open design questions are in [`docs/open_questions.md`](docs/open_questions.md). The decisions behind each addition are in [`proposals/`](proposals/).
+**v0.3 draft.** Files of earlier versions stay valid; see [CHANGELOG.md](CHANGELOG.md). Each feature has a maturity state (normative, optional normative, profile-specific, experimental, proposed, deprecated) in [spec §15.1](spec/STJ_Spec.md#151-status-of-the-features). The words *route*, *layout*, *road* and *reference line*, and the rule for which line an `s` belongs to, are defined in [spec §2.1](spec/STJ_Spec.md#21-glossary-normative) and [§4.2](spec/STJ_Spec.md#42-track-coordinates-s-t-h-and-the-reference-line). Open design questions are in [`docs/open_questions.md`](docs/open_questions.md). The decisions behind each addition are in [`proposals/`](proposals/).
 
 Contributions are welcome. A change to the standard starts as a proposal in `proposals/`, with examples and validator checks.
 

@@ -629,6 +629,37 @@ def resolve_position(doc, ref):
     return (x, y, zz + z)
 
 
+# ── conversion report (spec §3.12) ───────────────────────────────────────────
+
+class ConversionReport:
+    """What a converter did, in the one shape spec §3.12 defines: entries of a kind, a path and a message."""
+    KINDS = ("mapped", "approximated", "baked", "dropped", "assumed", "unsupported")
+    LOSSY = ("dropped", "baked", "approximated", "unsupported")
+
+    def __init__(self, tool, source="", target="", tool_version=""):
+        self.tool, self.tool_version, self.source, self.target = tool, tool_version, source, target
+        self.entries = []
+
+    def add(self, kind, path, message):
+        if kind not in self.KINDS:
+            raise ValueError(f"unknown kind {kind!r}; one of {', '.join(self.KINDS)}")
+        self.entries.append({"kind": kind, "path": path, "message": message})
+        return self
+
+    def counts(self):
+        return {k: sum(1 for e in self.entries if e["kind"] == k) for k in self.KINDS}
+
+    def lost(self):
+        """The messages of the lossy entries, as the list `_metadata.provenance.lost` takes."""
+        return [e["message"] if not e["path"] else f"{e['path']}: {e['message']}" for e in self.entries if e["kind"] in self.LOSSY]
+
+    def to_dict(self):
+        d = {"tool": self.tool, "source": self.source, "target": self.target, "entries": list(self.entries)}
+        if self.tool_version:
+            d["tool_version"] = self.tool_version
+        return d
+
+
 # ── the sun (spec §8.3) ──────────────────────────────────────────────────────
 
 def sun_enu(latitude, longitude, utc):

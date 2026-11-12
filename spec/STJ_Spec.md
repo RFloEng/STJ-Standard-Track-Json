@@ -53,6 +53,32 @@ Inherited from SVJ (SVJ_Spec §1):
 
 **Deliberate deviation from SVJ:** the STJ schema sets `additionalProperties: false` on its objects, allowing only `x_` and `_` keys besides the defined ones. SVJ accepts unknown keys and its validator warns afterwards (SVJ v0.99.4 found converters writing `inboard_point` for `inboard_mount`, silently ignored). STJ rejects typos at schema level. A runtime parser still SHOULD ignore keys it does not know, so newer files degrade gracefully.
 
+### 2.1 Glossary (normative)
+
+These four words have one meaning everywhere in the spec.
+
+| Term | Meaning |
+|---|---|
+| **reference line** | One polyline with its chainage `s` (§4.2): `reference.centerline`, an OpenDRIVE road, a `roads[]` entry's `centerline`, or the line a route chains together. Timing, bands and poses are placed on a reference line by `s` and `t`. |
+| **road** | An element of `roads[]` (§7.1): a reference line of its own, with its own chainage starting at 0, that may be joined to others at junctions. The document's main line is the road `reference`. |
+| **route** | An ordered list of road stretches (`routes[].steps`, §7.1) driven one after the other. A route has a station of its own that runs on through the steps. A route is how a stage or a lap through several roads becomes one line. |
+| **layout** | A way of running the track: which reference line, which timing and race data apply, and in which direction (§3.5). The top-level document is the default layout; `layouts[]` lists alternatives. A layout takes its line from its own `reference`, from a `route`, or from the base line driven in reverse. |
+
+They fit together as follows: a document has roads; a route chains stretches of roads; a layout picks one reference line (a road, a route or the base line reversed) and the timing and race data that go with it. If no layout is named, the default layout (the top-level document) applies; `track_info.layout` names it.
+
+A valid layout, a stage run in reverse with its own start and finish:
+
+```json
+"layouts": [{ "id": "ss1_reverse", "direction": "reverse",
+              "timing": { "start": { "s": 30 }, "finish": { "s": 2026.5 } } }]
+```
+
+An invalid layout: `route` together with `direction`, or a `route` that names no `routes[]` entry:
+
+```json
+"layouts": [{ "id": "bad", "route": "stage", "direction": "reverse" }]
+```
+
 ---
 
 ## 3. Files
@@ -181,9 +207,22 @@ World coordinates stay the default. Where it helps to say "5 m left of the road 
 
 ### 3.10 Migration and deprecation (v0.3)
 
-`tools/migrate.py FILE [OUT] [--to VERSION]` brings a document or an override up to a later version, one step at a time (`MIGRATIONS` in the tool). Versions 0.1 to 0.3 only add optional features, so the steps change the version number and nothing else.
+`tools/migrate.py FILE [OUT] [--to VERSION] [--dry-run]` (`--dry-run` writes nothing and shows the steps and the changed lines) brings a document or an override up to a later version, one step at a time (`MIGRATIONS` in the tool). Versions 0.1 to 0.3 only add optional features, so the steps change the version number and nothing else.
 
 A field that a later version replaces is **deprecated for one minor version first**: it stays valid, the validator warns, and the changelog names its successor. The version after that may remove it, and the migrator rewrites old files. Nothing is removed in a patch version.
+
+### 3.12 Conversion report (v0.3)
+
+A converter that writes STJ from another format (or the other way) says what it did in one shape, so a user can compare converters and a pipeline can read the result. The report is a JSON object written next to the output as `<name>.conversion.json`, or built with `stj_core.ConversionReport`:
+
+```json
+{ "tool": "dr2_to_stj", "tool_version": "1.4", "source": "stage.xml", "target": "stage.stj.json",
+  "entries": [
+    { "kind": "dropped", "path": "/scenery/trees/3", "message": "species 'palm' has no STJ equivalent" },
+    { "kind": "baked", "path": "/ground/materials/1", "message": "two layers mixed by a vertex value, baked to one map" } ] }
+```
+
+`kind` is one of `mapped` (carried over exactly), `approximated` (carried over with a loss; say how), `baked` (a source value flattened, §7.7), `dropped` (not carried over), `assumed` (a value the source lacked, filled in) and `unsupported` (the source has it, the target cannot hold it). `path` is a JSON Pointer into the output document, or a name in the source; `message` is for people. The report is not part of the STJ document; what is lost is also summarised in `_metadata.provenance.lost` (§5.2). The helper has `add(kind, path, message)`, `counts()`, `to_dict()` and `lost()`, which gives the messages of the `dropped`, `baked`, `approximated` and `unsupported` entries as a `provenance.lost` list.
 
 ### 3.11 Compatibility
 
@@ -206,6 +245,32 @@ SI, as SVJ §2: m, kg, N, s, Pa, rad, m/s; temperature in °C. Exceptions, state
 - **s**: distance along the reference line (m), **measured in the x/y plane** like OpenDRIVE `s` (elevation does not lengthen it), increasing in the race direction.
 - **t**: lateral offset (m), **positive to the left** of the race direction (OpenDRIVE `t`, OpenCRG `v`). For a point in the world, `(s, t)` is defined by the **nearest point of the reference line**: `s` is the chainage of that point and `t` the signed distance to it. On a polyline the inside of a corner can have two nearest points near the edge of the road; the nearer wins, and the tie goes to the smaller `s`. A reader that already knows its `s` (a vehicle that moves a little each step) passes it as a hint with a window (`ReferenceLine.project(x, y, near=s, window=w)`), and only the line within the window is searched, so the result is continuous in `s` and cheap.
 - **h**: height above the surface.
+
+**Which reference an `s` belongs to.** An `s` has no meaning without the line it is measured on. The rule per object:
+
+| Object | `s` is measured on |
+|---|---|
+| `timing`, `race`, `edges`, pacenotes, poses and surface bands of the document | the reference line of the **active layout** (the top-level `reference` unless the layout replaces it) |
+| a `roads[]` entry (`cross_section`, bands, structures) | that road's own chainage, from 0 at its first point |
+| a junction leg `{road, s}` | the chainage of the named road |
+| a `route:<id>` frame (`position_ref`, a layout that takes a `route`) | the **route station**: it runs on through the steps, and a step driven backwards counts down on its road |
+| ground data of a layout (§3.5 item 4) | the base line, whatever layout is active |
+
+**Conventions**
+
+- *Closed circuit.* On a closed line `s` is in `[0, L)`; `s = L` is `s = 0`. Distances between two points use the **lap distance** `(s₂ − s₁) mod L`.
+- *Reversed traversal.* A line driven backwards has `s' = L − s` (mod `L` on a closed line) and `t' = −t`.
+- *Interpolation.* Between the points of a polyline `s` is linear. A line with tangents is a curve and `s` is its arc length in the x/y plane. A quantity given as `[[s, v], ...]` is linear in `s` unless its field says otherwise, and holds its end values outside the range.
+- *Tolerance.* Two positions are equal when they differ by less than about **1 mm** in `s` or `t`. Checks on order (§12) use no tolerance; checks that a point lies on a line, or that two joints meet, use 1 mm.
+- *When the line is edited.* Every `s` of the file belongs to the line as written. A tool that edits the line (adds a point, changes a length) either remaps the `s` values of the objects placed on it or reports that it did not; an `s` is never silently left pointing at a different place.
+
+**Examples.** Four 100 m roads `reference`, `a`, `b`, `c` form a square: `reference` runs from (0, 0) to (100, 0), `a` to (100, 100), `b` to (0, 100) and `c` back to (0, 0). The closed route `loop` goes through all four.
+
+1. *Closed circuit.* `loop` has L = 400. `s = 450` is `s = 50`, and the lap distance from `s = 350` to `s = 50` is `(50 − 350) mod 400 = 100`.
+2. *Multi-road route.* `route:loop` at `s = 250` is road `b` at `s = 50` (`stj_core.route_locate`). `{"reference": "route:loop", "s": 250, "t": 3}` resolves to the world point (50, 97, 0): `b` heads towards −x, so left (`t > 0`) is −y.
+3. *Junction.* `{"road": "a", "s": 100, "end": "end"}` is the end of road `a`, the point (100, 100). It is the same place as `{"road": "b", "s": 0, "end": "start"}` to within 1 mm.
+4. *Backward step.* A route with the steps `reference` and `a` (the latter with `direction: backward`) has length 200. Route station 130 is 30 m into the second step, which on road `a` is `s = 100 − 30 = 70` (`s_road = L − local`); it resolves to the world point (100, 30, 0).
+5. *Reversed traversal.* The base line of length 400 driven in reverse: `s = 250, t = 3` becomes `s' = 150, t' = −3`.
 
 The reference line is either `reference.opendrive` (a file plus an optional `route` of road ids, chained in race order) or `reference.centerline` (a polyline of `[x, y, z]`). When both are present OpenDRIVE is authoritative; the centerline is a convenience copy for tools without an OpenDRIVE evaluator. A **closed** centerline (`closed: true`) connects its last point back to the first; do not repeat the first point. On a closed line `s` lies in `[0, L)` and every ordering rule is applied in **lap distance** `(s − s_start_finish) mod L`.
 
@@ -1192,7 +1257,7 @@ The consumers are:
 
 ## 12. Validation
 
-`python tools/validate.py file.usda | file.usdz | file.stj.json [more files] [--strict]` runs:
+`python tools/validate.py file.usda | file.usdz | file.stj.json [more files] [--strict] [--json]` runs:
 
 1. `$ref` expansion and override resolution (§3.2, §3.3). An override is checked against `schema/stj-override.schema.json` first.
 2. JSON Schema validation of the resulting document.
@@ -1244,6 +1309,8 @@ The consumers are:
    - **Notes**: an unused surface or prototype, a missing licence, `redistributable: false`, reserved keys.
 
 ERROR fails a file; WARN fails it with `--strict`; NOTE never fails.
+
+**Machine-readable output.** `--json` prints, for each file, `{file, result, errors, warnings, notes, diagnostics}` (a list when several files are given), and each diagnostic is `{severity, path, pointer, message}`: `severity` is `ERROR`, `WARN` or `NOTE`; `path` is the dotted path the text output shows; `pointer` is the same place as an RFC 6901 JSON Pointer (`roads[0].centerline` is `/roads/0/centerline`), as far as it can be placed (the pointer of a finding about the whole file is `""`). The messages are free text and may be reworded between versions; a consumer keys on `severity` and `pointer`. Stable diagnostic codes for every message are proposed (§15.1), not yet defined.
 
 ---
 
@@ -1303,6 +1370,45 @@ STJ can carry these values, but cannot make them mean the same thing everywhere.
 **Roadmap.** The survey's three tiers are v0.1, v0.2 and v0.3. What remains open is in `docs/open_questions.md`: calibration procedures for friction, drying and rubber; the shared tyre-class list with SVJ; how the signal list grows; licences of converted content.
 
 **Versioning**, as SVJ §20: minor versions are additive; patch versions clarify. A parser for an older version SHOULD ignore unknown keys of a newer one. Compatibility is defined in §3.11.
+
+### 15.1 Status of the features
+
+Each major feature has one of these states. A change of state is a spec change and goes in the changelog.
+
+| State | Meaning |
+|---|---|
+| **normative** | Every reader that claims the feature follows the spec. |
+| **optional normative** | Optional to implement; where implemented, as specified. |
+| **profile-specific** | Defined by a profile (the Blender profile) or a converter, not by the core. |
+| **experimental** | Specified, but few readers exist; may change in a minor version. |
+| **proposed** | In `proposals/` or `docs/open_questions.md`; not in the spec. |
+| **deprecated** | Still read; removed after one minor version (§3.10). |
+
+| Feature | Section | State |
+|---|---|---|
+| `_metadata`, units, `(s, t, h)`, the reference line | 4, 5 | normative |
+| Surfaces: library, bands, `default`, STJ-REF, grip derivation | 6.1–6.5 | normative |
+| Deformable surfaces, roughness, water films | 6.6, 6.7 | optional normative |
+| Line states, wetting and drying, evolution | 6.8–6.10 | optional normative |
+| Layouts, variants, overrides | 3.3, 3.5, 3.6 | normative |
+| Conformance profiles, `position_ref`, canonical form | 3.7–3.9 | optional normative |
+| Conversion report | 3.12 | optional normative |
+| Roads, junctions, routes | 7.1 | optional normative |
+| Collision prims (`stj:collision`) | 7.2 | normative |
+| Terrain heightfields, water bodies | 7.4, 7.5 | optional normative |
+| Large worlds (chunks, tiles) | 7.6 | experimental |
+| OpenUSD geometry, STJ inside USD, material fidelity | 7.7, 7.8 | normative |
+| Names, tags, buildings, road class and markings | 7.9, 7.10 | optional normative |
+| Scenery, sky, lighting, props, audio | 8.2–8.6 | optional normative |
+| Layered ground | 8.7 | optional normative |
+| Animated objects | 8.5 | experimental |
+| Probes, screens, crowds | 8.8 | experimental |
+| Timing, race data, race control | 9, 10, 10.1 | optional normative |
+| Signals, conditions, bindings | 11.1 | optional normative |
+| Blender profile | `STJ_Blender_Profile.md` | profile-specific |
+| `x_<engine>` native data | 8.1 | profile-specific |
+| Tyre class list, `reference.surface` by reference | 6.2 | proposed |
+| Stable diagnostic codes for every message | 12 | proposed |
 
 ## 16. Changelog
 
