@@ -41,7 +41,7 @@ Rules:
 - **A stronger source wins field by field.** A field a stronger source does not mention is left as the weaker source has it. Absence never deletes.
 - **A deleted object is a removed entity.** The scene supplies whole lists (`roads`, `junctions`, `edges`, `race.grid`, …) from its objects, so an entity that has no object any more is not in the exported list. An entity that is only in the text block, because its category has no objects in the scene, stays.
 - **`null` removes a field** (RFC 7396). A Blender custom property cannot hold null, so the translator carries it as a token and converts it back on export.
-- **Conflicts are reported.** Export lists each field where a stronger source replaced a different value of a weaker one as a NOTE (`export` prints them, `lint` does too), naming the field and both sources, so a user who edited the text block by hand sees that the scene overrode it.
+- **Conflicts are reported.** `lint` gives a NOTE for each field where the scene replaces a different value in the text block, naming the field ("the scene overwrites a different value in the text block (objects win)"). `export` runs the lint first and prints the notes, so a user who edited the text block by hand sees that the scene overrode it.
 
 ## 3. Names
 

@@ -561,6 +561,15 @@ class Checker(unittest.TestCase):
         desc["objects"].remove(road)                            # a deleted object is a removed entity
         self.assertNotIn("roads", profile.apply_scene(desc))
 
+    def test_a_value_the_scene_replaces_is_reported_as_a_note(self):
+        s = scene()
+        base = json.loads(s["texts"][profile.BASE_TEXT])
+        base["timing"] = {"start_finish": {"s": 10.0, "t_min": -6, "t_max": 6}}
+        s["texts"][profile.BASE_TEXT] = json.dumps(base)
+        s["objects"].append(empty("STJ::timing::start_finish", 250, 0))
+        notes = levels(profile.lint_scene(s), "NOTE")
+        self.assertTrue(any("timing.start_finish.s" in n and "overwrites a different value" in n for n in notes), notes)
+
     def test_a_field_the_object_does_not_give_stays_as_the_text_block_has_it(self):
         s = scene()
         base = json.loads(s["texts"][profile.BASE_TEXT])
