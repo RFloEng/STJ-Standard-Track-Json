@@ -213,6 +213,39 @@ def lap_d(ctx, s, s0):
 
 # ── geometry ─────────────────────────────────────────────────────────────────
 
+def check_background(ctx, m, p):
+    """`background` of a mesh (spec §7.2): the targets exist, the distances are ordered, `native_ok` fits `terrain`."""
+    rep = ctx.rep
+    b = m["background"]
+    if "of" in b:
+        if b["of"] == m["id"]:
+            rep.error(f"{p}.background.of", "a mesh cannot be the background of itself")
+        elif b["of"] not in ctx.meshes:
+            rep.error(f"{p}.background.of", f"unknown mesh '{b['of']}'")
+    lo, hi = b.get("min_distance"), b.get("max_distance")
+    if lo is not None and hi is not None and lo > hi:
+        rep.error(f"{p}.background", f"min_distance {lo} is greater than max_distance {hi}")
+    if b.get("native_ok") and b["kind"] != "terrain":
+        rep.warn(f"{p}.background.native_ok", f"native_ok only means something for kind 'terrain', not '{b['kind']}'")
+
+
+def check_mesh_cycles(ctx, m, p):
+    """The chains of `background.of` and `lod.of` lead somewhere: no cycle (a mesh that points at itself is reported on its own)."""
+    meshes = {x["id"]: x for x in (ctx.doc.get("geometry") or {}).get("meshes", [])}
+    for field, get in (("background.of", lambda x: (x.get("background") or {}).get("of")),
+                       ("lod.of", lambda x: (x.get("lod") or {}).get("of"))):
+        chain, cur = [m["id"]], get(m)
+        if cur == m["id"]:
+            continue
+        while cur in meshes and cur not in chain:
+            chain.append(cur)
+            cur = get(meshes[cur])
+        if cur in chain:
+            members = chain[chain.index(cur):]
+            if m["id"] == min(members):                 # once per cycle, not once per member
+                ctx.rep.error(f"{p}.{field}", "cycle: " + " -> ".join(members + [cur]))
+
+
 def check_geometry(ctx):
     rep = ctx.rep
     geo = ctx.doc.get("geometry") or {}
@@ -232,6 +265,10 @@ def check_geometry(ctx):
                 rep.error(f"{p}.lod.of", f"unknown mesh '{m['lod']['of']}'")
             elif m["lod"]["of"] == m["id"]:
                 rep.error(f"{p}.lod.of", "a mesh cannot be a LOD of itself")
+        if "background" in m:
+            check_background(ctx, m, p)
+        if "background" in m or "lod" in m:
+            check_mesh_cycles(ctx, m, p)
         if "decal" in roles or "decal" in m:
             if "decal" in m and "decal" not in roles:
                 rep.warn(p, "decal object on a mesh without the 'decal' role")
@@ -2678,6 +2715,31 @@ def check_collision_prims(ctx):
                          "stj:collision = true: no prim is collision surface (spec §7.2)")
 
 
+def check_background_prims(ctx):
+    """`stj:background:*` attributes on the prims of a mesh file (spec §7.2): a known kind, ordered distances."""
+    if not core.have_pxr():
+        return
+    for i, m in enumerate((ctx.doc.get("geometry") or {}).get("meshes", [])):
+        if m["id"] not in ctx.mesh_names:
+            continue
+        try:
+            stage = _usd_stage(ctx, m["id"])
+            found = core.usd_background_prims(stage)
+        except Exception:    # noqa: BLE001
+            continue
+        for path, b in found.items():
+            p = f"geometry.meshes[{i}] prim {path}"
+            if b.get("kind") not in core.BACKGROUND_KINDS:
+                ctx.rep.error(p, f"stj:background:kind '{b.get('kind')}' is not one of {', '.join(core.BACKGROUND_KINDS)}")
+            lo, hi = b.get("min_distance"), b.get("max_distance")
+            if lo is not None and hi is not None and lo > hi:
+                ctx.rep.error(p, f"stj:background:min_distance {lo} is greater than max_distance {hi}")
+            if b.get("of") and b["of"] not in ctx.meshes:
+                ctx.rep.error(p, f"stj:background:of names an unknown mesh '{b['of']}'")
+            if b.get("native_ok") and b.get("kind") != "terrain":
+                ctx.rep.warn(p, "stj:background:native_ok only means something for kind 'terrain'")
+
+
 def check_visual_materials(ctx):
     """The material profile of visual and decal meshes (spec §7.7): a UsdPreviewSurface fallback, cards two-sided."""
     rep = ctx.rep
@@ -3074,6 +3136,7 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     check_surface_quality(ctx)
     check_assets(ctx)
     check_collision_prims(ctx)
+    check_background_prims(ctx)
     check_visual_materials(ctx)
     check_material_drives(ctx)
     check_surface_maps(ctx)

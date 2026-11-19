@@ -1773,6 +1773,35 @@ def usd_collision_meshes(stage, roles):
     return [p for p in meshes if marked(p)]
 
 
+BACKGROUND_KINDS = ("terrain", "vista", "canopy", "water", "other")
+
+
+def usd_background(prim):
+    """The `stj:background:*` hint of a prim as a dict (spec §7.2): each field is the nearest one on the prim or an ancestor.
+    Empty when no prim up the tree has any."""
+    out = {}
+    while prim and prim.IsValid() and not prim.IsPseudoRoot():
+        for field in ("kind", "of", "min_distance", "max_distance", "native_ok", "note"):
+            if field not in out:
+                attr = prim.GetAttribute(f"stj:background:{field}")
+                if attr and attr.HasValue():
+                    out[field] = attr.Get()
+        prim = prim.GetParent()
+    return out
+
+
+def usd_background_prims(stage):
+    """{prim path: hint} for the Mesh prims of a stage that carry a background hint (on themselves or an ancestor)."""
+    from pxr import UsdGeom
+    found = {}
+    for prim in stage.Traverse():
+        if prim.IsA(UsdGeom.Mesh):
+            hint = usd_background(prim)
+            if hint:
+                found[str(prim.GetPath())] = hint
+    return found
+
+
 def usd_primvar_types(stage, prim_path):
     """{primvar name: scalar type name} of a prim, such as {'stj_tint': 'color3f', 'stj_age': 'float'}."""
     from pxr import UsdGeom

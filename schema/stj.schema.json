@@ -1071,6 +1071,22 @@
           },
           "description": "How a decal mesh is drawn: after opaque geometry, without casting shadows, with a small depth offset (spec §7.2)."
         },
+        "background": {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "patternProperties": { "^x_": {}, "^_": {} },
+          "properties": {
+            "kind": { "type": "string", "enum": ["terrain", "vista", "canopy", "water", "other"],
+                      "description": "terrain: secondary terrain, essentially a heightfield. vista: flat far scenery (ranges, painted backdrops). canopy: far forest made of cards. water: a sheet or body of water exported as a mesh. other: background that fits none of these." },
+            "of": { "$ref": "#/definitions/id", "description": "The detail mesh (the playable area) this background complements. Default: the main visual mesh." },
+            "min_distance": { "type": "number", "minimum": 0, "description": "Distance (m) from the reference line from which this mesh should be seen; a consumer may hide it or not load it nearer." },
+            "max_distance": { "type": "number", "minimum": 0, "description": "Distance (m) beyond which drawing it is useless." },
+            "native_ok": { "type": "boolean", "description": "The creator's statement that the content is height only (no overhangs, caves or bridges) and an engine's native terrain can replace it without important loss. Only for kind 'terrain'." },
+            "note": { "type": "string" }
+          },
+          "description": "A hint that this mesh is secondary terrain or far background (spec §7.2). A hint for the consumer, not an order."
+        },
         "lod": {
           "type": "object",
           "required": ["of", "level"],

@@ -22,6 +22,7 @@ Where the parts of this repository agree and where they do not, as of the v0.3 d
 | `position_ref` (§3.8) | consistent | consistent | partial | consistent | consistent | Cameras and emitters with a `position_ref` stay in the text block, because a moved object has nothing to write back to. Poses (grid, pit boxes) do not accept it. |
 | Surfaces, STJ-REF, grip (§6) | consistent | consistent | consistent | consistent | consistent | The merge and blending rules (§6.3, §6.4) have a worked example in the spec and tests. |
 | Tyre class list | missing | partial | not applicable | consistent | consistent | The list in §6.2 is the working list; where it should live is an open decision with the SVJ side. |
+| Background meshes (§7.2) | consistent | consistent | not applicable | consistent | consistent | USD prim attributes are checked; there is no shipped example file, the tests build a three-mesh document. |
 | Collision prims (§7.2) | not applicable | consistent | consistent | consistent | consistent | |
 | Material fidelity, MaterialX (§7.7) | not applicable | consistent | partial | consistent | consistent | Blender's importer reads MaterialX nodes only in part; the preview surface is the fallback. |
 | Layered ground (§8.7) | consistent | consistent | consistent | consistent | consistent | Texture formats: PNG and DDS for layer textures, PNG for data rasters. |

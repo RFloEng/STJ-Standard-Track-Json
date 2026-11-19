@@ -1873,6 +1873,71 @@ class MaterialsAndAssets(unittest.TestCase):
         self.assertEqual(len(core.usd_collision_meshes(st, ["visual", "collision"])), 1)
         self.absent("WARN", "no Mesh prim carries stj:collision")
 
+    # -- background meshes (spec §7.2) --
+    def three_meshes(self):
+        self.mesh(texture="sRGB")
+        self.doc["geometry"]["meshes"] = [
+            {"id": "vis", "uri": "vis.usda", "roles": ["visual"]},
+            {"id": "far_hills", "uri": "vis.usda", "roles": ["visual"],
+             "background": {"kind": "terrain", "of": "vis", "min_distance": 400.0, "max_distance": 5000.0, "native_ok": True}},
+            {"id": "far_forest", "uri": "vis.usda", "roles": ["visual"],
+             "background": {"kind": "canopy", "of": "vis", "min_distance": 300.0}}]
+
+    def test_a_document_with_background_meshes_validates(self):
+        self.three_meshes()
+        found = messages(self.run_doc(), "ERROR") + messages(self.run_doc(), "WARN")
+        self.assertFalse([m for m in found if "background" in m or "geometry.meshes" in m and "schema" in m], found)
+
+    def test_a_document_without_background_still_validates(self):
+        self.mesh(texture="sRGB")
+        self.assertFalse([m for m in messages(self.run_doc(), "ERROR") if "background" in m])
+
+    def test_an_unknown_kind_is_an_error_with_its_path(self):
+        self.three_meshes()
+        self.doc["geometry"]["meshes"][1]["background"]["kind"] = "mountain"
+        self.finding("ERROR", "geometry.meshes[1].background.kind")
+
+    def test_background_of_must_exist_and_not_be_itself(self):
+        self.three_meshes()
+        self.doc["geometry"]["meshes"][1]["background"]["of"] = "nowhere"
+        self.finding("ERROR", "unknown mesh 'nowhere'")
+        self.doc["geometry"]["meshes"][1]["background"]["of"] = "far_hills"
+        self.finding("ERROR", "cannot be the background of itself")
+
+    def test_a_cycle_in_of_or_in_lod_is_one_error(self):
+        self.three_meshes()
+        self.doc["geometry"]["meshes"][0]["background"] = {"kind": "other", "of": "far_hills"}
+        self.doc["geometry"]["meshes"][1]["background"]["of"] = "vis"
+        errors = [m for m in messages(self.run_doc(), "ERROR") if "cycle" in m]
+        self.assertEqual(len(errors), 1, errors)
+        self.three_meshes()
+        self.doc["geometry"]["meshes"][0].update({"roles": ["visual", "lod"], "lod": {"of": "far_hills", "level": 1}})
+        self.doc["geometry"]["meshes"][1].update({"roles": ["visual", "lod"], "lod": {"of": "vis", "level": 1}})
+        self.finding("ERROR", "lod.of: cycle")
+
+    def test_distances_and_native_ok(self):
+        self.three_meshes()
+        self.doc["geometry"]["meshes"][1]["background"].update({"min_distance": 900.0, "max_distance": 100.0})
+        self.finding("ERROR", "min_distance 900.0 is greater than max_distance 100.0")
+        self.three_meshes()
+        self.doc["geometry"]["meshes"][2]["background"]["native_ok"] = True
+        self.finding("WARN", "native_ok only means something for kind 'terrain'")
+
+    def test_background_hints_on_usd_prims(self):
+        from pxr import Usd, Sdf
+        self.three_meshes()
+        st = Usd.Stage.Open(str(self.dir / "vis.usda"))
+        parent = st.GetPrimAtPath("/m")
+        parent.CreateAttribute("stj:background:kind", Sdf.ValueTypeNames.String).Set("vista")
+        parent.CreateAttribute("stj:background:min_distance", Sdf.ValueTypeNames.Double).Set(800.0)
+        found = core.usd_background_prims(st)
+        self.assertTrue(found and all(h["kind"] == "vista" and h["min_distance"] == 800.0 for h in found.values()), found)
+        st.GetRootLayer().Save()
+        self.assertFalse([m for m in messages(self.run_doc(), "ERROR") if "stj:background" in m])
+        parent.CreateAttribute("stj:background:kind", Sdf.ValueTypeNames.String).Set("mountain")
+        st.GetRootLayer().Save()
+        self.finding("ERROR", "stj:background:kind 'mountain'")
+
     def test_a_decal_may_blend_its_opacity(self):
         self.mesh(texture="sRGB", opacity_map=True)
         self.doc["geometry"]["meshes"][0]["roles"] = ["decal"]

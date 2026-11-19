@@ -704,6 +704,26 @@ STJ fixes simple, first-order **reference laws**. An engine may run its own, bet
 
 **Decals.** The role `decal` marks a visual mesh drawn on top of another: tyre marks, road paint, oil and dirt patches. An engine draws it after the opaque geometry, without casting shadows, with a small depth offset so it does not fight with the surface under it. `decal {on, opacity_primvar, depth_offset}`: `on` is what it lies on (a `geometry.meshes` id, or `terrain`), `opacity_primvar` a per-vertex float primvar multiplied with the material opacity (USD's own `displayOpacity` is the usual one; a MaterialX network multiplies it with the texture alpha, and readers without MaterialX use the texture alpha alone), and `depth_offset` is in metres (default 0.02). A decal is a visual layer: the validator warns when it also has the `collision` role. Spline-projected paint, as editors draw decal roads, is not described.
 
+**Background meshes (`background`).** A mesh may say that it is secondary terrain or far background instead of leaving a consumer to guess from its name (`NONLOD_*`, `*_vista_*`, `water_*`):
+
+```json
+{ "id": "far_hills", "uri": "meshes/far_hills.usda", "roles": ["visual"],
+  "background": { "kind": "terrain", "of": "stage_ground", "min_distance": 400.0, "native_ok": true } }
+```
+
+| Field | Meaning |
+|---|---|
+| `kind` (required) | `terrain` (secondary terrain, essentially a heightfield), `vista` (flat far scenery: ranges, painted backdrops), `canopy` (far forest made of cards), `water` (a sheet or body of water exported as a mesh), `other`. |
+| `of` | The detail mesh this background complements. Default: the main `visual` mesh. |
+| `min_distance`, `max_distance` | Metres from the reference line: from where the mesh should be seen, and beyond where drawing it is useless. A consumer may hide it or not load it nearer than `min_distance`. |
+| `native_ok` | The creator's statement that a `terrain` mesh is height only (no overhangs, caves or bridges), so an engine's native terrain can replace it without important loss. |
+| `note` | Free text. |
+
+`background` completes `roles` and never replaces it. It is a **hint for the consumer, not an order**, and `native_ok` is the creator's declaration, not something a tool checks. A document without it is read as before; a consumer that falls back on its own heuristics should say so. A level of detail is still `lod {of, level, switch_distance}` (above): `background` does not repeat it. The validator checks that `of` names another mesh, that `min_distance` ≤ `max_distance`, that the chains of `of` and of `lod.of` have no cycle, and warns when `native_ok` is used with a `kind` other than `terrain`.
+A consumer may replace `terrain` meshes marked `native_ok` by a coarse native terrain and keep the detail mesh on the playable area, drop or simplify `canopy` and `vista` meshes when the engine draws its own background, and pick the level to load by `lod.switch_distance`, `min_distance` and `max_distance`.
+
+In a USD file the same hint can sit on a prim (a mesh file holding several backgrounds, since the document has no list of prims): attributes `string stj:background:kind`, `string stj:background:of`, `double stj:background:min_distance`, `double stj:background:max_distance`, `bool stj:background:native_ok` and `string stj:background:note`, on the Mesh prim or an ancestor (the nearest one that has the attribute wins, field by field). `stj_core.usd_background(prim)` returns them as the same object. The validator checks the `kind` and the distances of what it finds.
+
 **Mesh hints.**
 - `generated {rule, tool, tool_version, inputs_sha256}` says the mesh is a **cache of a rule** in the document (for example the collision ribbon of the cross-section, `rule: "reference.centerline.cross_section"`) and not authored geometry. `inputs_sha256` is `stj_core.rule_hash`, computed over the centerline and the surface bands, so the validator can warn when the mesh is stale and a tool can regenerate it. `tools/ribbon_usd.py` prints the block.
 - `reflective: true` marks a visual mesh that mirrors its surroundings: a mirror, glass or a decorative water face. It is not a driving surface, so the validator warns when it also has the `collision` role.
@@ -1395,6 +1415,7 @@ Each major feature has one of these states. A change of state is a spec change a
 | Conversion report | 3.12 | optional normative |
 | Roads, junctions, routes | 7.1 | optional normative |
 | Collision prims (`stj:collision`) | 7.2 | normative |
+| Background meshes (`background`) | 7.2 | optional normative |
 | Terrain heightfields, water bodies | 7.4, 7.5 | optional normative |
 | Large worlds (chunks, tiles) | 7.6 | experimental |
 | OpenUSD geometry, STJ inside USD, material fidelity | 7.7, 7.8 | normative |
