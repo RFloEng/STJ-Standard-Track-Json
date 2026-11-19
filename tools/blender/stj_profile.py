@@ -103,7 +103,7 @@ RECORD_RING = {"water": ("outline", 2), "service": ("polygon", 3)}
 # records that sit at their `position` (shown there; a moved empty writes the new position)
 AT_POSITION = {"emitter": "position", "probe": "position", "post": "position", "chunk": "origin"}
 HANDLED = ("reference", "surface", "geo", "sun", "road", "junction", "camera", "edge", "marking", "line", "pit_lane", "instance", "building", "area", "terrain") + tuple(RECORDS)
-INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many", "_cols", "_base", "_orig", "_src")
+INTERNAL = ("_i", "_set", "_shared", "_grid", "_h", "_many", "_cols", "_base", "_orig", "_src", "_len")
 # a prototype's physics is shown by a proxy mesh `STJ::prototype::<id>::body` with a Rigid Body: STJ shape kind -> Blender collision shape
 SHAPE_TO_RB = {"box": "BOX", "sphere": "SPHERE", "cylinder": "CYLINDER", "capsule": "CAPSULE", "mesh": "CONVEX_HULL"}
 RB_TO_SHAPE = {v: k for k, v in SHAPE_TO_RB.items()}        # keys of an object's `stj` property that the exporter reads and does not write
@@ -541,6 +541,18 @@ def _environment_patch(named, base, patch):
     return env
 
 
+def _instance_row(p, heading, scale, pitch, roll):
+    """The shortest transforms row for these values (spec §8.2): scale 0 means none given, and pitch and roll follow the
+    scale (1 when not given), the roll only when it is not 0."""
+    row = [_r(p[0]), _r(p[1]), _r(p[2]), round(heading, 5)]
+    pr = [round(pitch, 5), round(roll, 5)]
+    if scale != 0:
+        row.append(round(scale, 5))
+    if any(pr):
+        row += ([1.0] if len(row) == 4 else []) + pr[:1 if not pr[1] else 2]
+    return row
+
+
 def scene_patch(scene, base):
     """The patch the objects of the scene make over the base document (spec/STJ_Blender_Profile.md, §5).
 
@@ -675,13 +687,12 @@ def scene_patch(scene, base):
             pts, heads, scales = o.get("points") or [], o.get("headings") or [], o.get("scales") or []
             pitches, rolls = o.get("pitches") or [], o.get("rolls") or []
             rows = []
+            lens = {int(k): v for k, v in (_stj_props(o).get("_len") or {}).items()}
             for k, p in enumerate(pts):
-                row = [_r(p[0]), _r(p[1]), _r(p[2]), round(heads[k] if k < len(heads) else 0.0, 5)]
-                pr = [round(pitches[k], 5) if k < len(pitches) else 0.0, round(rolls[k], 5) if k < len(rolls) else 0.0]
-                if k < len(scales) and scales[k] != 0:
-                    row.append(round(scales[k], 5))
-                if any(pr):                                  # pitch and roll follow the scale, which is 1 when not given
-                    row += ([1.0] if len(row) == 4 else []) + pr[:1 if not pr[1] else 2]
+                row = _instance_row(p, heads[k] if k < len(heads) else 0.0, scales[k] if k < len(scales) else 0.0,
+                                    pitches[k] if k < len(pitches) else 0.0, rolls[k] if k < len(rolls) else 0.0)
+                if lens.get(k, 0) > len(row):                # a row the file wrote longer than its values need keeps its length
+                    row += ([1.0] if len(row) == 4 else []) + [0.0] * (lens[k] - max(len(row), 5))
                 rows.append(row)
             value.append({**_entity(o), "transforms": rows})
         patch.setdefault("scenery", {})["instances"] = value
@@ -1078,11 +1089,14 @@ def scene_from_document(doc, base_dir=None):
                          all(isinstance(t, list) and 4 <= len(t) <= 7 for t in e["transforms"]) for e in insts):
             for i, e in enumerate(insts):
                 t = e["transforms"]
+                lens = {str(k): len(r) for k, r in enumerate(t)
+                        if len(r) > len(_instance_row(r[:3], r[3], r[4] if len(r) > 4 else 0.0,
+                                                      r[5] if len(r) > 5 else 0.0, r[6] if len(r) > 6 else 0.0))}
                 obj(f"STJ::instance::{e['prototype']}_{i}", "MESH", points=[[r[0], r[1], r[2]] for r in t],
                     headings=[r[3] for r in t], scales=[r[4] if len(r) >= 5 else 0.0 for r in t],
                     **({"pitches": [r[5] if len(r) > 5 else 0.0 for r in t], "rolls": [r[6] if len(r) > 6 else 0.0 for r in t]}
                        if any(len(r) > 5 for r in t) else {}),
-                    props={"stj": {**{k: v for k, v in e.items() if k != "transforms"}, "_i": i}})
+                    props={"stj": {**{k: v for k, v in e.items() if k != "transforms"}, "_i": i, **({"_len": lens} if lens else {})}})
             del scenery["instances"]
         if not scenery:
             del base["scenery"]

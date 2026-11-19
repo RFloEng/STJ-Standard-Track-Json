@@ -570,6 +570,14 @@ class Checker(unittest.TestCase):
         notes = levels(profile.lint_scene(s), "NOTE")
         self.assertTrue(any("timing.start_finish.s" in n and "overwrites a different value" in n for n in notes), notes)
 
+    def test_an_instance_row_keeps_the_length_the_file_gave_it(self):
+        doc = json.loads(json.dumps(BASE))
+        doc["scenery"] = {"prototypes": {"rock": {"mesh": {"mesh_ref": "m", "prim": "/r"}}},
+                          "instances": [{"prototype": "rock", "transforms": [
+                              [1.0, 2.0, 3.0, 0.5, 1.0, 0.002, 0.0], [4.0, 5.0, 6.0, 0.25], [7.0, 8.0, 9.0, 0.1, 1.0, 0.0, 0.0]]}]}
+        out = profile.apply_scene(profile.scene_from_document(doc))
+        self.assertEqual(out["scenery"]["instances"], doc["scenery"]["instances"])
+
     def test_a_field_the_object_does_not_give_stays_as_the_text_block_has_it(self):
         s = scene()
         base = json.loads(s["texts"][profile.BASE_TEXT])
@@ -639,6 +647,8 @@ class RealDocuments(unittest.TestCase):
             self.skipTest("no converter output next to the repository")
         for f in files:
             doc = json.loads(f.read_text(encoding="utf-8"))
+            if not (doc.get("reference") or {}).get("centerline"):
+                continue                                     # debugging leftovers of a converter, not a track
             desc = profile.scene_from_document(doc)
             self.assertEqual(levels(profile.lint_scene(desc), "ERROR"), [], f)
             self.assertEqual(profile.apply_scene(desc), doc, str(f))
