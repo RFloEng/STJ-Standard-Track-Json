@@ -1773,6 +1773,55 @@ def usd_collision_meshes(stage, roles):
     return [p for p in meshes if marked(p)]
 
 
+def usd_collision_sidedness(stage, roles, ground_cos=0.3):
+    """Which side of its faces each collision prim says is solid (spec §7.2, Sidedness).
+
+    Returns [{path, double_sided, up, down, vertical}]: `double_sided` is the prim's `doubleSided` (False when unauthored,
+    as in USD); `up`, `down` and `vertical` are the face areas (m2, in the stage's metres) whose normal points up, points
+    down or lies within `ground_cos` of the horizontal, with the normal taken from the vertex order, the prim's `orientation`
+    and its world transform, as USD defines it. Triangles and polygons (fan) are both handled."""
+    from pxr import Usd, UsdGeom
+    out = []
+    cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+    up_axis = UsdGeom.GetStageUpAxis(stage)
+    axis = 1 if up_axis == UsdGeom.Tokens.y else 2
+    for prim in usd_collision_meshes(stage, roles):
+        mesh = UsdGeom.Mesh(prim)
+        pts, counts, idx = mesh.GetPointsAttr().Get(), mesh.GetFaceVertexCountsAttr().Get(), mesh.GetFaceVertexIndicesAttr().Get()
+        if not pts or not counts or not idx:
+            continue
+        m = cache.GetLocalToWorldTransform(prim)
+        world = [m.Transform(p) for p in pts]
+        flip = -1.0 if mesh.GetOrientationAttr().Get() == UsdGeom.Tokens.leftHanded else 1.0
+        up = down = vertical = 0.0
+        k = 0
+        for n in counts:
+            face = idx[k:k + n]
+            k += n
+            if n < 3:
+                continue
+            a = world[face[0]]
+            for j in range(1, n - 1):                      # a fan: exact for triangles, good for convex polygons
+                b, c = world[face[j]], world[face[j + 1]]
+                u, v = (b[0] - a[0], b[1] - a[1], b[2] - a[2]), (c[0] - a[0], c[1] - a[1], c[2] - a[2])
+                nx, ny, nz = u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]
+                length = math.sqrt(nx * nx + ny * ny + nz * nz)
+                if length < 1e-12:
+                    continue
+                ncomp = flip * (nx, ny, nz)[axis] / length
+                area = 0.5 * length
+                if abs(ncomp) <= ground_cos:
+                    vertical += area
+                elif ncomp > 0:
+                    up += area
+                else:
+                    down += area
+        ds = mesh.GetDoubleSidedAttr()
+        out.append({"path": str(prim.GetPath()), "double_sided": bool(ds.Get()) if ds and ds.HasValue() else False,
+                    "up": up, "down": down, "vertical": vertical})
+    return out
+
+
 BACKGROUND_KINDS = ("terrain", "vista", "canopy", "water", "other")
 
 

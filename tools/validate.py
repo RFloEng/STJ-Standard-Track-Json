@@ -2715,6 +2715,34 @@ def check_collision_prims(ctx):
                          "stj:collision = true: no prim is collision surface (spec §7.2)")
 
 
+def check_collision_sidedness(ctx):
+    """A one-sided collision prim whose ground faces point down is a hole (spec §7.2, Sidedness)."""
+    if not core.have_pxr():
+        return
+    for i, m in enumerate((ctx.doc.get("geometry") or {}).get("meshes", [])):
+        roles = set(m.get("roles", []))
+        if "collision" not in roles or m["id"] not in ctx.mesh_names:
+            continue
+        try:
+            stage = _usd_stage(ctx, m["id"])
+            prims = core.usd_collision_sidedness(stage, roles)
+        except Exception:    # noqa: BLE001
+            continue
+        for pr in prims:
+            ground = pr["up"] + pr["down"]
+            if pr["double_sided"] or ground <= 0:
+                continue
+            p = f"geometry.meshes[{i}] prim {pr['path']}"
+            if pr["down"] / ground > 0.5:
+                ctx.rep.warn(p, f"collision-sidedness: doubleSided is false or unauthored and {pr['down'] / ground:.0%} of the "
+                             "ground-like face area points down, so a one-sided engine sees holes; write doubleSided = true "
+                             "if the source game collides both sides, or fix the winding (spec §7.2)")
+            elif pr["down"] / ground > 0.05 and pr["up"] / ground > 0.05:
+                ctx.rep.note(p, f"collision-sidedness: a one-sided collision prim whose ground-like faces mix up "
+                             f"({pr['up'] / ground:.0%}) and down ({pr['down'] / ground:.0%}); the faces that point down are "
+                             "holes for a one-sided engine (spec §7.2)")
+
+
 def check_background_prims(ctx):
     """`stj:background:*` attributes on the prims of a mesh file (spec §7.2): a known kind, ordered distances."""
     if not core.have_pxr():
@@ -3137,6 +3165,7 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     check_assets(ctx)
     check_collision_prims(ctx)
     check_background_prims(ctx)
+    check_collision_sidedness(ctx)
     check_visual_materials(ctx)
     check_material_drives(ctx)
     check_surface_maps(ctx)

@@ -1938,6 +1938,58 @@ class MaterialsAndAssets(unittest.TestCase):
         st.GetRootLayer().Save()
         self.finding("ERROR", "stj:background:kind 'mountain'")
 
+    # -- collision sidedness (spec §7.2) --
+    def collision_mesh(self, up_quads, down_quads, double_sided=None, orientation=None):
+        """A collision file of 10 m quads lying flat, `up_quads` wound to point up and `down_quads` wound to point down."""
+        from pxr import Usd, UsdGeom, Vt, Gf
+        st = Usd.Stage.CreateNew(str(self.dir / "col.usda"))
+        UsdGeom.SetStageUpAxis(st, UsdGeom.Tokens.z)
+        mesh = UsdGeom.Mesh.Define(st, "/m/road")
+        pts, counts, idx = [], [], []
+        for n, up in enumerate([True] * up_quads + [False] * down_quads):
+            x = 20.0 * n
+            base = len(pts)
+            pts += [Gf.Vec3f(x, 0, 0), Gf.Vec3f(x + 10, 0, 0), Gf.Vec3f(x + 10, 10, 0), Gf.Vec3f(x, 10, 0)]
+            idx += [base, base + 1, base + 2, base + 3] if up else [base + 3, base + 2, base + 1, base]
+            counts.append(4)
+        mesh.GetPointsAttr().Set(Vt.Vec3fArray(pts))
+        mesh.GetFaceVertexCountsAttr().Set(Vt.IntArray(counts))
+        mesh.GetFaceVertexIndicesAttr().Set(Vt.IntArray(idx))
+        if double_sided is not None:
+            mesh.GetDoubleSidedAttr().Set(double_sided)
+        if orientation:
+            mesh.GetOrientationAttr().Set(orientation)
+        st.GetRootLayer().Save()
+        self.doc["geometry"]["meshes"] = [{"id": "col", "uri": "col.usda", "roles": ["collision"]}]
+        return st
+
+    def test_a_one_sided_collision_that_points_down_is_warned(self):
+        st = self.collision_mesh(1, 9)
+        res = core.usd_collision_sidedness(st, ["collision"])[0]
+        self.assertAlmostEqual(res["up"], 100.0)
+        self.assertAlmostEqual(res["down"], 900.0)
+        self.assertFalse(res["double_sided"])
+        self.finding("WARN", "collision-sidedness")
+
+    def test_double_sided_or_up_collision_is_not_warned(self):
+        self.collision_mesh(1, 9, double_sided=True)
+        self.absent("WARN", "collision-sidedness")
+        self.collision_mesh(10, 0)
+        self.absent("WARN", "collision-sidedness")
+        self.absent("NOTE", "collision-sidedness")
+
+    def test_mixed_one_sided_collision_is_a_note(self):
+        self.collision_mesh(7, 3)
+        self.finding("NOTE", "collision-sidedness")
+        self.absent("WARN", "collision-sidedness")
+
+    def test_a_left_handed_mesh_reads_the_other_way(self):
+        from pxr import UsdGeom
+        st = self.collision_mesh(0, 10, orientation=UsdGeom.Tokens.leftHanded)
+        res = core.usd_collision_sidedness(st, ["collision"])[0]
+        self.assertAlmostEqual(res["up"], 1000.0)             # wound down, but left handed: the normals point up
+        self.absent("WARN", "collision-sidedness")
+
     def test_a_decal_may_blend_its_opacity(self):
         self.mesh(texture="sRGB", opacity_map=True)
         self.doc["geometry"]["meshes"][0]["roles"] = ["decal"]
