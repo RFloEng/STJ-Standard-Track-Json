@@ -30,6 +30,7 @@ This page says, for the formats this repository reads, writes or tests against, 
 | Layered ground (§8.7) | native: MaterialX network on the ground material (`ground_materialx.py`) | mapped: rebuilt as shader nodes on import (`stj_ground.py`), checked pixel by pixel against the reference maths | unsupported | unsupported |
 | Baked ground | baked: image written by `ground_bake.py`, stamped as a cache of the recipe | baked: the image is shown; the recipe is the source | unsupported | unsupported |
 | Terrain heightfields (§7.4) | partial: a PNG referenced from the document; no USD heightfield prim is used | mapped: a grid mesh `STJ::terrain::<id>`, one vertex per sample; the heightmap is rewritten when the heights are edited | unsupported | not exercised here: see the collision row |
+| Surface blending (§6.3 level 0): per-vertex weights, `vertex_dense`, `image`, `id_map` | native: the weights are primvars or images in the mesh file; a reader blends per vertex or per texel | not exercised here: the mesh file goes through Blender's USD import and export, and no test checks that the weight primvars survive | unsupported: one material per lane | unsupported: a friction grid is a different model |
 | Scenery instances (§8.2) | native: PointInstancer in a mesh file | mapped: instances shown, orientation and scale kept; restored as a PointInstancer on export | unsupported | unsupported |
 | Sky, sun, lighting (§8.3) | native: UsdLux lights | mapped: Sun light follows date and place; a placeholder sky and sun are added when the document has none and are marked `stj_placeholder` | unsupported | unsupported |
 | Audio emitters (§8.6) | custom extension (document) | mapped: speaker objects | unsupported | unsupported |
@@ -49,6 +50,10 @@ This page says, for the formats this repository reads, writes or tests against, 
 | Collision prims | `tests/test_validate.py` (`SimulatorProposals`) |
 | OpenDRIVE: road ids and lengths | `tests/test_validate.py` |
 | OpenCRG: placement and references | `tests/test_validate.py` |
+
+## Surface blending in other engines
+
+Whether an engine blends surfaces per vertex, per face or per material decides how much of a transition survives (spec §14, limitation 20, gives the converter guidance for one surface per face). Each engine's converter says which it is; this page lists only the formats tested here.
 
 ## What is not here
 
