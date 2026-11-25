@@ -1067,9 +1067,9 @@
           "properties": {
             "on": { "type": "string", "description": "What it lies on: a geometry.meshes id, or 'terrain'." },
             "opacity_primvar": { "type": "string", "description": "Per-vertex float primvar multiplied with the material opacity, such as displayOpacity." },
-            "depth_offset": { "type": "number", "minimum": 0, "default": 0.02, "description": "Pulls the decal towards the viewer (m), so it does not fight with the surface under it." }
+            "depth_offset": { "type": "number", "minimum": 0, "description": "Optional hint (m, along the surface normal) for a consumer that has to lift the decal off the surface to draw it over. The mesh itself is exactly where the source game keeps it; absent, the consumer chooses (spec §7.2)." }
           },
-          "description": "How a decal mesh is drawn: after opaque geometry, without casting shadows, with a small depth offset (spec §7.2)."
+          "description": "How a decal mesh is drawn: over its surface, after opaque geometry, receiving shadows and not casting them (spec §7.2)."
         },
         "background": {
           "type": "object",
