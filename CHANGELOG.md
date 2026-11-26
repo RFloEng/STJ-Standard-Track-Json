@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4 (draft) — 2026-11-26
+
+- **Geometry that belongs to one layout only** (from rbr2stj, *Bareyo* and *Bareyo II*, `proposals/stj_layout_geometry_proposal.md`): `geometry.meshes[].layout_only: true` keeps a mesh out of the default layout until a layout names it in `include_meshes`; `scenery.instances[].with_mesh` ties a set with transforms to a mesh; what depends on an absent mesh is absent (spec §3.5 lists what goes and what only loses its reference), in `layout_document` and the new `stj_core.default_document`; in a USD root layer the prim of a `layout_only` mesh is inactive (`stj_core.usd_apply_layout`). The validator rejects the two keys in a document that declares an earlier version, because an older reader would load both sets of barriers. A selected layout that used `exclude_meshes` now also drops what depended on the excluded mesh, which before was a dangling reference. The viewer follows the same selection.
+- **Version 0.4**: `"0.4"` in both schemas and `tools/migrate.py` (0.3 to 0.4 changes the number only).
+
 ## 0.3 (draft) — 2026-11-02
 
 - **Decals stay where the source game keeps them**: spec §7.2 no longer prescribes a depth offset. The decal mesh is the source's geometry, copied as it is (no lift added or removed); the consumer draws it over that surface, after the opaque geometry, **receiving** shadows and lighting and not casting them, and a converter turns it into whatever its target engine wants (bias, projected decal, shader offset). `decal.depth_offset` stays as an optional hint along the normal with no default (it had 0.02 m), and files that give it stay valid.

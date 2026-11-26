@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
-  <img alt="Version 0.3 draft" src="https://img.shields.io/badge/version-0.3%20draft-orange.svg">
+  <img alt="Version 0.4 draft" src="https://img.shields.io/badge/version-0.4%20draft-orange.svg">
   <img alt="Container: OpenUSD" src="https://img.shields.io/badge/container-OpenUSD-lightgrey.svg">
   <img alt="JSON Schema Draft-07" src="https://img.shields.io/badge/JSON%20Schema-Draft--07-lightgrey.svg">
   <a href="https://github.com/RFloEng/SVJ-standard-vehicle-json"><img alt="Sister format: SVJ" src="https://img.shields.io/badge/sister-SVJ-fa6b1d.svg"></a>
@@ -246,7 +246,7 @@ tests/      unittest suite
 
 ## Status
 
-**v0.3 draft.** Files of earlier versions stay valid; see [CHANGELOG.md](CHANGELOG.md). Each feature has a maturity state (normative, optional normative, profile-specific, experimental, proposed, deprecated) in [spec §15.1](spec/STJ_Spec.md#151-status-of-the-features). The words *route*, *layout*, *road* and *reference line*, and the rule for which line an `s` belongs to, are defined in [spec §2.1](spec/STJ_Spec.md#21-glossary-normative) and [§4.2](spec/STJ_Spec.md#42-track-coordinates-s-t-h-and-the-reference-line). Open design questions are in [`docs/open_questions.md`](docs/open_questions.md). The decisions behind each addition are in [`proposals/`](proposals/).
+**v0.4 draft.** Files of earlier versions stay valid; see [CHANGELOG.md](CHANGELOG.md). Each feature has a maturity state (normative, optional normative, profile-specific, experimental, proposed, deprecated) in [spec §15.1](spec/STJ_Spec.md#151-status-of-the-features). The words *route*, *layout*, *road* and *reference line*, and the rule for which line an `s` belongs to, are defined in [spec §2.1](spec/STJ_Spec.md#21-glossary-normative) and [§4.2](spec/STJ_Spec.md#42-track-coordinates-s-t-h-and-the-reference-line). Open design questions are in [`docs/open_questions.md`](docs/open_questions.md). The decisions behind each addition are in [`proposals/`](proposals/).
 
 Contributions are welcome. A change to the standard starts as a proposal in `proposals/`, with examples and validator checks.
 

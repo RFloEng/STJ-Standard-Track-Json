@@ -2142,6 +2142,15 @@ def check_version(ctx):
     """Keys newer than the declared version."""
     doc = ctx.doc
     ver = (doc.get("_metadata") or {}).get("version")
+    if ver in ("0.1", "0.2", "0.3"):
+        # an older reader would load every mesh and every set: the failure is physical, so this is an error
+        new = [f"geometry.meshes[{i}].layout_only" for i, m in enumerate((doc.get("geometry") or {}).get("meshes", []))
+               if m.get("layout_only")]
+        new += [f"scenery.instances[{i}].with_mesh" for i, e in enumerate((doc.get("scenery") or {}).get("instances", []))
+                if "with_mesh" in e]
+        if new:
+            ctx.rep.error("_metadata.version", f"declares {ver} but uses {', '.join(new[:4])}, which needs 0.4 (a reader of "
+                          "an earlier version would load every mesh: spec 3.5)")
     if ver not in ("0.1", "0.2"):
         return
     geo = doc.get("geometry") or {}
@@ -3065,6 +3074,51 @@ class PrefixReport(Report):
         self.target.add(level, f"{self.prefix}.{path}" if path and not path.startswith("(") else f"{self.prefix} {path}", msg)
 
 
+def check_layout_geometry(ctx):
+    """`layout_only` meshes and `with_mesh` sets (spec §3.5): named by a layout, known, and no layout left without ground."""
+    rep, doc = ctx.rep, ctx.doc
+    meshes = (doc.get("geometry") or {}).get("meshes", [])
+    layouts = doc.get("layouts", [])
+    named = {mid for lay in layouts for mid in lay.get("include_meshes", [])}
+    for i, m in enumerate(meshes):
+        if m.get("layout_only") and m["id"] not in named:
+            rep.warn(f"geometry.meshes[{i}].layout_only", f"no layout includes '{m['id']}': it is never loaded")
+    for i, e in enumerate((doc.get("scenery") or {}).get("instances", [])):
+        if "with_mesh" in e:
+            if e["with_mesh"] not in ctx.meshes:
+                rep.error(f"scenery.instances[{i}].with_mesh", f"unknown mesh '{e['with_mesh']}'")
+            if "usd" in e:
+                rep.warn(f"scenery.instances[{i}].with_mesh", "with_mesh is for sets with transforms; a usd set already "
+                         "goes with its own mesh")
+
+    def has_collision(ids):
+        return any("collision" in ctx.meshes[i].get("roles", []) for i in ids if i in ctx.meshes)
+    if has_collision(core.selected_mesh_ids(doc)):
+        for i, lay in enumerate(layouts):
+            if not has_collision(core.selected_mesh_ids(doc, lay)):
+                rep.warn(f"layouts[{i}]", "its meshes hold no collision, though the default layout has one")
+
+
+def check_usd_layout_prims(ctx, path):
+    """In a USD root layer, the prim that brings in a `layout_only` mesh is inactive (spec §7.8)."""
+    if path is None or Path(path).suffix.lower() not in (".usd", ".usda", ".usdc") or not core.have_pxr():
+        return
+    only = {m["uri"].lstrip("./"): m["id"] for m in (ctx.doc.get("geometry") or {}).get("meshes", []) if m.get("layout_only")}
+    if not only:
+        return
+    try:
+        stage = core.usd_stage(path)
+        refs = core.usd_referencing_prims(stage)
+    except Exception:    # noqa: BLE001
+        return
+    for prim, uris in refs.items():
+        spec = stage.GetRootLayer().GetPrimAtPath(prim)
+        for u in uris:
+            if u.lstrip("./") in only and not (spec.HasActive() and not spec.active):
+                ctx.rep.warn("geometry.meshes", f"the root layer brings in the layout_only mesh '{only[u.lstrip('./')]}' with an "
+                             f"active prim {prim}: a USD viewer shows it with the default layout; author active = false (spec §7.8)")
+
+
 def check_layouts(ctx):
     """Each layout: timing, race and edges on the layout's own reference line (spec §3.5)."""
     rep, doc = ctx.rep, ctx.doc
@@ -3163,6 +3217,8 @@ def cross_check(doc, base_dir, rep, path=None, variants=True):
     check_conformance(ctx)
     check_surface_quality(ctx)
     check_assets(ctx)
+    check_layout_geometry(ctx)
+    check_usd_layout_prims(ctx, path)
     check_collision_prims(ctx)
     check_background_prims(ctx)
     check_collision_sidedness(ctx)

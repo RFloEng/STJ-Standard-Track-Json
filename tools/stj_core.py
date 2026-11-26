@@ -1003,6 +1003,141 @@ def reverse_reference(ref):
     return out
 
 
+def selected_mesh_ids(doc, layout=None):
+    """The ids of the geometry.meshes that the default layout (layout=None) or `layout` loads (spec §3.5).
+
+    A `layout_only` mesh is in a layout only when that layout names it in `include_meshes`. Without `include_meshes` a
+    layout takes every mesh that is not `layout_only`; `exclude_meshes` then removes. A level of detail of a mesh that is
+    not selected is not selected either."""
+    meshes = (doc.get("geometry") or {}).get("meshes") or []
+    common = [m["id"] for m in meshes if not m.get("layout_only")]
+    layout = layout or {}
+    keep = set(layout.get("include_meshes") or common) - set(layout.get("exclude_meshes") or [])
+    keep &= {m["id"] for m in meshes}
+    known = {m["id"] for m in meshes}
+    changed = True
+    while changed:
+        changed = False
+        for m in meshes:
+            of = (m.get("lod") or {}).get("of")
+            if m["id"] in keep and of in known and of not in keep:
+                keep.discard(m["id"])
+                changed = True
+    return keep
+
+
+def prune_to_meshes(doc, keep):
+    """Remove from `doc` (in place) the meshes not in `keep` and what depends on them (spec §3.5, item 7).
+
+    Items whose geometry is in an absent mesh go; an entity that exists without its geometry (a building, a structure,
+    a junction, an edge, a prototype) stays and loses the reference. A reference to a mesh id the document never had is
+    left for the validator to report."""
+    geo = doc.get("geometry") or {}
+    meshes = geo.get("meshes")
+    if meshes is None:
+        return doc
+    gone = {m["id"] for m in meshes} - set(keep)
+    instances = (doc.get("scenery") or {}).get("instances") or []
+    if not gone and not any("with_mesh" in e for e in instances):
+        return doc
+
+    def absent(ref):
+        return isinstance(ref, dict) and ref.get("mesh_ref") in gone
+
+    def drop(holder, key, test):
+        """Filter the list holder[key]; an emptied list is removed."""
+        items = holder.get(key) if isinstance(holder, dict) else None
+        if isinstance(items, list):
+            left = [e for e in items if not test(e)]
+            if left:
+                holder[key] = left
+            elif items:
+                del holder[key]
+
+    geo["meshes"] = [m for m in meshes if m["id"] not in gone]
+    for m in geo["meshes"]:
+        if (m.get("decal") or {}).get("on") in gone:
+            del m["decal"]["on"]
+        if (m.get("background") or {}).get("of") in gone:
+            del m["background"]["of"]
+    for key in ("chunks", "tiles"):
+        for entry in geo.get(key) or []:
+            drop(entry, "meshes", lambda mid: mid in gone)
+
+    scenery = doc.get("scenery") or {}
+    prototypes = {k: v for k, v in (scenery.get("prototypes") or {}).items() if isinstance(v, dict)}
+    lost_protos = {k for k, v in prototypes.items() if absent(v.get("mesh"))}
+    drop(scenery, "instances", lambda e: absent(e.get("usd")) or e.get("prototype") in lost_protos
+         or e.get("with_mesh") in gone)
+    for k in lost_protos:
+        del prototypes[k]["mesh"]
+    drop(scenery, "scatter", lambda e: absent((e.get("area") or {}).get("mesh_attribute")))
+
+    surfaces = doc.get("surfaces") or {}
+    for key in ("maps", "bindings"):
+        drop(surfaces, key, absent)
+    drop(doc.get("ground") or {}, "materials", absent)
+    drop(doc.get("water") or {}, "bodies", lambda e: absent(e.get("mesh")))
+    drop(doc, "animated_objects", lambda e: absent(e.get("target")))
+    drop(doc, "screens", lambda e: absent(e.get("target")))
+    drop(doc, "materials", lambda e: absent(e) or absent(e.get("material")))
+    for terrain in ([geo["terrain"]] if isinstance(geo.get("terrain"), dict) else []) + list(geo.get("terrains") or []):
+        for layer in terrain.get("layers", []):
+            if absent(layer.get("material")):
+                del layer["material"]
+
+    optional = [e for key in ("buildings", "structures", "junctions", "edges") for e in doc.get(key) or []]
+    optional += [p for s in doc.get("structures") or [] for p in s.get("portals") or []]
+    for entity in optional:
+        if absent(entity.get("mesh")):
+            del entity["mesh"]
+    lights = ((doc.get("race") or {}).get("start_procedure") or {}).get("lights")
+    if absent(lights):
+        del lights["mesh_ref"]
+        lights.pop("prims", None)
+    return doc
+
+
+def default_document(doc):
+    """The default layout as an ordinary document (spec §3.5): without `layouts` and `variants`, without the `layout_only`
+    meshes and what depends on them."""
+    out = {k: copy.deepcopy(v) for k, v in doc.items() if k not in ("layouts", "variants")}
+    return prune_to_meshes(out, selected_mesh_ids(out))
+
+
+def usd_apply_layout(stage, doc, layout=None):
+    """In a root layer that brings the mesh files in by reference, make active the prims of the selected meshes and
+    inactive the others (spec §7.8). Returns {prim path: active} for the prims it found; the caller saves the layer."""
+    keep = selected_mesh_ids(doc, layout)
+    by_uri = {}
+    for m in (doc.get("geometry") or {}).get("meshes") or []:
+        by_uri.setdefault(m["uri"].lstrip("./"), []).append(m["id"])
+    done = {}
+    for path, uris in usd_referencing_prims(stage).items():
+        ids = [i for u in uris for i in by_uri.get(u.lstrip("./"), [])]
+        if ids:
+            active = any(i in keep for i in ids)
+            stage.GetPrimAtPath(path).SetActive(active)
+            done[path] = active
+    return done
+
+
+def usd_referencing_prims(stage):
+    """{prim path: [referenced asset paths]} as authored in the stage's root layer, inactive prims included."""
+    found = {}
+
+    def walk(spec):
+        refs = [r.assetPath for r in spec.referenceList.GetAddedOrExplicitItems() if r.assetPath]
+        refs += [r.assetPath for r in spec.payloadList.GetAddedOrExplicitItems() if r.assetPath]
+        if refs:
+            found[str(spec.path)] = refs
+        for child in spec.nameChildren:
+            walk(child)
+    for child in stage.GetRootLayer().rootPrims:
+        walk(child)
+    return found
+
+
 def layout_document(doc, layout, merge_edges=True, ground="base"):
     """The document as seen when `layout` (a layouts[] entry or its id) is selected (spec §3.5).
 
@@ -1050,11 +1185,7 @@ def layout_document(doc, layout, merge_edges=True, ground="base"):
         info["layout"] = layout["name"]
     if layout.get("type"):
         info["type"] = layout["type"]
-    meshes = (out.get("geometry") or {}).get("meshes")
-    if meshes is not None:
-        keep = set(layout.get("include_meshes") or [m["id"] for m in meshes]) - set(layout.get("exclude_meshes") or [])
-        out["geometry"]["meshes"] = [m for m in meshes if m["id"] in keep]
-    return out
+    return prune_to_meshes(out, selected_mesh_ids(doc, layout))
 
 
 # ── OpenDRIVE ────────────────────────────────────────────────────────────────

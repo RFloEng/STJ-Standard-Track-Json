@@ -1,6 +1,6 @@
 # Consistency audit
 
-Where the parts of this repository agree and where they do not, as of the v0.3 draft. The five layers are the schema (`schema/`), the spec (`spec/STJ_Spec.md`), the Blender profile (`spec/STJ_Blender_Profile.md` and `tools/blender/`), the core and tooling (`tools/`), and the tests (`tests/`).
+Where the parts of this repository agree and where they do not, as of the v0.4 draft. The five layers are the schema (`schema/`), the spec (`spec/STJ_Spec.md`), the Blender profile (`spec/STJ_Blender_Profile.md` and `tools/blender/`), the core and tooling (`tools/`), and the tests (`tests/`).
 
 | Status | Meaning |
 |---|---|
@@ -12,10 +12,11 @@ Where the parts of this repository agree and where they do not, as of the v0.3 d
 
 | Area | Schema | Spec | Blender profile | Core and tooling | Tests | Notes |
 |---|---|---|---|---|---|---|
-| Version list (`0.1`, `0.2`, `0.3`) | consistent | consistent | consistent | consistent (`migrate.VERSIONS`) | consistent | One list in four places; a test of `migrate` covers the steps. |
+| Version list (`0.1` to `0.4`) | consistent | consistent | consistent | consistent (`migrate.VERSIONS`) | consistent | One list in four places; a test of `migrate` covers the steps. |
 | `(s, t)` and the reference line (§4.2) | not applicable | consistent | consistent | consistent (`ReferenceLine`) | consistent | The nearest-point definition and the 1 mm tolerance are in the spec and exercised. |
 | Closed lines, lap distance | consistent | consistent | consistent | consistent | consistent | |
 | Roads, junctions, routes (§7.1) | consistent | consistent | partial | consistent | consistent | Routes stay in the Blender text block; there is no route object. |
+| Geometry of one layout (§3.5) | consistent | consistent | partial | consistent | consistent | The Blender profile keeps `layout_only` and `with_mesh` through a round trip and shows every mesh; it does not hide a layout's meshes. The viewer filters meshes, instance sets, surface maps and bindings only. No shipped example file. |
 | Layouts (§3.5) | consistent | consistent | partial | consistent | consistent | The profile has a `layout` category; editing a layout's `s` values in Blender is not checked. |
 | Overrides and `ops` (§3.3) | consistent | consistent | not applicable | consistent | consistent | The profile does not apply override files; the user resolves them first (profile §2.1). |
 | Conformance profiles (§3.7) | consistent | consistent | not applicable | consistent | consistent | |

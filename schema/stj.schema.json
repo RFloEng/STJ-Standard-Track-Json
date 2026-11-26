@@ -116,7 +116,7 @@
       "patternProperties": { "^x_": {}, "^_": {} },
       "properties": {
         "specification": { "const": "STJ" },
-        "version": { "type": "string", "enum": ["0.1", "0.2", "0.3"] },
+        "version": { "type": "string", "enum": ["0.1", "0.2", "0.3", "0.4"] },
         "coordinate_system": {
           "const": "OpenDRIVE",
           "description": "Right-handed, Z up, x/y map-projected, heading counter-clockwise from +X: the OpenDRIVE inertial frame, and a USD stage with upAxis Z in metres."
@@ -1070,6 +1070,11 @@
             "depth_offset": { "type": "number", "minimum": 0, "description": "Optional hint (m, along the surface normal) for a consumer that has to lift the decal off the surface to draw it over. The mesh itself is exactly where the source game keeps it; absent, the consumer chooses (spec §7.2)." }
           },
           "description": "How a decal mesh is drawn: over its surface, after opaque geometry, receiving shadows and not casting them (spec §7.2)."
+        },
+        "layout_only": {
+          "type": "boolean",
+          "default": false,
+          "description": "The mesh is not part of the default layout: only a layout that names it in include_meshes loads it (spec 3.5). Needs version 0.4."
         },
         "background": {
           "type": "object",
@@ -2908,6 +2913,7 @@
           "items": { "type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 7 }
         },
         "when": { "$ref": "#/definitions/condition", "description": "Instances exist while true." },
+        "with_mesh": { "$ref": "#/definitions/id", "description": "A set with transforms that exists only when this mesh is selected (spec 3.5): placements that differ between layouts of a shared model. Needs version 0.4." },
         "cull_distance": { "type": "number", "exclusiveMinimum": 0, "description": "Distance (m) beyond which these instances are not drawn. Wins over the prototype's." },
         "source": {
           "type": "string",

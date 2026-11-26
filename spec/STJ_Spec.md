@@ -1,4 +1,4 @@
-# Standard Track JSON (STJ) Specification v0.3 (draft)
+# Standard Track JSON (STJ) Specification v0.4 (draft)
 
 ## 1. Overview and scope
 
@@ -25,6 +25,9 @@ Like SVJ, STJ is **a vocabulary, not an engine**. A converter to a given simulat
 - large worlds: chunks with local origins and tiles
 - reflection probes, screens, crowds and climate statistics
 - OpenUSD as the only mesh format: the STJ document inside a USD layer, `.usdz` single-file tracks
+
+**Added in v0.4:**
+- geometry that belongs to one layout only (`layout_only`, `with_mesh`), and the rule that what depends on an absent mesh is absent
 
 **Non-goals.**
 
@@ -160,6 +163,24 @@ Selecting a layout (`stj_core.layout_document`) works as follows:
    - **Not mapped.** Surface bands and CRG placements, and the other bands (shelter, audio, scatter areas), are not mapped by that helper. A tool that needs them in layout coordinates maps them itself, as it always had to.
 5. A layout may take a **route** instead (`route`, a `routes[]` id, §7.1): the roads of the route are chained into the layout's reference line, with the same replacing rules as for `reference`. `route` is not combined with `reference` or `direction`.
 6. `include_meshes` and `exclude_meshes` select geometry. `type` overrides `track_info.type`, and `default_laps` gives the race distance.
+7. **Geometry of one layout only (v0.4).** A mesh with `layout_only: true` is not part of the default layout: a layout loads it only by naming it in `include_meshes`. A layout without `include_meshes` loads every mesh that is not `layout_only`; `exclude_meshes` then removes from what was selected. `include_meshes` means "only these meshes", so a layout with its own objects lists the common meshes and its own. A level of detail (`lod.of`) of a mesh that is not selected is not selected.
+8. **What depends on an absent mesh is absent (v0.4)**, in the default layout and in every selected layout, so a reader never meets a reference to a mesh the selected document does not have:
+   - these items go: `scenery.instances[]` whose `usd.mesh_ref`, whose prototype's `mesh.mesh_ref` or whose `with_mesh` names it; `scenery.scatter[]` whose `area.mesh_attribute` is on it; `surfaces.maps[]` and `surfaces.bindings[]`; `ground.materials[]`; mesh-bound water bodies; `animated_objects[]` and `screens[]` targeting it; `materials[]` drives of its materials;
+   - these stay and lose only the reference, because they exist without that geometry: buildings, structures and their portals, junctions, edges and prototypes (`mesh`), the start lights (`mesh_ref`, `prims`), a terrain layer's `material`, a mesh's `decal.on` and `background.of`, and the mesh lists of chunks and tiles.
+9. **`scenery.instances[].with_mesh: <mesh id>` (v0.4).** A set with `transforms` exists only when that mesh is selected. It carries placements that differ between layouts of a model both use (cones, signs, trees) without copying the prototype.
+
+The default layout as an ordinary document is `stj_core.default_document(doc)`: no `layouts`, no `variants`, no `layout_only` mesh and nothing that depended on one. For example, a stage run both ways, with the road once and each direction's roadside objects:
+
+```json
+"geometry": { "meshes": [
+  { "id": "ground",          "uri": "meshes/ground.usdc",          "roles": ["collision"] },
+  { "id": "objects",         "uri": "meshes/objects.usdc",         "roles": ["collision"] },
+  { "id": "objects_reverse", "uri": "meshes/objects_reverse.usdc", "roles": ["collision"], "layout_only": true } ] },
+"layouts": [ { "id": "reverse", "reference": { "centerline": { "points": [[1155.8, 602.8, 69.3], [1150.0, 603.0, 69.4]] } },
+               "include_meshes": ["ground", "objects_reverse"] } ]
+```
+
+The default layout is `ground` + `objects`, and `reverse` is `ground` + `objects_reverse`. A document that uses `layout_only` or `with_mesh` declares version 0.4: a reader of 0.3 would load every mesh and put two sets of barriers on the road, so the validator rejects the two keys in a document that declares an earlier version. The validator also warns about a `layout_only` mesh that no layout includes, and about a layout with no collision when the default layout has one. The surface checks run on every mesh of the document, so the collision meshes of each selection are checked.
 
 Selecting a layout with `layout_document` returns an ordinary STJ document, so converters for single-layout engines need no layout logic.
 
@@ -230,7 +251,7 @@ Three things can differ between a document and a reader, and they are kept apart
 
 - **Backward compatibility.** A reader of a later version reads every document of an earlier one. Minor versions only add optional features; a field leaves only after the deprecation above, and `tools/migrate.py` rewrites old files.
 - **Forward compatibility.** A reader of an earlier version meets a document of a later one. It SHOULD ignore keys it does not know (`x_<engine>` keys always), and it MUST NOT pass the document off as checked: it says that the version is newer than it knows. The schema lists the versions it knows, so `tools/validate.py` rejects a version it does not.
-- **Semantic compatibility.** The same structure can mean something different. A minor version never changes what an existing field means; a change of meaning is a new field, with the old one deprecated. A document that declares an older version but uses newer features gets a warning (`_metadata.version`).
+- **Semantic compatibility.** The same structure can mean something different. A minor version never changes what an existing field means; a change of meaning is a new field, with the old one deprecated. A document that declares an older version but uses newer features gets a warning (`_metadata.version`). The exception is a feature that an old reader would get physically wrong, such as `layout_only` (§3.5): that is an error.
 
 ---
 
@@ -352,7 +373,7 @@ Pit count and length are not repeated: they follow from `race.pit_boxes` and the
 | Key | Required | Description |
 |---|---|---|
 | `specification` | yes | `"STJ"` |
-| `version` | yes | `"0.1"`, `"0.2"` or `"0.3"`. The validator warns when a file uses keys newer than the version it declares. |
+| `version` | yes | `"0.1"`, `"0.2"`, `"0.3"` or `"0.4"`. The validator warns when a file uses keys newer than the version it declares; `layout_only` and `with_mesh` in an earlier version are an error (§3.5). |
 | `coordinate_system` | yes | `"OpenDRIVE"` (§4.3) |
 | `units` | yes | `"SI"` |
 | `description`, `created`, `author` | no | as SVJ |
@@ -892,6 +913,7 @@ A converter that writes materials therefore needs, beyond UsdPreviewSurface: a *
   - terrain is PNG
   - override files are USD layers too (next point)
   - OpenDRIVE, OpenCRG and raw terrain need a folder package instead
+- **Meshes of one layout (v0.4).** In a root layer that brings the mesh files in by reference, the prim that brings in a `layout_only` mesh is authored `active = false`, so a plain USD viewer shows the default layout. A tool that selects a layout activates the prims it needs and deactivates the others (`stj_core.usd_apply_layout`). The validator warns when such a prim is active.
 - **Overrides as USD layers.** A variant's override can be a `.usda` layer that sublayers the track, sets the USD variant selections itself, and carries the STJ-OVERRIDE document in its own `customLayerData["stj"]`. Opened in any USD tool, it shows the variant. Opened by an STJ tool, it resolves like a plain `.stj-override.json`.
 - **Validation of USD is optional.** USD checks need the `pxr` module (`pip install usd-core`). Without it, USD meshes are reported as a NOTE ("not checked"), and STJ documents inside USD cannot be read.
 
@@ -1390,7 +1412,7 @@ STJ can carry these values, but cannot make them mean the same thing everywhere.
 
 **Reserved top-level keys:** none since v0.3.
 
-**Roadmap.** The survey's three tiers are v0.1, v0.2 and v0.3. What remains open is in `docs/open_questions.md`: calibration procedures for friction, drying and rubber; the shared tyre-class list with SVJ; how the signal list grows; licences of converted content.
+**Roadmap.** The survey's three tiers are v0.1, v0.2 and v0.3; v0.4 adds geometry that belongs to one layout. What remains open is in `docs/open_questions.md`: calibration procedures for friction, drying and rubber; the shared tyre-class list with SVJ; how the signal list grows; licences of converted content.
 
 **Versioning**, as SVJ §20: minor versions are additive; patch versions clarify. A parser for an older version SHOULD ignore unknown keys of a newer one. Compatibility is defined in §3.11.
 
@@ -1414,6 +1436,7 @@ Each major feature has one of these states. A change of state is a spec change a
 | Deformable surfaces, roughness, water films | 6.6, 6.7 | optional normative |
 | Line states, wetting and drying, evolution | 6.8–6.10 | optional normative |
 | Layouts, variants, overrides | 3.3, 3.5, 3.6 | normative |
+| Geometry of one layout (`layout_only`, `with_mesh`) | 3.5 | normative |
 | Conformance profiles, `position_ref`, canonical form | 3.7–3.9 | optional normative |
 | Conversion report | 3.12 | optional normative |
 | Roads, junctions, routes | 7.1 | optional normative |
@@ -1439,6 +1462,7 @@ Each major feature has one of these states. A change of state is a spec change a
 
 | Version | Changes |
 |---|---|
+| 0.4 | Geometry of one layout only: `geometry.meshes[].layout_only`, `scenery.instances[].with_mesh`, what depends on an absent mesh is absent, inactive prims in the USD root layer (`proposals/stj_layout_geometry_proposal.md`; §3.5, §7.8). Additive: a 0.3 document is unchanged. |
 | 0.3 | Handoff additions (`proposals/stj_handoff_proposal.md`): conformance profiles (§3.7), `position_ref` (§3.8), canonical form and migration (§3.9, §3.10), override `ops` (§3.3), surface `function` and `quality` (§6.11), `route_policy`, `pacenote_sets` and `vehicle_class` (§10). Survey Tier 3 (`proposals/stj_tier3_proposal.md`). <ul><li>race control: marshal sectors, posts, vehicles, restricted zones, reset (§10.1)</li><li>`dynamic`: reference evolution laws for line states, water, ruts, wear and track temperature (§6.10)</li><li>large worlds: chunks with local origins, tiles, several terrains (§7.6)</li><li>reflection probes, screens, crowds (§8.8); climate statistics (§11)</li><li>no reserved keys left</li><li>OpenUSD (`proposals/stj_usd_proposal.md`): USD meshes with per-face layer primvars and per-corner weights (§7.7); the STJ document inside a USD layer, USD override layers, `usd_variants`, chunk payloads, `.usdz` packages (§7.8); `authoring_source`</li><li>macro maps on a heightfield terrain: `geometry.terrain.macro[]` and the `colour` encoding with `strength` (§7.4, §8.7; `proposals/stj_terrain_macro_proposal.md`)</li><li>compatibility rules (§3.11); the Blender profile and its collection layout (`spec/STJ_Blender_Profile.md`)</li></ul> |
 | 0.2 | Survey Tier 2, all additive except that `animated_objects` became an array. <ul><li>signals, conditions and bindings (§11.1)</li><li>terrain heightfields (§7.4)</li><li>water bodies, plus wetting and drying with an effective film depth (§6.9, §7.5)</li><li>line states: rubber and swept gravel (§6.8)</li><li>seasons and surface substitutions (§6.3, §11)</li><li>physical props (§8.4), animated objects (§8.5), audio (§8.6)</li><li>UI and minimap fields in `track_info` (§5.1)</li><li>light, instance and scatter conditions; edge prototypes; `snow_bank`; `precipitation` in mm/h</li><li>layered ground: detail layers, four weight encodings, reference height blend, macro maps (§8.7)</li><li>from RBR stages (`proposals/stj_lessons_from_rbr_proposal.md`):<ul><li>surface maps inside primitives with blending, and states chosen by `wear` / `wetness` (§6.3)</li><li>absolute μ with `reference_mu` (§6.5)</li><li>centerline chainage and Hermite tangents (§7.1)</li><li>sinusoidal roughness, `base_offset`, surface `impact` and `effects`</li><li>invisible drag edges, tearable fences, conditional water, bendable props, foliage sway</li><li>`time_to_arrival` signal, stage sections, weather options, acoustic reflections</li><li>pace-note `call_adjust`; `distance_to_next` treated as derived</li></ul></li></ul> |
 | 0.1 | First draft. <ul><li>metadata, reference, geometry</li><li>surfaces: STJ-REF, MF scaling, per-tyre-class values, two-tier deformable model, bindings</li><li>timing: start/finish, sectors, splits, pit lane, track limits, DRS zones, rally controls, side roads</li><li>race: grid, pits, spawns, racing lines with AI purposes, AI corridor and hints, start procedure, service areas, pacenotes</li><li>edges (kerbs, verges, barriers), cameras</li><li>environment: geo-reference, sky, lighting, weather and weather schedule</li><li>scenery: prototypes, instances, scatter with engine-native blocks</li><li>layouts, variants, override files</li><li>validator</li></ul> |

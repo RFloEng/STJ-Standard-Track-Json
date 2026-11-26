@@ -1351,7 +1351,10 @@ def write_track(doc, name, extra=None):
     stage.SetDefaultPrim(track.GetPrim())
     for m in (doc.get("geometry") or {}).get("meshes", []):
         if m["uri"] != name:                      # meshes in other files are referenced, so USD viewers show them
-            stage.DefinePrim(f"/track/geometry/{m['id']}").GetReferences().AddReference(m["uri"])
+            prim = stage.DefinePrim(f"/track/geometry/{m['id']}")
+            prim.GetReferences().AddReference(m["uri"])
+            if m.get("layout_only"):                  # a USD viewer shows the default layout (spec §7.8)
+                prim.SetActive(False)
     add_preview(stage, doc)
     if extra:
         extra(stage)

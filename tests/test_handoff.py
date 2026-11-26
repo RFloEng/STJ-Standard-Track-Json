@@ -314,9 +314,9 @@ class Migrate(unittest.TestCase):
     def test_version_steps(self):
         doc = {"_metadata": {"specification": "STJ", "version": "0.1"}}
         out, notes = migrate.migrate(doc)
-        self.assertEqual(out["_metadata"]["version"], "0.3")
+        self.assertEqual(out["_metadata"]["version"], "0.4")
         self.assertEqual(doc["_metadata"]["version"], "0.1")
-        self.assertEqual(len(notes), 2)
+        self.assertEqual(len(notes), 3)
         self.assertEqual(migrate.migrate(doc, "0.2")[0]["_metadata"]["version"], "0.2")
 
     def test_bad_requests(self):
@@ -334,8 +334,8 @@ class Migrate(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 self.assertEqual(migrate.main([str(f), "--dry-run"]), 0)
             self.assertEqual(f.read_text(encoding="utf-8"), before)
-            self.assertIn("would become 0.3", buf.getvalue())
-            self.assertIn('"version": "0.3"', buf.getvalue())
+            self.assertIn("would become 0.4", buf.getvalue())
+            self.assertIn('"version": "0.4"', buf.getvalue())
 
 
 class DiagnosticsJson(unittest.TestCase):
@@ -389,6 +389,93 @@ class ConversionReport(unittest.TestCase):
         doc = {"_metadata": {"specification": "STJ", "version": "0.3", "provenance": {"conversion": {"lost": lost}}}}
         self.assertTrue(all(isinstance(m, str) for m in doc["_metadata"]["provenance"]["conversion"]["lost"]))
 
+
+
+class LayoutGeometry(unittest.TestCase):
+    """Meshes of one layout only and what depends on them (spec 3.5)."""
+
+    def doc(self, version="0.4"):
+        return {"_metadata": {"specification": "STJ", "version": version, "coordinate_system": "OpenDRIVE", "units": "SI"},
+                "geometry": {"meshes": [{"id": "ground", "uri": "ground.usda", "roles": ["collision"]},
+                                        {"id": "objects", "uri": "objects.usda", "roles": ["collision"]},
+                                        {"id": "objects_rev", "uri": "rev.usda", "roles": ["collision"], "layout_only": True},
+                                        {"id": "rev_lod", "uri": "rev.usda", "roles": ["visual", "lod"], "lod": {"of": "objects_rev", "level": 1}}]},
+                "surfaces": {"default": "asphalt", "library": {"asphalt": {"class": "asphalt"}},
+                             "bindings": [{"mesh_ref": m, "material": "x", "surface": "asphalt"} for m in ("ground", "objects", "objects_rev")]},
+                "scenery": {"prototypes": {"cone": {"class": "prop"}, "wall": {"class": "prop", "mesh": {"mesh_ref": "objects_rev", "prim": "/w"}}},
+                            "instances": [{"prototype": "cone", "transforms": [[0, 0, 0, 0]]},
+                                          {"prototype": "cone", "with_mesh": "objects", "transforms": [[1, 0, 0, 0]]},
+                                          {"prototype": "cone", "with_mesh": "objects_rev", "transforms": [[2, 0, 0, 0]]},
+                                          {"prototype": "wall", "transforms": [[3, 0, 0, 0]]}]},
+                "buildings": [{"id": "hall", "footprint": [[0, 0], [1, 0], [1, 1]], "mesh": {"mesh_ref": "objects_rev", "prim": "/h"}}],
+                "layouts": [{"id": "reverse", "include_meshes": ["ground", "objects_rev", "rev_lod"]}]}
+
+    def refs(self, doc):
+        return {b["mesh_ref"] for b in doc["surfaces"]["bindings"]}
+
+    def xs(self, doc):
+        return [e["transforms"][0][0] for e in doc["scenery"]["instances"]]
+
+    def messages(self, doc, level):
+        return [f"{p}: {m}" for lv, p, m in run(doc).items if lv == level]
+
+    def test_the_default_layout_leaves_layout_only_meshes_and_what_depends_on_them(self):
+        source = self.doc()
+        d = core.default_document(source)
+        self.assertEqual([m["id"] for m in d["geometry"]["meshes"]], ["ground", "objects"])      # the lod of an absent mesh too
+        self.assertEqual(self.refs(d), {"ground", "objects"})
+        self.assertEqual(self.xs(d), [0, 1])
+        self.assertNotIn("mesh", d["buildings"][0])                  # the building stays, without its geometry
+        self.assertNotIn("mesh", d["scenery"]["prototypes"]["wall"])
+        self.assertNotIn("layouts", d)
+        self.assertEqual(source, self.doc())                         # the source is not touched
+
+    def test_a_layout_loads_what_it_names(self):
+        d = core.layout_document(self.doc(), "reverse")
+        self.assertEqual([m["id"] for m in d["geometry"]["meshes"]], ["ground", "objects_rev", "rev_lod"])
+        self.assertEqual(self.refs(d), {"ground", "objects_rev"})
+        self.assertEqual(self.xs(d), [0, 2, 3])
+        self.assertIn("mesh", d["buildings"][0])
+
+    def test_a_layout_without_include_meshes_takes_the_common_ones(self):
+        self.assertEqual(core.selected_mesh_ids(self.doc(), {"exclude_meshes": ["objects"]}), {"ground"})
+
+    def test_a_document_without_the_new_keys_is_as_before(self):
+        doc = self.doc()
+        doc["geometry"]["meshes"] = doc["geometry"]["meshes"][:2]
+        doc["surfaces"]["bindings"] = doc["surfaces"]["bindings"][:2]
+        doc["scenery"]["instances"] = doc["scenery"]["instances"][:1]
+        del doc["buildings"], doc["layouts"], doc["scenery"]["prototypes"]["wall"]
+        self.assertEqual(core.default_document(doc), doc)
+
+    def test_the_new_keys_need_version_0_4(self):
+        self.assertTrue(any("needs 0.4" in m for m in self.messages(self.doc("0.3"), "ERROR")))
+        self.assertFalse(any("needs 0.4" in m for m in self.messages(self.doc(), "ERROR")))
+
+    def test_validator_findings(self):
+        self.assertEqual(self.messages(self.doc(), "ERROR"), [])
+        doc = self.doc()
+        doc["scenery"]["instances"][1]["with_mesh"] = "nowhere"
+        self.assertTrue(any("with_mesh: unknown mesh 'nowhere'" in m for m in self.messages(doc, "ERROR")))
+        doc = self.doc()
+        doc["layouts"] = [{"id": "reverse", "include_meshes": ["objects"]}, {"id": "empty", "exclude_meshes": ["ground", "objects"]}]
+        warns = self.messages(doc, "WARN")
+        self.assertTrue(any("no layout includes 'objects_rev'" in m for m in warns), warns)
+        self.assertTrue(any("layouts[1]" in m and "no collision" in m for m in warns), warns)
+
+    @unittest.skipUnless(core.have_pxr(), "pxr not installed")
+    def test_usd_prims_follow_the_selected_layout(self):
+        from pxr import Usd
+        with tempfile.TemporaryDirectory() as d:
+            stage = Usd.Stage.CreateNew(str(Path(d) / "root.usda"))
+            doc = self.doc()
+            for m in doc["geometry"]["meshes"][:3]:
+                stage.DefinePrim(f"/track/geometry/{m['id']}").GetReferences().AddReference(m["uri"])
+            got = core.usd_apply_layout(stage, doc)
+            self.assertEqual({k.rsplit("/", 1)[1]: v for k, v in got.items()}, {"ground": True, "objects": True, "objects_rev": False})
+            got = core.usd_apply_layout(stage, doc, doc["layouts"][0])       # inactive prims are found again
+            self.assertEqual({k.rsplit("/", 1)[1]: v for k, v in got.items()}, {"ground": True, "objects": False, "objects_rev": True})
+            del stage
 
 
 class SectionReferences(unittest.TestCase):

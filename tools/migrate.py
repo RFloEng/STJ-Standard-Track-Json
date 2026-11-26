@@ -2,7 +2,7 @@
 """Bring an STJ document, or an override file, up to a later spec version (spec 3.10).
 
 Each step is a function in MIGRATIONS keyed by (from, to). A step edits the document in place and returns
-notes about what it changed. 0.1 -> 0.2 and 0.2 -> 0.3 only add optional features, so they change the version
+notes about what it changed. 0.1 -> 0.2, 0.2 -> 0.3 and 0.3 -> 0.4 only add optional features, so they change the version
 number and nothing else; later versions that rename or remove a field put the rewrite here, after the field
 has been deprecated for one minor version (the policy is in spec 3.10).
 
@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import canonicalize  # noqa: E402
 
-VERSIONS = ("0.1", "0.2", "0.3")
+VERSIONS = ("0.1", "0.2", "0.3", "0.4")
 
 
 def _bump(doc, new):
@@ -31,6 +31,7 @@ def _bump(doc, new):
 MIGRATIONS = {
     ("0.1", "0.2"): lambda doc: _bump(doc, "0.2"),
     ("0.2", "0.3"): lambda doc: _bump(doc, "0.3"),
+    ("0.3", "0.4"): lambda doc: _bump(doc, "0.4"),
 }
 
 

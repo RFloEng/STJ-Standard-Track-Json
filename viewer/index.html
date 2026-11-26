@@ -402,11 +402,24 @@ function layoutDocument(doc, lay) {
   else if (lay.direction === 'reverse') out.reference = reverseReference(doc.reference);
   for (const k of ['timing', 'race']) { if (k in lay) out[k] = structuredClone(lay[k]); else if (own) delete out[k]; }
   out.edges = [...(own ? [] : structuredClone(doc.edges || [])), ...structuredClone(lay.edges || [])];
-  if (lay.include_meshes || lay.exclude_meshes) {
-    const keep = new Set(lay.include_meshes || (out.geometry?.meshes || []).map((m) => m.id));
-    (lay.exclude_meshes || []).forEach((m) => keep.delete(m));
-    if (out.geometry?.meshes) out.geometry.meshes = out.geometry.meshes.filter((m) => keep.has(m.id));
-  }
+  pruneToMeshes(out, selectedMeshIds(doc, lay));
+  return out;
+}
+// the meshes a layout loads, and what goes with them (spec 3.5; stj_core.selected_mesh_ids and prune_to_meshes)
+function selectedMeshIds(doc, lay = {}) {
+  const meshes = doc.geometry?.meshes || [];
+  const keep = new Set(lay.include_meshes || meshes.filter((m) => !m.layout_only).map((m) => m.id));
+  (lay.exclude_meshes || []).forEach((m) => keep.delete(m));
+  return keep;
+}
+function pruneToMeshes(out, keep) {
+  if (!out.geometry?.meshes) return out;
+  const gone = new Set(out.geometry.meshes.map((m) => m.id).filter((id) => !keep.has(id)));
+  out.geometry.meshes = out.geometry.meshes.filter((m) => !gone.has(m.id));
+  const lostProtos = new Set(Object.entries(out.scenery?.prototypes || {}).filter(([, p]) => gone.has(p?.mesh?.mesh_ref)).map(([k]) => k));
+  if (out.scenery?.instances) out.scenery.instances = out.scenery.instances.filter(
+    (e) => !gone.has(e.usd?.mesh_ref) && !gone.has(e.with_mesh) && !lostProtos.has(e.prototype));
+  for (const key of ['maps', 'bindings']) if (out.surfaces?.[key]) out.surfaces[key] = out.surfaces[key].filter((e) => !gone.has(e.mesh_ref));
   return out;
 }
 const DEFAULT_SIGNALS = { sun_elevation: 0.6, session: 'race', session_phase: 'running', flag: 'none', sector_flag: 'none',
@@ -611,6 +624,7 @@ async function rebuild(fit = false) {
     if (v.usd_variants) status(`USD variant sets: ${Object.entries(v.usd_variants).map(([k, x]) => `${k}=${x}`).join(', ')} (the look is the USD tool's)`, false, 5000);
   }
   if (li !== '') doc = layoutDocument(doc, state.base.layouts[+li]);
+  else if (doc.geometry?.meshes?.some((m) => m.layout_only)) doc = pruneToMeshes(structuredClone(doc), selectedMeshIds(doc));
   state.doc = doc; state.line = refLine(doc);
   computeSurfaceColors(doc); buildLegend(doc);
   buildSurfaces(); buildReference(); buildTiming(); buildRace(); buildEdges(); buildWater(); buildAreas(); buildScenery(); buildCameras();
