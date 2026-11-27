@@ -7,8 +7,7 @@ Numbered so the spec can point at them. Each has a current position. "Decide" ma
 **Q1. What is STJ-REF in numbers?**
 STJ-REF is defined as dry, clean, unworn dense asphalt with every factor 1. Nobody has published a table mapping test-rig belts (abrasive flat-trac surfaces) to real asphalt per tyre. Until someone measures it, a tyre fitted on a rig declares the rig surface's λ by estimate, marked `_est`.
 
-**Q2. Tyre classes shared with SVJ.**
-The list (`slick`, `road`, `intermediate`, `wet`, `gravel`, `snow`, `studded`, `mud`, `offroad`) must be identical in both standards. *Decide* whether the enum lives in SVJ, in STJ, or in a shared file both schemas reference.
+**Q2. Tyre classes shared with SVJ.** *Resolved 2026-11-27.* The list lives in STJ: `schema/tyre-classes.schema.json` is the master; STJ's schema repeats it, SVJ keeps a copy, and a test in each repository compares them (spec §6.2).
 
 **Q3. Hydroplaning.**
 It needs tread depth, inflation pressure and speed, all tyre-side. SVJ has pressure but no tread depth. Proposal: SVJ `tires.sets.<id>.tread_depth` (m), plus an STJ-side note that `wet_response` assumes a new tread.

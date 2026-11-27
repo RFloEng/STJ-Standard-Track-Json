@@ -1,6 +1,6 @@
 # SVJ proposal: the surface a tyre was fitted on (for SVJ v0.105)
 
-Status: **proposed**, accepted for STJ on 2026-11-02. To be applied in the SVJ repository. Additive; no existing file changes meaning.
+Status: **applied** in SVJ v0.113 (2026-11-27); accepted for STJ on 2026-11-02. Additive; no existing file changes meaning. As applied, `reference.surface` has three forms (the name `STJ-REF`, the surface written out, or a pointer `{uri, surface}` to an entry of an STJ file; STJ spec §6.2), and the tyre class list lives in STJ (`schema/tyre-classes.schema.json`), with a copy in SVJ.
 
 ## Problem
 

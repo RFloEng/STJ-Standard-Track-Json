@@ -1,11 +1,9 @@
 # Proposal: the STJ Blender profile and the official Blender translator
 
-Status: accepted (all five decisions as recommended). First slice implemented: profile 0.1
-(`spec/STJ_Blender_Profile.md`), export, import and lint (`tools/blender/`), the reference `.blend`, the geo
-origin and the sun, mesh collections, roads, junctions, edges and cameras. structures, prototypes, instance sets,
-animated objects, audio emitters and crowds. Round trips are exact on the example documents. Still to do: scatter
-rules, ground layers, terrain, water and the other sections, Blender Rigid Body and actions for physics and
-animation.
+Status: accepted (all five decisions as recommended), **implemented** as profile 0.1 (`spec/STJ_Blender_Profile.md`):
+export, import and lint (`tools/blender/`) and the reference `.blend`. The first slice left out scatter rules, ground layers,
+terrain, water and Blender Rigid Body for physics; the profile has rows for them now. Animation is not turned into Blender
+actions, as profile §8 says. Round trips are exact on the example documents.
 Source: question from the repo owner: can a standard `.blend` be defined from the STJ entities, so that
 every conversion to and from Blender stays consistent between translators, and where should the
 STJ-to-Blender translator live?

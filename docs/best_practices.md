@@ -160,4 +160,4 @@ If you have a documented number for any of these, open an issue with the source.
 ## 11. And always
 
 - Convert only files you own. A track converted from a commercial game is `redistributable: false` (README).
-- Run `python tools/validate.py <file> --strict` before you share anything.
+- Run `python tools/stj_validate.py <file> --strict` before you share anything.

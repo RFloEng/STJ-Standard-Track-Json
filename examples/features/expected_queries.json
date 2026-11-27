@@ -1,0 +1,61 @@
+{
+  "about": "What a reader must get from the files in this folder. The numbers are worked out by hand from the rules of the STJ spec; the arithmetic is in 'why'. tools/stj_query.py and tools/stj_core.py give them (tests/test_feature_examples.py). Compare with a tolerance of 1e-5. A file ending in _wet or _winter is a variant: resolve it as an override of its base.",
+  "surfaces": [
+    {"file": "surface_maps.usda", "x": 4, "y": 4, "level": "map", "contact": {"asphalt": 0.6, "gravel": 0.3, "grass": 0.1},
+     "why": "vertex_dense: (1,0,0) at x=0 and (0,0.75,0.25) at x=10, 0.4 of the way"},
+    {"file": "surface_maps.usda", "x": 11, "y": 4, "level": "map", "contact": {"asphalt": 1.0}, "why": "image: red texels"},
+    {"file": "surface_maps.usda", "x": 15, "y": 4, "level": "map", "contact": {"asphalt": 0.2, "gravel": 0.4, "grass": 0.4},
+     "why": "image: texels (51,102,102) of 255"},
+    {"file": "surface_maps.usda", "x": 19, "y": 4, "level": "map", "contact": {"gravel": 1.0}, "why": "image: green texels"},
+    {"file": "surface_maps.usda", "x": 21, "y": 4, "level": "map", "contact": {"asphalt": 1.0}, "why": "id_map: value 0"},
+    {"file": "surface_maps.usda", "x": 25, "y": 4, "level": "map", "contact": {"gravel": 1.0}, "why": "id_map: value 1"},
+    {"file": "surface_maps.usda", "x": 29, "y": 4, "level": "map", "contact": {"grass": 1.0}, "why": "id_map: value 2"},
+    {"file": "surface_maps.usda", "x": 34, "y": 4, "level": "map", "contact": {"asphalt": 1.0},
+     "why": "contact dominant: the weights of x=4, the largest is asphalt"},
+    {"file": "surface_maps.usda", "x": 38, "y": 4, "level": "map", "contact": {"gravel": 1.0},
+     "why": "contact dominant: (0.2, 0.6, 0.2)"},
+    {"file": "surface_maps.usda", "x": 45, "y": 4, "level": "material name", "contact": {"asphalt": 1.0}},
+    {"file": "surface_maps.usda", "x": 55, "y": 4, "level": "binding", "contact": {"concrete": 1.0}},
+    {"file": "surface_maps.usda", "x": 65, "y": 4, "level": "default", "contact": {"grass": 1.0}, "why": "past the meshes"},
+    {"file": "surface_maps_winter.usda", "x": 45, "y": 4, "level": "material name", "contact": {"packed_snow": 1.0},
+     "why": "substitutions apply to what any level found"},
+    {"file": "surface_maps_winter.usda", "x": 4, "y": 4, "level": "map",
+     "contact": {"packed_snow": 0.6, "gravel": 0.3, "grass": 0.1}, "why": "and to each entry of a blend"},
+    {"file": "surface_maps_yup.usda", "x": 4, "y": 4, "level": "map", "contact": {"asphalt": 0.6, "gravel": 0.3, "grass": 0.1},
+     "height": 1.0, "why": "Y up, centimetres: (x, -z, y) times 0.01"},
+    {"file": "lane_materials.stj.json", "x": 10, "y": 5, "level": "opendrive", "contact": {"asphalt": 1.0},
+     "why": "t = 1: left lane 1, material tarmac_new"},
+    {"file": "lane_materials.stj.json", "x": 10, "y": 7.5, "level": "opendrive", "contact": {"grass": 1.0},
+     "why": "t = 3.5: lane 2 runs from 3 to 4 m"},
+    {"file": "lane_materials.stj.json", "x": 10, "y": 3, "level": "opendrive", "contact": {"asphalt": 1.0},
+     "why": "t = -1: right lane before sOffset 30"},
+    {"file": "lane_materials.stj.json", "x": 45, "y": 3, "level": "opendrive", "contact": {"gravel": 1.0},
+     "why": "t = -1: the second material from s = 30"},
+    {"file": "lane_materials.stj.json", "x": 10, "y": 10, "level": "default", "contact": {"concrete": 1.0},
+     "why": "t = 6: outside the lanes"},
+    {"file": "visual_layer.usda", "x": 20, "y": 0, "level": "material name", "contact": {"asphalt": 1.0}, "height": 0.0},
+    {"file": "visual_layer.usda", "x": 20, "y": 4.4, "level": "binding", "contact": {"kerb": 1.0}, "height": 0.015},
+    {"file": "visual_layer.usda", "x": 20, "y": 12, "level": "default", "contact": {"grass": 1.0}, "height": null,
+     "why": "the infield only draws: it is not marked stj:collision"}
+  ],
+  "grip": [
+    {"file": "surface_maps.usda", "x": 4, "y": 4, "water_depth": 0.0, "film_depth": 0.0,
+     "lambda": {"LMUX": 0.83, "LMUY": 0.845}, "why": "0.6*1 + 0.3*0.6 + 0.1*0.5; 0.6*1 + 0.3*0.65 + 0.1*0.5"},
+    {"file": "surface_maps_wet.usda", "x": 45, "y": 4, "water_depth": 0.002, "film_depth": 0.0016,
+     "lambda": {"LMUX": 0.68, "LMUY": 0.68}, "why": "d = 2 mm - 0.4 mm; wet_response(1.6 mm) = 1 - 0.4*0.8"},
+    {"file": "surface_maps_wet.usda", "x": 4, "y": 4, "water_depth": 0.002, "film_depth": 0.00176,
+     "lambda": {"LMUX": 0.654704, "LMUY": 0.666536},
+     "why": "one film depth for the blend: storage 0.6*0.4 mm = 0.24 mm; wet factor 0.6*0.648 + 0.4*1 = 0.7888; times 0.83 and 0.845"}
+  ],
+  "weather_selection": {
+    "file": "surface_maps.usda", "base_water_depth": 0.0, "option": "wet", "override": "surface_maps_wet.usda", "water_depth": 0.002,
+    "why": "environment.weather_options names the variant; variants[] gives its override; the merged document has the weather"
+  },
+  "opencrg": [
+    {"file": "crg_patch.stj.json", "crg": "patch", "s": 24.5, "t": 1.0, "u": 4.5, "v": 0.5, "dz": 0.023,
+     "why": "u = s - 20; v = t - 0.5; z = 0.001*4.5 + 0.004*0.5 = 0.0065; dz = 0.01 + 2*0.0065"},
+    {"file": "crg_patch.stj.json", "crg": "patch", "s": 20.0, "t": 0.5, "u": 0.0, "v": 0.0, "dz": 0.01},
+    {"file": "crg_patch.stj.json", "crg": "patch", "s": 35.0, "t": 0.5, "dz": null, "why": "past s_end"},
+    {"file": "crg_patch.stj.json", "crg": "patch", "s": 24.0, "t": 2.0, "dz": null, "why": "v = 1.5: beside the grid"}
+  ]
+}

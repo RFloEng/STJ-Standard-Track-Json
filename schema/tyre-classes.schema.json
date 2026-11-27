@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/RFloEng/STJ-Standard-Track-Json/schema/tyre-classes.schema.json",
+  "title": "Tyre classes shared by STJ and SVJ",
+  "description": "The master list of tyre class names (spec 6.2). STJ's schema repeats it so that it stays one file; SVJ keeps a copy of this file. A test in each repository compares them. A new class is added here first.",
+  "type": "string",
+  "enum": [
+    "slick",
+    "road",
+    "intermediate",
+    "wet",
+    "gravel",
+    "snow",
+    "studded",
+    "mud",
+    "offroad"
+  ]
+}

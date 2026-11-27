@@ -1,4 +1,4 @@
-"""Tests for tools/validate.py and tools/stj_core.py. Run: python -m unittest discover tests"""
+"""Tests for tools/stj_validate.py and tools/stj_core.py. Run: python -m unittest discover tests"""
 
 import contextlib
 import copy
@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 import stj_core as core  # noqa: E402
-import validate  # noqa: E402
+import stj_validate as validate  # noqa: E402
 
 EX = ROOT / "examples"
 RING = EX / "test_ring_minimal.usda"
@@ -702,6 +702,127 @@ class SimulatorProposals(unittest.TestCase):
         state = {"spread": 0.0}
         self.assertEqual(core.line_state_value(state, 1.0, 0.0, 0.0, 0.0), 1.0)
         self.assertEqual(core.line_state_value(state, 1.0, 0.0, 1.0, 0.0), 0.0)
+
+
+class SharedTyreClasses(unittest.TestCase):
+    """schema/tyre-classes.schema.json is the master list shared with SVJ (spec §6.2)."""
+
+    def test_the_stj_schema_repeats_the_master_list(self):
+        master = core.load_json(ROOT / "schema" / "tyre-classes.schema.json")["enum"]
+        schema = core.load_json(validate.SCHEMA)
+        defs = schema["definitions"]
+        self.assertEqual(defs["tyre_class"]["enum"], master)
+        reference_mu = defs["surfaces"]["properties"]["reference_mu"] if "surfaces" in defs else schema["properties"]["surfaces"]["properties"]["reference_mu"]
+        self.assertEqual(list(reference_mu["properties"]), master)
+        pattern = defs["surface"]["properties"]["by_tyre_class"]["propertyNames"]["pattern"]
+        self.assertEqual(pattern, "^(" + "|".join(master) + "|x_.*|_.*)$")
+
+
+class ContactReference(unittest.TestCase):
+    """The reference maths of a contact (spec §6.2 to §6.4, §6.9), with the numbers the spec works out."""
+
+    def doc(self):
+        return {"surfaces": {
+            "library": {
+                "gravel_hardpack": {"class": "gravel", "mf_scaling": {"LMUX": 0.6, "LMUY": 0.65, "LKX": 0.6, "LKY": 0.65},
+                                    "by_tyre_class": {"gravel": {"mf_scaling": {"LMUX": 0.76, "LMUY": 0.72}}}},
+                "loose_gravel": {"class": "gravel", "mf_scaling": {"LMUX": 0.5, "LMUY": 0.5}}},
+            "line_states": [{"id": "swept", "kind": "swept", "applies_to": ["gravel_hardpack"], "line": "race",
+                             "spread": 1.0, "grip_gain": {"LMUX": 0.1, "LMUY": 0.1}, "levels": {"any": 1.0}}]}}
+
+    def grip(self, doc, contact, **kw):
+        kw.setdefault("tyre_scaling", {"LMUX": 1.1, "LMUY": 1.0})
+        kw.setdefault("reference_scaling", {"LMUX": 0.76, "LMUY": 0.72})
+        return core.contact_grip(doc, contact, "gravel", line_offsets={"race": [(0.0, 0.0), (100.0, 0.0)]}, **kw)
+
+    def expect(self, got, **want):
+        for key, value in want.items():
+            self.assertAlmostEqual(got["lambda"][key], value, places=6, msg=key)
+
+    def test_the_worked_example_of_one_surface(self):
+        doc = self.doc()
+        doc["surfaces"]["line_states"] = []
+        self.expect(self.grip(doc, "gravel_hardpack"), LMUX=1.1, LMUY=1.0, LKX=0.6, LKY=0.65)
+
+    def test_the_blended_contact_with_a_line_state(self):
+        contact = [("gravel_hardpack", 0.75), ("loose_gravel", 0.25)]
+        doc = self.doc()
+        self.expect(self.grip(doc, contact), LMUX=1.1 * 0.752 / 0.76, LMUY=0.719 / 0.72, LKX=0.7, LKY=0.7375)
+        del doc["surfaces"]["line_states"][0]["applies_to"]          # without it the state lies on every surface
+        got = self.grip(doc, contact)
+        self.expect(got, LMUX=1.106513, LMUY=1.015972)
+
+    def test_a_factor_only_the_reference_surface_gives_is_still_divided_out(self):
+        doc = {"surfaces": {"library": {"ref": {"class": "asphalt"}}}}
+        self.expect(core.contact_grip(doc, "ref", reference_scaling={"LKX": 0.5}), LKX=2.0, LMUX=1.0)
+
+    def test_wet_contact_uses_wet_gain_and_the_wet_response(self):
+        doc = self.doc()
+        doc["surfaces"]["line_states"][0]["wet_gain"] = -0.2
+        doc["surfaces"]["library"]["gravel_hardpack"]["wet_response"] = [[0, 1.0], [0.001, 0.9]]
+        got = self.grip(doc, "gravel_hardpack", film=0.001)
+        self.expect(got, LMUX=1.1 * (0.76 * 0.8) / 0.76 * 0.9, LKX=0.6)
+
+    def test_the_merge_depth_of_deformable(self):
+        surface = {"deformable": {"effective": {"drag_coefficient": 0.1, "loose_layer_depth": 0.02},
+                                  "terramechanics": {"n": 1.0, "k_c": 5.0}},
+                   "rolling_resistance": 0.01,
+                   "by_tyre_class": {"gravel": {"deformable": {"effective": {"drag_coefficient": 0.3},
+                                                               "terramechanics": {"n": 0.8}},
+                                                "rolling_resistance": 0.02}}}
+        got = core.merge_tyre_class(surface, "gravel")
+        self.assertEqual(got["deformable"]["effective"], {"drag_coefficient": 0.3, "loose_layer_depth": 0.02})
+        self.assertEqual(got["deformable"]["terramechanics"], {"n": 0.8})
+        self.assertEqual(got["rolling_resistance"], 0.02)
+        self.assertEqual(core.merge_tyre_class(surface, "road")["rolling_resistance"], 0.01)
+        self.assertNotIn("by_tyre_class", got)
+
+    def test_absolute_mu_replaces_the_two_grip_factors(self):
+        surface = {"mf_scaling": {"LKX": 0.6}, "by_tyre_class": {"gravel": {"mu": {"peak": 0.8, "sliding": 0.7}}}}
+        got = core.merge_tyre_class(surface, "gravel", {"gravel": {"peak": 1.6, "sliding": 1.4}})
+        self.assertEqual(got["mf_scaling"], {"LKX": 0.6, "LMUX": 0.5, "LMUY": 0.5})
+
+    def test_the_three_forms_of_a_reference_surface(self):
+        self.assertEqual(core.surface_reference(None), {})
+        self.assertEqual(core.surface_reference("STJ-REF"), {})
+        self.assertEqual(core.surface_reference({"stj_class": "gravel", "mf_scaling": {"LMUX": 0.76}}), {"LMUX": 0.76})
+        with tempfile.TemporaryDirectory() as d:
+            doc = {"_metadata": {"version": "0.4"}, "surfaces": self.doc()["surfaces"]}
+            Path(d, "lib.stj.json").write_text(json.dumps(doc), encoding="utf-8")
+            pointer = {"uri": "lib.stj.json", "surface": "gravel_hardpack"}
+            self.assertEqual(core.surface_reference(pointer, d, "gravel")["LMUX"], 0.76)
+            self.assertEqual(core.surface_reference(pointer, d, "road")["LMUX"], 0.6)
+            for bad in ("stj-ref", {"uri": "lib.stj.json"}, {**pointer, "mf_scaling": {}}, {**pointer, "surface": "none"}):
+                with self.assertRaises(ValueError):
+                    core.surface_reference(bad, d)
+
+    def test_a_blended_contact_has_one_film_depth(self):
+        doc = {"reference": {"centerline": {"points": [[0, 0, 0], [100, 0, 0]]}},
+               "surfaces": {"library": {"holds": {"class": "asphalt", "water": {"storage_depth": 0.001}},
+                                        "smooth": {"class": "asphalt", "roughness": {"mean_profile_depth": 0.0004}}}},
+               "race": {"racing_lines": [{"id": "race", "points": [[0, 1, 0], [100, 1, 0]]}]},
+               "water": {"accumulation_bands": [{"s_start": 40, "s_end": 60, "t_min": -5, "t_max": 5, "factor": 2.0}],
+                         "dry_line": {"line": "race", "spread": 1.0, "factor": 0.2}}}
+        q = core.FilmQuery(doc, ".")
+        blend = [("holds", 0.5), ("smooth", 0.5)]
+        self.assertAlmostEqual(core.contact_storage_depth(q.library, blend), 0.0006)
+        far = 1.0 - 0.8 * math.exp(-0.5 * 25)
+        self.assertAlmostEqual(q.depth(blend, 20, -4, 0.002), 0.002 * far - 0.0006, places=9)
+        self.assertAlmostEqual(q.depth(blend, 50, -4, 0.002), 0.004 * far - 0.0006, places=9)
+        for sid in ("holds", "smooth"):          # one surface: the same number as film_depth
+            self.assertAlmostEqual(q.depth(sid, 50, -4, 0.002),
+                                   core.film_depth(doc, ".", q.library[sid], 50, -4, 50, -4, 0.002, q.ref, q.dry_line_offsets),
+                                   places=9)
+
+
+class ValidatorModuleName(unittest.TestCase):
+    def test_the_old_name_gives_the_same_validator(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("some_name", ROOT / "tools" / "validate.py")
+        old = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(old)
+        self.assertIs(old.validate, validate.validate)
+        self.assertIs(old.main, validate.main)
 
 
 class DdsTextures(unittest.TestCase):
@@ -1989,6 +2110,72 @@ class MaterialsAndAssets(unittest.TestCase):
         res = core.usd_collision_sidedness(st, ["collision"])[0]
         self.assertAlmostEqual(res["up"], 1000.0)             # wound down, but left handed: the normals point up
         self.absent("WARN", "collision-sidedness")
+
+    # -- baked lighting kept as a material layer (spec §7.2) --
+    def layered(self, default=1.0, with_input=True, uvs=True, **entry):
+        from pxr import Usd, UsdGeom, UsdShade, Sdf, Vt
+        self.mesh(texture="sRGB")
+        st = Usd.Stage.Open(str(self.dir / "vis.usda"))
+        mesh = next(p for p in st.Traverse() if p.IsA(UsdGeom.Mesh))
+        mat = UsdShade.MaterialBindingAPI(mesh).ComputeBoundMaterial()[0]
+        if with_input:
+            mat.CreateInput("stj_baked_strength", Sdf.ValueTypeNames.Float).Set(default)
+        if uvs:
+            api = UsdGeom.PrimvarsAPI(mesh)
+            n = len(UsdGeom.Mesh(mesh).GetPointsAttr().Get())
+            api.CreatePrimvar("stj_st_b", Sdf.ValueTypeNames.TexCoord2fArray, "vertex").Set(Vt.Vec2fArray([(0, 0)] * n))
+            api.CreatePrimvar("stj_weight", Sdf.ValueTypeNames.FloatArray, "vertex").Set(Vt.FloatArray([1.0] * n))
+        st.GetRootLayer().Save()
+        core.write_png(self.dir / "shadow.png", 1, 1, [128, 128, 128], channels=3)
+        e = {"material": mat.GetPrim().GetName(), "kind": "shadow", "op": "darken", "space": "encoded", "basis": "inferred",
+             "layer": {"uri": "shadow.png", "texcoord": "stj_st_b", "weight_primvar": "stj_weight"}, "note": "outline of a crown"}
+        e.update(entry)
+        self.doc["_metadata"]["version"] = "0.4"
+        self.doc["geometry"]["meshes"][0]["baked"] = {"material_layers": [e]}
+        return e
+
+    def layer_findings(self, level):
+        return [m for m in messages(self.run_doc(), level) if "material_layers" in m]
+
+    def test_a_good_baked_layer_gives_only_the_summary_note(self):
+        self.layered()
+        self.assertEqual(self.layer_findings("ERROR") + self.layer_findings("WARN"), [])
+        self.finding("NOTE", "baked lighting layers: 1 shadow; 1 inferred")
+
+    def test_baked_layer_values_are_checked_by_the_schema(self):
+        for key in ("kind", "op", "space", "basis"):
+            self.layered(**{key: "other"})
+            self.finding("ERROR", f"material_layers[0].{key}")
+
+    def test_baked_layer_material_input_and_primvars(self):
+        self.layered(material="nowhere")
+        self.finding("ERROR", "no material 'nowhere'")
+        self.layered(with_input=False)
+        self.finding("WARN", "has no interface input 'stj_baked_strength'")
+        self.layered(default=0.5)
+        self.finding("WARN", "defaults to 0.5, not 1")
+        self.layered(uvs=False)
+        self.finding("WARN", "primvar 'stj_st_b' missing")
+        self.finding("WARN", "primvar 'stj_weight' missing")
+        self.layered(layer={"uri": "gone.png", "texcoord": "stj_st_b"})
+        self.finding("WARN", "file not found: gone.png")
+
+    def test_one_input_removes_one_layer(self):
+        e = self.layered()
+        self.doc["geometry"]["meshes"][0]["baked"]["material_layers"].append(dict(e))
+        self.finding("ERROR", "is declared twice")
+
+    def test_the_maths_of_the_two_operations(self):
+        u = (0.8, 0.6, 0.4)
+        self.assertEqual(core.baked_layer_colour(u, (1, 1, 1), op="multiply"), u)            # white changes nothing
+        self.assertEqual(core.baked_layer_colour(u, (0, 0, 0), op="darken"), u)              # black darkens nothing
+        for op in ("darken", "multiply"):
+            self.assertEqual(core.baked_layer_colour(u, (0.5, 0.5, 0.5), strength=0.0, op=op), u)    # removed
+        got = core.baked_layer_colour(u, (0.5, 0.5, 0.5), alpha=0.5, weight=0.8, op="darken")
+        for g, x in zip(got, u):
+            self.assertAlmostEqual(g, x * (1 - 0.8 * 0.5 * 0.5))
+        with self.assertRaises(ValueError):
+            core.baked_layer_colour(u, u, op="add")
 
     def test_a_decal_may_blend_its_opacity(self):
         self.mesh(texture="sRGB", opacity_map=True)

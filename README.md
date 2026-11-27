@@ -92,7 +92,7 @@ python tools/stj_usd.py embed my_stage.stj.json my_stage.usda
 ```
 
 ```bash
-python tools/validate.py my_stage.usda --strict
+python tools/stj_validate.py my_stage.usda --strict
 ```
 
 ```bash
@@ -181,7 +181,7 @@ pip install -r requirements.txt
 ```
 
 ```bash
-python tools/validate.py examples/*.usda examples/*.usdz --strict
+python tools/stj_validate.py examples/*.usda examples/*.usdz --strict
 ```
 
 ```bash
@@ -201,7 +201,7 @@ Other tools:
 
 | Tool | Purpose |
 |---|---|
-| `tools/validate.py` | Schema validation of the document, plus the cross-reference checks a schema cannot express ([spec §12](spec/STJ_Spec.md#12-validation)). For example:<ul><li>ids, USD materials, prims and primvars exist</li><li>every `s` lies on the line</li><li>timing and pace notes are in order</li><li>signal values are valid</li><li>terrain agrees with the road's rule (below it, draped, or carved)</li><li>inertias are physical</li><li>`.usdz` packages follow OpenUSD's rules</li><li>unit slips such as degrees for radians or km/h for m/s</li></ul>`--strict` fails on warnings. |
+| `tools/stj_validate.py` | Schema validation of the document, plus the cross-reference checks a schema cannot express ([spec §12](spec/STJ_Spec.md#12-validation)). For example:<ul><li>ids, USD materials, prims and primvars exist</li><li>every `s` lies on the line</li><li>timing and pace notes are in order</li><li>signal values are valid</li><li>terrain agrees with the road's rule (below it, draped, or carved)</li><li>inertias are physical</li><li>`.usdz` packages follow OpenUSD's rules</li><li>unit slips such as degrees for radians or km/h for m/s</li></ul>`--strict` fails on warnings. |
 | `tools/canonicalize.py` | Writes a document in canonical form (stable key order, numbers and layout) so a diff shows what changed; `--check` for CI ([spec §3.9](spec/STJ_Spec.md#39-canonical-form-v03)) |
 | `tools/migrate.py` | Brings a document or override up to a later spec version, one step at a time; `--dry-run` shows the change and writes nothing ([spec §3.10](spec/STJ_Spec.md#310-migration-and-deprecation-v03)) |
 | `tools/stj_usd.py` | STJ inside OpenUSD: embed the document in a layer, extract it as JSON, package a `.usdz` |
@@ -217,6 +217,8 @@ Other tools:
 | `tools/blender/` | The [STJ Blender profile](spec/STJ_Blender_Profile.md) translator (`stj_blender.py`: import, lint and export of a `.blend`; `stj_profile.py`: the rules, no Blender needed) and the probes behind [`docs/blender_mapping.md`](docs/blender_mapping.md) |
 | `viewer/index.html` | A browser viewer for the document and its meshes. It reads text USD: a `.usda`, or a `.usdz` with `.usda` inside. |
 | `examples/make_examples.py` | Regenerates every example from one definition |
+| `tools/stj_query.py` | Reference queries: the surface at a point, OpenDRIVE lane materials, where an OpenCRG patch is read |
+| `examples/features/` | One small file per feature the tracks do not use and a track with a visual layer, with the results a reader must get (`expected_queries.json`) |
 
 ## Examples
 

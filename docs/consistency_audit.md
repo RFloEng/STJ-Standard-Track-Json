@@ -17,12 +17,13 @@ Where the parts of this repository agree and where they do not, as of the v0.4 d
 | Closed lines, lap distance | consistent | consistent | consistent | consistent | consistent | |
 | Roads, junctions, routes (§7.1) | consistent | consistent | partial | consistent | consistent | Routes stay in the Blender text block; there is no route object. |
 | Geometry of one layout (§3.5) | consistent | consistent | partial | consistent | consistent | The Blender profile keeps `layout_only` and `with_mesh` through a round trip and shows every mesh; it does not hide a layout's meshes. The viewer filters meshes, instance sets, surface maps and bindings only. No shipped example file. |
+| Baked material layers (§7.2) | consistent | consistent | missing | consistent | consistent | The Blender profile has no row for it; the list stays with the mesh entry. `material_mtlx.py` does not write the strength input; producers add it to their own networks, and no test checks a network against `baked_layer_colour`. No shipped example file. |
 | Layouts (§3.5) | consistent | consistent | partial | consistent | consistent | The profile has a `layout` category; editing a layout's `s` values in Blender is not checked. |
 | Overrides and `ops` (§3.3) | consistent | consistent | not applicable | consistent | consistent | The profile does not apply override files; the user resolves them first (profile §2.1). |
 | Conformance profiles (§3.7) | consistent | consistent | not applicable | consistent | consistent | |
 | `position_ref` (§3.8) | consistent | consistent | partial | consistent | consistent | Cameras and emitters with a `position_ref` stay in the text block, because a moved object has nothing to write back to. Poses (grid, pit boxes) do not accept it. |
 | Surfaces, STJ-REF, grip (§6) | consistent | consistent | consistent | consistent | consistent | The merge and blending rules (§6.3, §6.4) have a worked example in the spec and tests. |
-| Tyre class list | missing | partial | not applicable | consistent | consistent | The list in §6.2 is the working list; where it should live is an open decision with the SVJ side. |
+| Tyre class list (§6.2) | consistent | consistent | not applicable | consistent | consistent | `schema/tyre-classes.schema.json` is the master. A test here compares STJ's schema with it, and SVJ's tests compare its schema with its copy; no test compares the two copies of the file across the repositories. |
 | Background meshes (§7.2) | consistent | consistent | not applicable | consistent | consistent | USD prim attributes are checked; there is no shipped example file, the tests build a three-mesh document. |
 | Collision sidedness (§7.2) | not applicable | consistent | not applicable | consistent | consistent | `doubleSided` is the USD attribute; converters that already published collision meshes are told by the warning. |
 | Collision prims (§7.2) | not applicable | consistent | consistent | consistent | consistent | |
@@ -34,7 +35,8 @@ Where the parts of this repository agree and where they do not, as of the v0.4 d
 | Validator diagnostics | not applicable | partial | not applicable | partial | consistent | `--json` gives severity, path, JSON Pointer and message. Messages have no stable codes yet (spec §15.1: proposed). |
 | Conversion report | not applicable | consistent | not applicable | consistent (`ConversionReport`) | consistent | Spec §3.12. Converters in other repositories adopt it on their own schedule. |
 | Large worlds, probes, screens, crowds, animated objects | consistent | consistent | partial | partial | partial | Marked experimental (§15.1). Fewer readers, fewer cross-checks. |
-| Examples for every feature | not applicable | not applicable | not applicable | not applicable | partial | Open item T9 of `proposals/stj_simulator_proposal.md`: `vertex_dense`, `image`, `id_map`, `contact: dominant` and others have no example yet. |
+| Examples for every feature | not applicable | not applicable | not applicable | not applicable | partial | `examples/features/` covers the ways of saying where a surface is, a wet variant, a Y-up stage, an OpenCRG patch and a visual layer. Image weights over a `texcoord`, `vertex_top3` inside a surface query (the stage example uses it, with no expected results), baked material layers, layout geometry and background meshes have no example with expected results. |
+| Surface, film and grip queries (§6.3, §6.4, §6.9) | not applicable | consistent | not applicable | partial | consistent | `stj_query` reads `attached` OpenCRG grids in plain ASCII only and a reference of one OpenDRIVE road; terrain contacts are not part of it. |
 
 ## How this table is kept honest
 

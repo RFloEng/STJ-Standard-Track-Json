@@ -1546,17 +1546,15 @@ def storage_depth(surface):
     return 0.5 * ((surface.get("roughness") or {}).get("mean_profile_depth") or 0.0)
 
 
-def film_depth(doc, base_dir, surface, x, y, s, t, water_depth, ref, dry_line_offsets=None):
-    """Effective water-film depth at a contact (spec §6.9):
-    d = max(0, water_depth * A * (1 - shelter) * D - storage_depth)."""
-    water = doc.get("water") or {}
+def standing_water(water, image, x, y, s, t, water_depth, ref, dry_line_offsets=None):
+    """water_depth * A * (1 - shelter) * D at a point (spec §6.9), before any surface stores part of it.
+    water: the document's `water` block; image: its accumulation raster, already read, or None."""
     a = 1.0
     acc = water.get("accumulation")
-    if acc:
-        img = read_png(Path(base_dir) / acc["uri"])
-        v = img.sample(acc["extent"], x, y)
+    if acc and image is not None:
+        v = image.sample(acc["extent"], x, y)
         if v is not None:
-            a = 2.0 * v / img.maxval
+            a = 2.0 * v / image.maxval
     for band in water.get("accumulation_bands", []):
         if in_band(band, s, t):
             a = band["factor"]
@@ -1569,7 +1567,172 @@ def film_depth(doc, base_dir, surface, x, y, s, t, water_depth, ref, dry_line_of
     if dl and dry_line_offsets:
         t_line = offset_at(dry_line_offsets, s, ref.length if ref.closed else None)
         d_factor = 1.0 - (1.0 - dl["factor"]) * math.exp(-0.5 * ((t - t_line) / dl["spread"]) ** 2)
-    return max(0.0, water_depth * a * (1.0 - shelter) * d_factor - storage_depth(surface))
+    return water_depth * a * (1.0 - shelter) * d_factor
+
+
+def film_depth(doc, base_dir, surface, x, y, s, t, water_depth, ref, dry_line_offsets=None):
+    """Effective water-film depth on one surface (spec §6.9):
+    d = max(0, water_depth * A * (1 - shelter) * D - storage_depth).
+    It reads the accumulation raster on every call; FilmQuery reads it once and also takes a blended contact."""
+    water = doc.get("water") or {}
+    acc = water.get("accumulation")
+    image = read_png(Path(base_dir) / acc["uri"]) if acc else None
+    standing = standing_water(water, image, x, y, s, t, water_depth, ref, dry_line_offsets)
+    return max(0.0, standing - storage_depth(surface))
+
+
+# ── the surface values of a contact (spec §6.3, §6.4) ────────────────────────
+
+def contact_entries(library, contact):
+    """[(surface id or None, surface, weight)] with weights summing to 1. contact: a surface id, a surface object,
+    or [(id or object, weight), ...] as a surface map gives it. Entries of weight 0 are not part of the contact."""
+    if isinstance(contact, (str, dict)):
+        contact = [(contact, 1.0)]
+    present = [(c, float(w)) for c, w in contact if w > 0]
+    total = sum(w for _c, w in present)
+    if total <= 0:
+        raise ValueError("a contact needs at least one surface with a weight above 0")
+    return [(c, library[c], w / total) if isinstance(c, str) else (None, c, w / total) for c, w in present]
+
+
+def contact_storage_depth(library, contact):
+    """water.storage_depth of a contact: a number, so the entries' values (each with its own default) blend by weight."""
+    return sum(w * storage_depth(surface) for _i, surface, w in contact_entries(library, contact))
+
+
+class FilmQuery:
+    """Point queries of the effective water-film depth (spec §6.9). The reference line, the accumulation raster and the
+    dry line are read once; `depth` then takes a point and a contact (one surface or a blend)."""
+
+    def __init__(self, doc, base_dir, ref=None):
+        self.water = doc.get("water") or {}
+        self.library = (doc.get("surfaces") or {}).get("library") or {}
+        self.ref = ref or reference_line(doc)
+        acc = self.water.get("accumulation")
+        self.image = read_png(Path(base_dir) / acc["uri"]) if acc else None
+        self.dry_line_offsets = None
+        dry = self.water.get("dry_line")
+        if dry and self.ref:
+            self.dry_line_offsets = offsets_of_racing_line(doc, dry["line"], self.ref)
+
+    def depth(self, contact, x, y, water_depth, s=None, t=None):
+        """d (m) at (x, y). Give (s, t) when you have them; otherwise they are projected onto the reference line."""
+        if (s is None or t is None) and self.ref:
+            s, t = self.ref.project(x, y)
+        standing = standing_water(self.water, self.image, x, y, s, t, water_depth, self.ref, self.dry_line_offsets)
+        return max(0.0, standing - contact_storage_depth(self.library, contact))
+
+
+def offsets_of_racing_line(doc, line_id, ref):
+    """racing_line_offsets of the racing line with this id, or None when the document has no such line."""
+    for line in (doc.get("race") or {}).get("racing_lines", []):
+        if line["id"] == line_id:
+            return racing_line_offsets(line["points"], ref)
+    return None
+
+
+DEFORMABLE_KEY_BY_KEY = ("effective",)      # the other blocks of `deformable` are replaced as a whole
+
+
+def merge_tyre_class(surface, tyre_class=None, reference_mu=None):
+    """The surface as a tyre of `tyre_class` sees it (spec §6.3): by_tyre_class[tyre_class] over the generic fields.
+    mf_scaling merges factor by factor. deformable.effective merges key by key; deformable.terramechanics, one fitted
+    set of soil parameters, is replaced as a whole. Everything else the class gives replaces the generic value.
+    With `mu` and surfaces.reference_mu for the class, LMUX = LMUY = mu.peak / reference_mu.peak (§6.5)."""
+    out = {k: v for k, v in surface.items() if k != "by_tyre_class"}
+    over = (surface.get("by_tyre_class") or {}).get(tyre_class) if tyre_class else None
+    if not over:
+        return out
+    for key, value in over.items():
+        if key == "mf_scaling":
+            out[key] = {**(out.get(key) or {}), **value}
+        elif key == "deformable":
+            merged = dict(out.get(key) or {})
+            for block, content in value.items():
+                if block in DEFORMABLE_KEY_BY_KEY:
+                    merged[block] = {**(merged.get(block) or {}), **content}
+                else:
+                    merged[block] = content
+            out[key] = merged
+        else:
+            out[key] = value
+    base = (reference_mu or {}).get(tyre_class)
+    if "mu" in over and base:
+        k = over["mu"]["peak"] / base["peak"]
+        out["mf_scaling"] = {**(out.get("mf_scaling") or {}), "LMUX": k, "LMUY": k}
+    return out
+
+
+def line_state_applies(state, surface_id):
+    """Whether a line state lies on a surface. Without applies_to it lies on every surface (spec §6.8)."""
+    return "applies_to" not in state or surface_id in state["applies_to"]
+
+
+def surface_reference(reference_surface, base_dir=".", tyre_class=None):
+    """The scaling factors of the surface a tyre was fitted on (SVJ tires.sets.<id>.reference.surface, spec §6.2).
+    None or "STJ-REF": {} (every factor 1). Inline: its mf_scaling. A pointer {uri, surface}: that entry of the STJ
+    file at uri (relative to base_dir), as a tyre of this class sees it."""
+    if reference_surface is None or reference_surface == "STJ-REF":
+        return {}
+    if isinstance(reference_surface, str):
+        raise ValueError(f"reference.surface: the only name is 'STJ-REF', not {reference_surface!r}")
+    if "uri" in reference_surface or "surface" in reference_surface:
+        if not ("uri" in reference_surface and "surface" in reference_surface) or "mf_scaling" in reference_surface:
+            raise ValueError("reference.surface: a pointer has uri and surface, and no mf_scaling of its own")
+        doc, _chain = resolve(Path(base_dir) / reference_surface["uri"])
+        surfaces = doc.get("surfaces") or {}
+        sid = reference_surface["surface"]
+        if sid not in (surfaces.get("library") or {}):
+            raise ValueError(f"reference.surface: no surface '{sid}' in {reference_surface['uri']}")
+        entry = merge_tyre_class(surfaces["library"][sid], tyre_class, surfaces.get("reference_mu"))
+        return dict(entry.get("mf_scaling") or {})
+    return dict(reference_surface.get("mf_scaling") or {})
+
+
+def contact_grip(doc, contact, tyre_class=None, tyre_scaling=None, reference_scaling=None, film=0.0,
+                 s=0.0, t=0.0, session="any", line_offsets=None, lap_length=None):
+    """Steps 2 to 5 of spec §6.4 for one contact: {"lambda": {factor: λ_eff}, "rolling_resistance": f}.
+    It does not give the speed term (drag_coefficient) or the swept loose-layer depth.
+
+    contact: a surface id or [(id, weight), ...]. film: the effective depth d (FilmQuery). tyre_scaling:
+    pacejka.scaling; reference_scaling: surface_reference(...). line_offsets: {racing line id: offsets}, needed when
+    a line state lies on the contact; lap_length: the lap, on a closed reference line. Surface values are blended first; the tyre's part is applied once (§6.3)."""
+    surfaces = doc.get("surfaces") or {}
+    entries = contact_entries(surfaces.get("library") or {}, contact)
+    merged = [(i, merge_tyre_class(sf, tyre_class, surfaces.get("reference_mu")), w) for i, sf, w in entries]
+    tyre_scaling, reference_scaling = tyre_scaling or {}, reference_scaling or {}
+    names = set(tyre_scaling) | set(reference_scaling) | {"LMUX", "LMUY"}
+    for _i, sf, _w in merged:
+        names |= set(sf.get("mf_scaling") or {})
+    wet = film > 0
+    values = {n: 0.0 for n in names if not n.startswith(("x_", "_"))}
+    wet_factor = rolling = 0.0
+    for sid, sf, weight in merged:
+        own = {n: (sf.get("mf_scaling") or {}).get(n, 1.0) for n in values}
+        for state in surfaces.get("line_states", []):
+            if not line_state_applies(state, sid):
+                continue
+            levels = state.get("levels") or {}
+            level = levels.get(session, levels.get("any", 0.0))
+            offsets = (line_offsets or {}).get(state["line"])
+            if offsets is None:
+                raise ValueError(f"line state '{state['id']}' needs the offsets of racing line '{state['line']}'")
+            t_line = offset_at(offsets, s, lap_length)
+            r = line_state_value(state, level, s, t, t_line)
+            for axis in ("LMUX", "LMUY"):
+                gain = state.get("wet_gain", 0.0) if wet else (state.get("grip_gain") or {}).get(axis, 0.0)
+                own[axis] *= 1.0 + gain * r
+                marbles = state.get("marbles")
+                if marbles and abs(t - t_line) > state["spread"] + marbles["offset"]:
+                    own[axis] *= 1.0 - (1.0 - marbles["LMU"]) * level
+        for n in values:
+            values[n] += weight * own[n]
+        wet_factor += weight * (eval_curve(sf["wet_response"], film) if wet and sf.get("wet_response") else 1.0)
+        rolling += weight * sf.get("rolling_resistance", 0.0)
+    out = {n: tyre_scaling.get(n, 1.0) * v / reference_scaling.get(n, 1.0) for n, v in values.items()}
+    for axis in ("LMUX", "LMUY"):
+        out[axis] *= wet_factor
+    return {"lambda": out, "rolling_resistance": rolling}
 
 
 # ── layered ground (spec §8.7) ───────────────────────────────────────────────
@@ -1996,6 +2159,24 @@ def usd_material_inputs(stage, name):
     from pxr import UsdShade
     return [{i.GetBaseName() for i in UsdShade.Material(p).GetInputs()}
             for p in stage.Traverse() if p.IsA(UsdShade.Material) and p.GetName() == name]
+
+
+def usd_material_input_values(stage, name):
+    """[{interface input name: authored value or None}] for each UsdShade material called `name` in a stage."""
+    from pxr import UsdShade
+    return [{i.GetBaseName(): i.GetAttr().Get() for i in UsdShade.Material(p).GetInputs()}
+            for p in stage.Traverse() if p.IsA(UsdShade.Material) and p.GetName() == name]
+
+
+def baked_layer_colour(under, layer, alpha=1.0, weight=1.0, strength=1.0, op="multiply"):
+    """The colour of a surface with a baked layer on it (spec §7.2, `baked.material_layers`). `under` and `layer` are
+    sequences of channels, both in the space the entry says (`encoded` or `linear`); the surface's alpha is not touched."""
+    k = strength * weight * alpha
+    if op == "darken":
+        return tuple(u * (1.0 - k * c) for u, c in zip(under, layer))
+    if op == "multiply":
+        return tuple(u * (1.0 - k * (1.0 - c)) for u, c in zip(under, layer))
+    raise ValueError(f"unknown op {op!r}")
 
 
 def usd_primvar(mesh, name):

@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import canonicalize  # noqa: E402
 import migrate  # noqa: E402
 import stj_core as core  # noqa: E402
-import validate  # noqa: E402
+import stj_validate as validate  # noqa: E402
 
 EX = ROOT / "examples"
 GP = EX / "test_ring_gp.usda"
@@ -484,7 +484,7 @@ class SectionReferences(unittest.TestCase):
         spec = (ROOT / "spec" / "STJ_Spec.md").read_text(encoding="utf-8")
         heads = set(re.findall(r"^#{2,3} (\d+(?:\.\d+)?)[. ]", spec, re.M))
         files = [ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "docs" / "consistency_audit.md", ROOT / "docs" / "interoperability.md",
-                 ROOT / "docs" / "best_practices.md", ROOT / "tools" / "validate.py", ROOT / "tools" / "stj_core.py", ROOT / "tools" / "migrate.py"]
+                 ROOT / "docs" / "best_practices.md", ROOT / "tools" / "stj_validate.py", ROOT / "tools" / "stj_core.py", ROOT / "tools" / "migrate.py"]
         for f in files:
             for ref in re.findall(r"(?<!SVJ )(?<!SVJ_Spec )(?<!profile )§(\d+(?:\.\d+)?)", f.read_text(encoding="utf-8")):
                 self.assertIn(ref, heads, f"{f.name}: §{ref}")

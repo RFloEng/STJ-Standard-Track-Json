@@ -1,6 +1,6 @@
 # Proposal for STJ: what a Richard Burns Rally conversion could not store
 
-Status: **partly accepted** 2026-11-05, in v0.3 (draft). Items 1 to 3, 5, 6 and 8 to 10 are implemented as below. Items 4 and 7 were decided on 2026-11-05 and are implemented too (`assets[]`, spec §5.3; prototype `lods`, spec §8.2). The original text of the proposal follows the decisions, unchanged.
+Status: **accepted** 2026-11-05, in v0.3 (draft). Items 1 to 3, 5, 6 and 8 to 10 are implemented as below. Items 4 and 7 were decided on 2026-11-05 and are implemented too (`assets[]`, spec §5.3; prototype `lods`, spec §8.2). The original text of the proposal follows the decisions, unchanged.
 
 ## Decisions
 

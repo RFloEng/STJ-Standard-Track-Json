@@ -50,7 +50,7 @@ An add-on with **Export STJ** and **Import STJ**, following `docs/blender_mappin
    - read the road profile curve and its Geometry Nodes modifier into `cross_section` (`bank` from the curve tilt), roads and junctions, structures and decals (the v0.3 conventions in `docs/blender_mapping.md` §3; proposed, not probed yet)
    - apply all of these over the base as a merge patch
 3. Write OpenDRIVE text blocks out as `.xodr`.
-4. Run `tools/validate.py` on the result and show the report in Blender.
+4. Run `tools/stj_validate.py` on the result and show the report in Blender.
 
 **Import:** the reverse. USD in, reference curve and empties rebuilt, the STJ document stored as a text block.
 

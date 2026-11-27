@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    customLayerData = {
+        string stj = '{"_metadata":{"specification":"STJ-OVERRIDE","version":"0.4","base":"./surface_maps.usda","variant":"weather","description":"Rain: 2 mm of water."},"patch":{"environment":{"default_weather":{"condition":"rain","water_depth":0.002}}}}'
+    }
+    subLayers = [
+        @./surface_maps.usda@
+    ]
+)
+

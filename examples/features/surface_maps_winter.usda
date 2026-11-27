@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    customLayerData = {
+        string stj = '{"_metadata":{"specification":"STJ-OVERRIDE","version":"0.4","base":"./surface_maps.usda","variant":"season","description":"Winter: the asphalt is under packed snow."},"patch":{"surfaces":{"substitutions":{"asphalt":"packed_snow"}}}}'
+    }
+    subLayers = [
+        @./surface_maps.usda@
+    ]
+)
+

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:stj:schema:v0.3",
   "title": "Standard Track JSON (STJ)",
-  "description": "Schema for STJ v0.1 to v0.3: an engine-neutral description of a race track or rally stage. A track is an OpenUSD stage; this schema validates the STJ document stored in its root layer's customLayerData['stj'] (spec §3). Every section except _metadata is optional. Cross-reference rules are checked by tools/validate.py.",
+  "description": "Schema for STJ v0.1 to v0.3: an engine-neutral description of a race track or rally stage. A track is an OpenUSD stage; this schema validates the STJ document stored in its root layer's customLayerData['stj'] (spec §3). Every section except _metadata is optional. Cross-reference rules are checked by tools/stj_validate.py.",
   "type": "object",
   "required": ["_metadata"],
   "additionalProperties": false,
@@ -1167,6 +1167,37 @@
                 "texcoord": { "$ref": "#/definitions/texcoord" }
               },
               "description": "Baked specular highlights, read through texcoord."
+            },
+            "material_layers": {
+              "type": "array",
+              "description": "Lighting the source keeps as a layer of a material, apart from the colour under it (spec 7.2).",
+              "items": {
+                "type": "object",
+                "required": ["material", "kind", "layer", "op", "basis"],
+                "additionalProperties": false,
+                "patternProperties": { "^x_": {}, "^_": {} },
+                "properties": {
+                  "material": { "type": "string", "minLength": 1, "description": "The UsdShade.Material in the mesh's USD file, by name (as in spec 11.1)." },
+                  "kind": { "type": "string", "enum": ["shadow", "occlusion", "light"], "description": "shadow: cast shadow. occlusion: ambient occlusion. light: other baked lighting, such as pools of light." },
+                  "input": { "type": "string", "minLength": 1, "default": "stj_baked_strength", "description": "Float interface input of the material that scales the layer: 0 without it, 1 as the source draws it." },
+                  "layer": {
+                    "type": "object",
+                    "required": ["uri", "texcoord"],
+                    "additionalProperties": false,
+                    "patternProperties": { "^x_": {}, "^_": {} },
+                    "properties": {
+                      "uri": { "$ref": "#/definitions/relative_uri" },
+                      "texcoord": { "$ref": "#/definitions/texcoord" },
+                      "weight_primvar": { "type": "string", "description": "Per-corner float 0..1; absent = 1." }
+                    },
+                    "description": "What a reader without MaterialX needs to rebuild or remove the layer."
+                  },
+                  "op": { "type": "string", "enum": ["darken", "multiply"], "description": "darken: U*(1 - s*w*a*C). multiply: U*(1 - s*w*a*(1 - C))." },
+                  "space": { "type": "string", "enum": ["encoded", "linear"], "default": "linear", "description": "The values the operation works on: the stored texel values, or linear." },
+                  "basis": { "type": "string", "enum": ["source", "inferred"], "description": "source: the game's files or code say it is baked lighting. inferred: the producer concluded it." },
+                  "note": { "type": "string" }
+                }
+              }
             }
           }
         }
@@ -3278,7 +3309,7 @@
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/definitions/id" },
-          "description": "Surface ids the state lies on."
+          "description": "Surface ids the state lies on. Absent: every surface."
         },
         "line": { "type": "string", "description": "id of the racing line the state follows (race.racing_lines)." },
         "spread": { "type": "number", "description": "Gaussian sigma across the line (m).", "exclusiveMinimum": 0 },
